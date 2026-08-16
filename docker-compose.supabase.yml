@@ -1,0 +1,52 @@
+# Reference Docker Compose stack for ORCA FINANCIAL running against a
+# Supabase-hosted PostgreSQL database (no local `postgres` / `pgbouncer`
+# service — Supabase provides both the database and its own PgBouncer).
+#
+# Use this instead of docker-compose.yml once you have migrated your data
+# to Supabase (see docs/SUPABASE_MIGRATION.md and scripts/migrate-to-supabase.sh).
+#
+# Usage:
+#   cp .env.example .env
+#   # fill in DATABASE_URL with your Supabase pooled connection string
+#   # and (optionally) NEXT_PUBLIC_SUPABASE_URL / *_ANON_KEY / SERVICE_ROLE_KEY
+#   docker compose -f docker-compose.supabase.yml up -d --build
+
+version: "3.9"
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      # Supabase pooled (PgBouncer) connection string — see .env.example
+      # "Option B" for the exact format. Passed through from your local
+      # .env / the platform's secret manager; DO NOT hardcode credentials
+      # here.
+      DATABASE_URL: ${DATABASE_URL}
+      # PgBouncer transaction-mode pooling means the pooler already
+      # multiplexes connections — keep our own pool small.
+      DATABASE_POOL_MAX: "5"
+      DATABASE_POOL_TIMEOUT_MS: "10000"
+      DATABASE_STARTUP_RETRIES: "10"
+      DATABASE_STARTUP_RETRY_DELAY_MS: "2000"
+      DATABASE_SELF_PING_INTERVAL_MS: "30000"
+      DATABASE_DOWN_ALERT_AFTER_MS: "120000"
+      # Optional Supabase Auth/Realtime/Storage (see src/lib/supabase/*.ts).
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    # No `depends_on: postgres` — the database lives on Supabase's
+    # infrastructure, outside this compose network. The app's own
+    # waitForDatabaseReady() (src/instrumentation.ts) handles startup
+    # ordering against the remote DB via bounded retries instead.

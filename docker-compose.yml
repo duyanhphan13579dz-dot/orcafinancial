@@ -1,0 +1,93 @@
+# Reference Docker Compose stack for ORCA FINANCIAL self-hosted deployments.
+# The managed sandbox/platform runtime does not use this file — it is provided
+# so the resilience hardening requirements (DB health-gated startup, restart
+# policies, connection pooling) are fully documented and reproducible outside
+# the platform as well.
+#
+# Usage:
+#   cp .env.example .env   # fill in secrets
+#   docker compose up -d --build
+
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-orca}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orca}
+      POSTGRES_DB: ${POSTGRES_DB:-orca_financial}
+    volumes:
+      - orca_pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    # Strong healthcheck: pg_isready checks the server is accepting
+    # connections, not just that the process is running.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-orca} -d ${POSTGRES_DB:-orca_financial}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    command: >
+      postgres
+        -c max_connections=100
+        -c shared_buffers=256MB
+
+  # Optional connection pooler — fronts Postgres with pgBouncer so the app's
+  # `pg.Pool` (max=20 by default, see DATABASE_POOL_MAX) can burst without
+  # exhausting Postgres' own connection slots, and so transient TCP resets
+  # get absorbed by the pooler instead of bubbling straight to the app.
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-orca}:${POSTGRES_PASSWORD:-orca}@postgres:5432/${POSTGRES_DB:-orca_financial}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 200
+      DEFAULT_POOL_SIZE: 20
+    ports:
+      - "6432:6432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    environment:
+      # Point the app at pgBouncer (recommended) — fall back to postgres
+      # directly by swapping the host if you don't want the pooler.
+      DATABASE_URL: postgres://${POSTGRES_USER:-orca}:${POSTGRES_PASSWORD:-orca}@pgbouncer:6432/${POSTGRES_DB:-orca_financial}
+      DATABASE_POOL_MAX: "20"
+      DATABASE_POOL_TIMEOUT_MS: "10000"
+      DATABASE_STARTUP_RETRIES: "10"
+      DATABASE_STARTUP_RETRY_DELAY_MS: "2000"
+      DATABASE_SELF_PING_INTERVAL_MS: "30000"
+      DATABASE_DOWN_ALERT_AFTER_MS: "120000"
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+volumes:
+  orca_pg_data:
