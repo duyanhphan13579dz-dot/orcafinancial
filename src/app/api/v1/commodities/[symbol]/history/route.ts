@@ -34,12 +34,18 @@ export async function GET(
   }
   
   try {
-    const history = await getCommodityHistory(symbol.toUpperCase(), from, to);
-    
+    const sourceParam = url.searchParams.get("source") ?? undefined;
+    if (sourceParam && !["simplize", "vietnambiz"].includes(sourceParam)) {
+      return fail("source phải là 'simplize' hoặc 'vietnambiz'", 400);
+    }
+
+    const history = await getCommodityHistory(symbol.toUpperCase(), from, to, sourceParam);
+
     return ok({
       symbol: symbol.toUpperCase(),
       from: fromStr,
       to: toStr,
+      source: sourceParam ?? "all",
       history,
       count: history.length,
     });
