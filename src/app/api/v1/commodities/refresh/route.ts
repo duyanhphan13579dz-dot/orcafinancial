@@ -13,34 +13,28 @@ export const dynamic = "force-dynamic";
 
 const log = forProvider("commodities-refresh-api");
 
-/**
- * POST /api/v1/commodities/refresh
- * 
- * Manually trigger commodities data fetch and save.
- * Rate limited to prevent abuse.
- */
-export async function POST(req: NextRequest) {
-  const limited = checkRateLimit(req, 10); // Only 10 requests per minute
+async function handleRefresh(req: NextRequest) {
+  const limited = checkRateLimit(req, 20);
   if (limited) return limited;
-  
+
   const startedAt = Date.now();
-  
+
   try {
-    // Initialize commodities list and stock mappings (idempotent)
+    // 1. Khởi tạo danh mục 31 hàng hóa và ma trận cổ phiếu
     await initializeCommodities();
     await initializeStockImpacts();
-    
-    // Fetch all data
+
+    // 2. Fetch tỷ giá và giá hàng hóa thế giới
     const { prices, exchangeRates, errors } = await fetchAllCommoditiesData();
-    
-    // Save exchange rates first
+
+    // 3. Lưu tỷ giá ngoại tệ
     const ratesSaved = await saveExchangeRates(exchangeRates);
-    
-    // Save commodity prices (with VND conversion)
+
+    // 4. Lưu giá hàng hóa (quy đổi VND)
     const pricesSaved = await saveCommodityPrices(prices);
-    
+
     const durationMs = Date.now() - startedAt;
-    
+
     log.info("commodities_refresh_complete", {
       pricesFetched: prices.length,
       pricesSaved,
@@ -48,7 +42,7 @@ export async function POST(req: NextRequest) {
       errors: errors.length,
       durationMs,
     });
-    
+
     return ok({
       success: true,
       pricesFetched: prices.length,
@@ -61,4 +55,12 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     return handleError(err, "commodities_refresh");
   }
+}
+
+export async function POST(req: NextRequest) {
+  return handleRefresh(req);
+}
+
+export async function GET(req: NextRequest) {
+  return handleRefresh(req);
 }
