@@ -19,7 +19,7 @@ import {
   commodityPrices,
   commodityStockImpact,
 } from "./schema";
-import type { CommodityPriceData, ExchangeRateData } from "./connectors";
+import type { ExchangeRateData } from "./fx";
 import { COMMODITIES_LIST } from "./data";
 import { forProvider } from "@/lib/logger";
 
@@ -124,106 +124,16 @@ export async function initializeCommodities(): Promise<void> {
  * Save Commodity Prices (with VND conversion)
  * ═══════════════════════════════════════════════════════════════════════ */
 
-export async function saveCommodityPrices(prices: CommodityPriceData[]): Promise<number> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  
-  let saved = 0;
-  
-  for (const price of prices) {
-    try {
-      // Get commodity ID
-      const commodityResult = await db
-        .select({ id: commodities.id })
-        .from(commodities)
-        .where(eq(commodities.symbol, price.symbol))
-        .limit(1);
-      
-      if (!commodityResult.length) {
-        log.warn("commodity_not_found", { symbol: price.symbol });
-        continue;
-      }
-      
-      const commodityId = commodityResult[0].id;
-      
-      // Convert to VND if needed
-      let priceVnd = price.price;
-      let currencyRate: number | null = null;
-      
-      if (price.currency !== "VND") {
-        const rate = await getLatestExchangeRate(price.currency);
-        if (rate) {
-          priceVnd = price.price * rate;
-          currencyRate = rate;
-        } else {
-          log.warn("exchange_rate_not_found", { currency: price.currency });
-          continue; // Skip if no exchange rate
-        }
-      }
-      
-      // VND-denominated changes derived from the source's own percentages.
-      const rate = currencyRate ?? 1;
-      const prevCloseVnd =
-        typeof price.prevClose === "number" && Number.isFinite(price.prevClose)
-          ? price.prevClose * rate
-          : null;
-
-      const row = {
-        commodityId,
-        price: price.price,
-        priceVnd,
-        currencyRate,
-        prevClose: prevCloseVnd,
-        changePct1d: price.changePct1d ?? null,
-        changePct7d: price.changePct7d ?? null,
-        changePct30d: price.changePct30d ?? null,
-        changePctYtd: price.changePctYtd ?? null,
-        changePct1y: price.changePct1y ?? null,
-        high52w:
-          typeof price.high52w === "number" && Number.isFinite(price.high52w)
-            ? price.high52w * rate
-            : null,
-        low52w:
-          typeof price.low52w === "number" && Number.isFinite(price.low52w)
-            ? price.low52w * rate
-            : null,
-        date: today,
-        source: price.source,
-      };
-
-      // Save price
-      await db
-        .insert(commodityPrices)
-        .values(row)
-        .onConflictDoUpdate({
-          target: [commodityPrices.commodityId, commodityPrices.date],
-          set: {
-            price: row.price,
-            priceVnd: row.priceVnd,
-            currencyRate: row.currencyRate,
-            prevClose: row.prevClose,
-            changePct1d: row.changePct1d,
-            changePct7d: row.changePct7d,
-            changePct30d: row.changePct30d,
-            changePctYtd: row.changePctYtd,
-            changePct1y: row.changePct1y,
-            high52w: row.high52w,
-            low52w: row.low52w,
-            source: row.source,
-          },
-        });
-      
-      saved++;
-    } catch (err) {
-      log.error("save_commodity_price_failed", {
-        symbol: price.symbol,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-  
-  log.info("commodity_prices_saved", { count: saved });
-  return saved;
+/**
+ * @deprecated Superseded by `ingestCycle()` in ./ingest.ts, which enforces the
+ * single-source-per-cycle rule. Retained as a no-op shim so any legacy caller
+ * fails loudly in logs instead of silently writing blended data.
+ */
+export async function saveCommodityPrices(): Promise<number> {
+  log.warn("saveCommodityPrices_deprecated", {
+    hint: "use ingestCycle() from @/lib/commodities/ingest",
+  });
+  return 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -406,34 +316,39 @@ export interface CommodityPriceHistory {
   date: Date;
   price: number;
   priceVnd: number;
+  source: string | null;
 }
 
 export async function getCommodityHistory(
   symbol: string,
   from: Date,
-  to: Date
+  to: Date,
+  source?: string,
 ): Promise<CommodityPriceHistory[]> {
+  const conditions = [
+    eq(commodities.symbol, symbol),
+    gte(commodityPrices.date, from),
+    lte(commodityPrices.date, to),
+  ];
+  if (source) conditions.push(eq(commodityPrices.source, source));
+
   const result = await db
     .select({
       date: commodityPrices.date,
       price: commodityPrices.price,
       priceVnd: commodityPrices.priceVnd,
+      source: commodityPrices.source,
     })
     .from(commodityPrices)
     .innerJoin(commodities, eq(commodities.id, commodityPrices.commodityId))
-    .where(
-      and(
-        eq(commodities.symbol, symbol),
-        gte(commodityPrices.date, from),
-        lte(commodityPrices.date, to)
-      )
-    )
+    .where(and(...conditions))
     .orderBy(commodityPrices.date);
-  
+
   return result.map((r) => ({
     date: r.date,
     price: r.price,
     priceVnd: r.priceVnd,
+    source: r.source ?? null,
   }));
 }
 
