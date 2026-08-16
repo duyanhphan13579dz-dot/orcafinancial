@@ -67,11 +67,32 @@ export default function CommoditiesPage() {
   const [q, setQ] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [status, setStatus] = useState<{
+    currentAuthority: string | null;
+    policy: { primary: string; secondary: string };
+    scanner: { intervalMs: number; ticks: number; running: boolean };
+    lastCycle: { vnTime: string; rowsWritten: number; reason: string } | null;
+    probes?: Array<{ source: string; ok: boolean; rows: number; latencyMs: number }>;
+  } | null>(null);
 
   const load = async () => {
     try {
-      const res = await api<{ commodities: CommodityPrice[] }>("/commodities");
-      setItems(res.data.commodities);
+      const [board, st] = await Promise.all([
+        api<{ commodities: CommodityPrice[] }>("/commodities"),
+        fetch("/api/v1/commodities/sources/status")
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null),
+      ]);
+      setItems(board.data.commodities);
+      if (st?.data) {
+        setStatus({
+          currentAuthority: st.data.currentAuthority,
+          policy: st.data.policy,
+          scanner: st.data.scanner,
+          lastCycle: st.data.lastCycle,
+          probes: st.data.lastCycle?.probes,
+        });
+      }
       setUpdatedAt(new Date());
       setError(null);
     } catch (e) {
@@ -84,7 +105,7 @@ export default function CommoditiesPage() {
   useEffect(() => {
     void load();
     // Live board: re-poll every 60s so prices stay fresh without a page reload.
-    const t = setInterval(() => void load(), 60_000);
+    const t = setInterval(() => void load(), 30_000);
     return () => clearInterval(t);
   }, []);
 
@@ -123,7 +144,12 @@ export default function CommoditiesPage() {
             <h1 className="display-xl text-2xl md:text-3xl text-white mt-1">Hàng hóa</h1>
             <p className="text-xs md:text-sm text-slate-400 mt-1.5">
               {items.length} mặt hàng · quy đổi VND theo tỷ giá Vietcombank
-              {sources.length > 0 && <> · nguồn: {sources.join(", ")}</>}
+              {status?.currentAuthority && (
+                <>
+                  {" "}· nguồn đang dùng:{" "}
+                  <span className="text-[#00d4ff] font-semibold">{status.currentAuthority}</span>
+                </>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -167,6 +193,57 @@ export default function CommoditiesPage() {
             ))}
           </div>
         </div>
+
+        {/* Source policy panel — makes the single-source rule visible */}
+        {status && (
+          <div className="panel p-3 md:p-4">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px]">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500 uppercase tracking-wider font-mono text-[10px]">Nguồn dữ liệu</span>
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-emerald-400"
+                  style={{ boxShadow: "0 0 6px #34d399" }}
+                />
+                <span className="text-white font-semibold">{status.currentAuthority ?? "—"}</span>
+                <span className="text-slate-600">
+                  (ưu tiên: {status.policy.primary} → dự phòng: {status.policy.secondary})
+                </span>
+              </div>
+
+              {status.probes && status.probes.length > 0 && (
+                <div className="flex items-center gap-3">
+                  {status.probes.map((p) => (
+                    <span key={p.source} className="flex items-center gap-1.5 font-mono">
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${p.ok ? "bg-emerald-400" : "bg-rose-500"}`}
+                      />
+                      <span className={p.ok ? "text-slate-300" : "text-rose-300"}>{p.source}</span>
+                      <span className="text-slate-600">
+                        {p.ok ? `${p.rows} mã · ${p.latencyMs}ms` : "lỗi"}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div className="ml-auto flex items-center gap-3 font-mono text-slate-500">
+                <span>quét mỗi {Math.round(status.scanner.intervalMs / 1000)}s</span>
+                <span>·</span>
+                <span>chu kỳ #{status.scanner.ticks}</span>
+                {status.lastCycle && (
+                  <>
+                    <span>·</span>
+                    <span>{status.lastCycle.vnTime}</span>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="mt-2 pt-2 border-t border-[#1a3558]/60 text-[10px] text-slate-600">
+              Chính sách: quét liên tục cả hai nguồn để giám sát, nhưng mỗi lần lưu chỉ lấy giá từ{" "}
+              <strong className="text-slate-400">một nguồn duy nhất</strong> — không trung bình cộng.
+            </div>
+          </div>
+        )}
 
         {error && <div className="panel border-rose-700 bg-rose-950/30 p-4 text-sm text-rose-300">{error}</div>}
 
