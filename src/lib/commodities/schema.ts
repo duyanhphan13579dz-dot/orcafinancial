@@ -70,6 +70,16 @@ export const commodityPrices = pgTable("commodity_prices", {
   price: doublePrecision("price").notNull(), // Giá gốc theo đơn vị currency
   priceVnd: doublePrecision("price_vnd").notNull(), // Giá quy đổi VND
   currencyRate: doublePrecision("currency_rate"), // Tỷ giá sử dụng để quy đổi
+  // Giá tham chiếu & biến động lấy TRỰC TIẾP từ nguồn (Simplize) — chính xác hơn
+  // so với tự tính từ lịch sử vì DB mới chỉ có vài ngày dữ liệu.
+  prevClose: doublePrecision("prev_close"),
+  changePct1d: doublePrecision("change_pct_1d"),
+  changePct7d: doublePrecision("change_pct_7d"),
+  changePct30d: doublePrecision("change_pct_30d"),
+  changePctYtd: doublePrecision("change_pct_ytd"),
+  changePct1y: doublePrecision("change_pct_1y"),
+  high52w: doublePrecision("high_52w"),
+  low52w: doublePrecision("low_52w"),
   date: timestamp("date", { withTimezone: true }).notNull(), // Ngày theo giờ VN
   source: varchar("source", { length: 100 }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
