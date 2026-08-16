@@ -161,24 +161,55 @@ export async function saveCommodityPrices(prices: CommodityPriceData[]): Promise
         }
       }
       
+      // VND-denominated changes derived from the source's own percentages.
+      const rate = currencyRate ?? 1;
+      const prevCloseVnd =
+        typeof price.prevClose === "number" && Number.isFinite(price.prevClose)
+          ? price.prevClose * rate
+          : null;
+
+      const row = {
+        commodityId,
+        price: price.price,
+        priceVnd,
+        currencyRate,
+        prevClose: prevCloseVnd,
+        changePct1d: price.changePct1d ?? null,
+        changePct7d: price.changePct7d ?? null,
+        changePct30d: price.changePct30d ?? null,
+        changePctYtd: price.changePctYtd ?? null,
+        changePct1y: price.changePct1y ?? null,
+        high52w:
+          typeof price.high52w === "number" && Number.isFinite(price.high52w)
+            ? price.high52w * rate
+            : null,
+        low52w:
+          typeof price.low52w === "number" && Number.isFinite(price.low52w)
+            ? price.low52w * rate
+            : null,
+        date: today,
+        source: price.source,
+      };
+
       // Save price
       await db
         .insert(commodityPrices)
-        .values({
-          commodityId,
-          price: price.price,
-          priceVnd,
-          currencyRate,
-          date: today,
-          source: price.source,
-        })
+        .values(row)
         .onConflictDoUpdate({
           target: [commodityPrices.commodityId, commodityPrices.date],
           set: {
-            price: price.price,
-            priceVnd,
-            currencyRate,
-            source: price.source,
+            price: row.price,
+            priceVnd: row.priceVnd,
+            currencyRate: row.currencyRate,
+            prevClose: row.prevClose,
+            changePct1d: row.changePct1d,
+            changePct7d: row.changePct7d,
+            changePct30d: row.changePct30d,
+            changePctYtd: row.changePctYtd,
+            changePct1y: row.changePct1y,
+            high52w: row.high52w,
+            low52w: row.low52w,
+            source: row.source,
           },
         });
       
@@ -258,99 +289,111 @@ export interface CommodityPriceWithDetails {
   priceVnd: number;
   currency: string;
   date: Date;
+  source: string | null;
+  prevClose: number | null;
+  high52w: number | null;
+  low52w: number | null;
   changeDay: number | null;
   changeDayPct: number | null;
+  changeWeekPct: number | null;
   changeMonth: number | null;
   changeMonthPct: number | null;
+  changeYtdPct: number | null;
   changeYear: number | null;
   changeYearPct: number | null;
 }
 
 export async function getLatestCommodityPrices(): Promise<CommodityPriceWithDetails[]> {
+  // Latest row per commodity. Percentage changes come straight from the
+  // upstream board (Simplize) when present; otherwise we fall back to
+  // comparing against our own stored history.
   const result = await db.execute(sql`
-    WITH latest_prices AS (
+    WITH latest AS (
       SELECT DISTINCT ON (cp.commodity_id)
-        cp.commodity_id,
-        cp.price,
-        cp.price_vnd,
-        cp.date,
-        cp.currency_rate
+        cp.commodity_id, cp.price, cp.price_vnd, cp.date, cp.prev_close,
+        cp.change_pct_1d, cp.change_pct_7d, cp.change_pct_30d,
+        cp.change_pct_ytd, cp.change_pct_1y, cp.high_52w, cp.low_52w, cp.source
       FROM commodity_prices cp
       ORDER BY cp.commodity_id, cp.date DESC
     ),
-    yesterday_prices AS (
-      SELECT DISTINCT ON (cp.commodity_id)
-        cp.commodity_id,
-        cp.price_vnd as price_vnd_yesterday
+    prev_day AS (
+      SELECT DISTINCT ON (cp.commodity_id) cp.commodity_id, cp.price_vnd
       FROM commodity_prices cp
-      WHERE cp.date >= NOW() - INTERVAL '2 days'
-        AND cp.date < DATE_TRUNC('day', NOW())
+      WHERE cp.date < DATE_TRUNC('day', NOW())
       ORDER BY cp.commodity_id, cp.date DESC
     ),
-    month_ago_prices AS (
-      SELECT DISTINCT ON (cp.commodity_id)
-        cp.commodity_id,
-        cp.price_vnd as price_vnd_month
+    prev_month AS (
+      SELECT DISTINCT ON (cp.commodity_id) cp.commodity_id, cp.price_vnd
       FROM commodity_prices cp
-      WHERE cp.date >= NOW() - INTERVAL '35 days'
-        AND cp.date < NOW() - INTERVAL '25 days'
+      WHERE cp.date < NOW() - INTERVAL '25 days'
       ORDER BY cp.commodity_id, cp.date DESC
     ),
-    year_ago_prices AS (
-      SELECT DISTINCT ON (cp.commodity_id)
-        cp.commodity_id,
-        cp.price_vnd as price_vnd_year
+    prev_year AS (
+      SELECT DISTINCT ON (cp.commodity_id) cp.commodity_id, cp.price_vnd
       FROM commodity_prices cp
-      WHERE cp.date >= NOW() - INTERVAL '400 days'
-        AND cp.date < NOW() - INTERVAL '330 days'
+      WHERE cp.date < NOW() - INTERVAL '330 days'
       ORDER BY cp.commodity_id, cp.date DESC
     )
     SELECT
-      c.symbol,
-      c.name,
-      c.name_en as "nameEn",
-      c.group,
-      c.unit,
-      c.currency,
-      lp.price,
-      lp.price_vnd as "priceVnd",
-      lp.date,
-      yp.price_vnd_yesterday as "priceVndYesterday",
-      mp.price_vnd_month as "priceVndMonth",
-      yrp.price_vnd_year as "priceVndYear"
+      c.symbol, c.name, c.name_en AS "nameEn", c.group, c.unit, c.currency,
+      l.price, l.price_vnd AS "priceVnd", l.date, l.source,
+      l.prev_close AS "prevClose",
+      l.change_pct_1d AS "srcDay", l.change_pct_7d AS "srcWeek",
+      l.change_pct_30d AS "srcMonth", l.change_pct_ytd AS "srcYtd",
+      l.change_pct_1y AS "srcYear",
+      l.high_52w AS "high52w", l.low_52w AS "low52w",
+      pd.price_vnd AS "histDay", pm.price_vnd AS "histMonth", py.price_vnd AS "histYear"
     FROM commodities c
-    JOIN latest_prices lp ON lp.commodity_id = c.id
-    LEFT JOIN yesterday_prices yp ON yp.commodity_id = c.id
-    LEFT JOIN month_ago_prices mp ON mp.commodity_id = c.id
-    LEFT JOIN year_ago_prices yrp ON yrp.commodity_id = c.id
+    JOIN latest l ON l.commodity_id = c.id
+    LEFT JOIN prev_day  pd ON pd.commodity_id = c.id
+    LEFT JOIN prev_month pm ON pm.commodity_id = c.id
+    LEFT JOIN prev_year  py ON py.commodity_id = c.id
     WHERE c.is_active = true
     ORDER BY c.display_order, c.symbol
   `);
-  
-  const rows = result.rows as any[];
-  
-  return rows.map((row) => {
-    const priceVnd = parseFloat(row.priceVnd);
-    const priceVndYesterday = row.priceVndYesterday ? parseFloat(row.priceVndYesterday) : null;
-    const priceVndMonth = row.priceVndMonth ? parseFloat(row.priceVndMonth) : null;
-    const priceVndYear = row.priceVndYear ? parseFloat(row.priceVndYear) : null;
-    
+
+  const num = (v: unknown): number | null => {
+    if (v === null || v === undefined) return null;
+    const n = typeof v === "number" ? v : parseFloat(String(v));
+    return Number.isFinite(n) ? n : null;
+  };
+
+  return (result.rows as any[]).map((row) => {
+    const priceVnd = num(row.priceVnd) ?? 0;
+
+    // Prefer upstream percentages; fall back to our own history.
+    const pctFromHistory = (past: number | null): number | null =>
+      past && past > 0 ? ((priceVnd - past) / past) * 100 : null;
+
+    const changeDayPct = num(row.srcDay) ?? pctFromHistory(num(row.histDay));
+    const changeMonthPct = num(row.srcMonth) ?? pctFromHistory(num(row.histMonth));
+    const changeYearPct = num(row.srcYear) ?? pctFromHistory(num(row.histYear));
+
+    const absFromPct = (pct: number | null): number | null =>
+      pct === null ? null : priceVnd - priceVnd / (1 + pct / 100);
+
     return {
       symbol: row.symbol,
       name: row.name,
       nameEn: row.nameEn,
       group: row.group,
       unit: row.unit,
-      price: parseFloat(row.price),
+      price: num(row.price) ?? 0,
       priceVnd,
       currency: row.currency,
       date: new Date(row.date),
-      changeDay: priceVndYesterday ? priceVnd - priceVndYesterday : null,
-      changeDayPct: priceVndYesterday ? ((priceVnd - priceVndYesterday) / priceVndYesterday) * 100 : null,
-      changeMonth: priceVndMonth ? priceVnd - priceVndMonth : null,
-      changeMonthPct: priceVndMonth ? ((priceVnd - priceVndMonth) / priceVndMonth) * 100 : null,
-      changeYear: priceVndYear ? priceVnd - priceVndYear : null,
-      changeYearPct: priceVndYear ? ((priceVnd - priceVndYear) / priceVndYear) * 100 : null,
+      source: row.source ?? null,
+      prevClose: num(row.prevClose),
+      high52w: num(row.high52w),
+      low52w: num(row.low52w),
+      changeDay: absFromPct(changeDayPct),
+      changeDayPct,
+      changeWeekPct: num(row.srcWeek),
+      changeMonth: absFromPct(changeMonthPct),
+      changeMonthPct,
+      changeYtdPct: num(row.srcYtd),
+      changeYear: absFromPct(changeYearPct),
+      changeYearPct,
     };
   });
 }
@@ -438,6 +481,7 @@ export interface CommodityImpactOnStock {
   reason: string | null;
   currentPrice: number | null;
   changeDayPct: number | null;
+  changeMonthPct: number | null;
 }
 
 export async function getStockCommodityImpacts(stockSymbol: string): Promise<CommodityImpactOnStock[]> {
@@ -450,41 +494,36 @@ export async function getStockCommodityImpacts(stockSymbol: string): Promise<Com
       csi.impact_score as "impactScore",
       csi.reason,
       lp.price_vnd as "currentPrice",
-      CASE
-        WHEN yp.price_vnd IS NOT NULL AND yp.price_vnd > 0
-        THEN ((lp.price_vnd - yp.price_vnd) / yp.price_vnd * 100)
-        ELSE NULL
-      END as "changeDayPct"
+      lp.change_pct_1d as "changeDayPct",
+      lp.change_pct_30d as "changeMonthPct"
     FROM commodity_stock_impact csi
     JOIN commodities c ON c.id = csi.commodity_id
     LEFT JOIN LATERAL (
-      SELECT price_vnd
+      SELECT price_vnd, change_pct_1d, change_pct_30d
       FROM commodity_prices
       WHERE commodity_id = c.id
       ORDER BY date DESC
       LIMIT 1
     ) lp ON true
-    LEFT JOIN LATERAL (
-      SELECT price_vnd
-      FROM commodity_prices
-      WHERE commodity_id = c.id
-        AND date >= NOW() - INTERVAL '2 days'
-        AND date < DATE_TRUNC('day', NOW())
-      ORDER BY date DESC
-      LIMIT 1
-    ) yp ON true
     WHERE csi.symbol = ${stockSymbol.toUpperCase()}
     ORDER BY csi.impact_score DESC, c.display_order
   `);
   
+  const num = (v: unknown): number | null => {
+    if (v === null || v === undefined) return null;
+    const n = typeof v === "number" ? v : parseFloat(String(v));
+    return Number.isFinite(n) ? n : null;
+  };
+
   return (result.rows as any[]).map((row) => ({
     symbol: row.symbol,
     name: row.name,
     group: row.group,
     impactType: row.impactType as "positive" | "negative" | "neutral",
-    impactScore: parseFloat(row.impactScore),
+    impactScore: num(row.impactScore) ?? 0,
     reason: row.reason,
-    currentPrice: row.currentPrice ? parseFloat(row.currentPrice) : null,
-    changeDayPct: row.changeDayPct ? parseFloat(row.changeDayPct) : null,
+    currentPrice: num(row.currentPrice),
+    changeDayPct: num(row.changeDayPct),
+    changeMonthPct: num(row.changeMonthPct),
   }));
 }
