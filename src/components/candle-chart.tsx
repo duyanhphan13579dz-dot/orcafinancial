@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { createChart, ColorType, CrosshairMode, Time } from "lightweight-charts";
+// Cú pháp import mới: Bổ sung thêm CandlestickSeries và HistogramSeries
+import { createChart, ColorType, CrosshairMode, CandlestickSeries, HistogramSeries, Time } from "lightweight-charts";
 
 export interface Bar {
-  time: number; // Unix timestamp
+  time: number;
   open: number;
   high: number;
   low: number;
@@ -18,15 +19,15 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
   useEffect(() => {
     if (!chartContainerRef.current || bars.length === 0) return;
 
-    // 1. Khởi tạo biểu đồ TradingView
+    // 1. Khởi tạo biểu đồ
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#7aa8d4", // ORCA muted text
+        textColor: "#7aa8d4",
         fontFamily: "'JetBrains Mono', monospace",
       },
       grid: {
-        vertLines: { color: "rgba(26, 53, 88, 0.4)" }, // ORCA border color
+        vertLines: { color: "rgba(26, 53, 88, 0.4)" },
         horzLines: { color: "rgba(26, 53, 88, 0.4)" },
       },
       crosshair: {
@@ -43,10 +44,10 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
       height: height,
     });
 
-    // 2. Thêm chuỗi dữ liệu Nến (Candlesticks)
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: "#34d399", // emerald-400
-      downColor: "#fb7185", // rose-400
+    // 2. Thêm chuỗi dữ liệu Nến (Candlesticks) - Cú pháp chuẩn v5
+    const candlestickSeries = chart.addSeries(CandlestickSeries, {
+      upColor: "#34d399", 
+      downColor: "#fb7185", 
       borderVisible: false,
       wickUpColor: "#34d399",
       wickDownColor: "#fb7185",
@@ -61,15 +62,15 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
     }));
     candlestickSeries.setData(candleData);
 
-    // 3. Thêm chuỗi dữ liệu Khối lượng (Volume Histogram)
-    const volumeSeries = chart.addHistogramSeries({
+    // 3. Thêm chuỗi khối lượng (Volume Histogram) - Cú pháp chuẩn v5
+    const volumeSeries = chart.addSeries(HistogramSeries, {
       color: "#26a69a",
       priceFormat: {
         type: "volume",
       },
-      priceScaleId: "", // Overlay (không gắn với cột giá bên phải)
+      priceScaleId: "", 
       scaleMargins: {
-        top: 0.8, // Đẩy volume xuống 20% phía dưới của khung hình
+        top: 0.8, 
         bottom: 0,
       },
     });
@@ -81,7 +82,6 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
     }));
     volumeSeries.setData(volumeData);
 
-    // 4. Khớp khung nhìn và xử lý Resize
     chart.timeScale().fitContent();
 
     const handleResize = () => {
@@ -91,7 +91,6 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
     };
     window.addEventListener("resize", handleResize);
 
-    // Dọn dẹp bộ nhớ khi component bị unmount
     return () => {
       window.removeEventListener("resize", handleResize);
       chart.remove();
@@ -105,7 +104,7 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
   return <div ref={chartContainerRef} className="w-full relative" />;
 }
 
-// Giữ nguyên Sparkline cũ dùng SVG vì nó rất nhỏ và hiệu quả cho Dashboard
+// Sparkline SVG giữ nguyên cho Dashboard
 export function Sparkline({ bars, width = 120, height = 36 }: { bars: Bar[]; width?: number; height?: number }) {
   if (bars.length < 2) return null;
   const closes = bars.map((b) => b.close);
