@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { fmtNum, fmtVol } from "@/lib/client";
+import { useEffect, useRef } from "react";
+import { createChart, ColorType, CrosshairMode, Time } from "lightweight-charts";
 
 export interface Bar {
-  time: number;
+  time: number; // Unix timestamp
   open: number;
   high: number;
   low: number;
@@ -13,109 +13,99 @@ export interface Bar {
 }
 
 export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: number }) {
-  const [hover, setHover] = useState<number | null>(null);
-  const width = 900;
-  const padTop = 12;
-  const volH = 70;
-  const priceH = height - volH - padTop - 20;
+  const chartContainerRef = useRef<HTMLDivElement>(null);
 
-  const view = useMemo(() => {
-    const data = bars.slice(-160);
-    if (data.length === 0) return null;
-    const min = Math.min(...data.map((b) => b.low));
-    const max = Math.max(...data.map((b) => b.high));
-    const maxVol = Math.max(...data.map((b) => b.volume), 1);
-    const range = max - min || 1;
-    const step = width / data.length;
-    const y = (p: number) => padTop + ((max - p) / range) * priceH;
-    const vy = (v: number) => height - 20 - (v / maxVol) * volH;
-    return { data, min, max, step, y, vy };
-  }, [bars, priceH, height]);
+  useEffect(() => {
+    if (!chartContainerRef.current || bars.length === 0) return;
 
-  if (!view) return <div className="flex h-64 items-center justify-center text-slate-500">Không có dữ liệu</div>;
+    // 1. Khởi tạo biểu đồ TradingView
+    const chart = createChart(chartContainerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: "transparent" },
+        textColor: "#7aa8d4", // ORCA muted text
+        fontFamily: "'JetBrains Mono', monospace",
+      },
+      grid: {
+        vertLines: { color: "rgba(26, 53, 88, 0.4)" }, // ORCA border color
+        horzLines: { color: "rgba(26, 53, 88, 0.4)" },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+      },
+      rightPriceScale: {
+        borderColor: "rgba(26, 53, 88, 0.8)",
+      },
+      timeScale: {
+        borderColor: "rgba(26, 53, 88, 0.8)",
+        timeVisible: true,
+      },
+      width: chartContainerRef.current.clientWidth,
+      height: height,
+    });
 
-  const { data, min, max, step, y, vy } = view;
-  const hovered = hover !== null ? data[hover] : null;
-  const gridLines = 5;
+    // 2. Thêm chuỗi dữ liệu Nến (Candlesticks)
+    const candlestickSeries = chart.addCandlestickSeries({
+      upColor: "#34d399", // emerald-400
+      downColor: "#fb7185", // rose-400
+      borderVisible: false,
+      wickUpColor: "#34d399",
+      wickDownColor: "#fb7185",
+    });
 
-  return (
-    <div className="relative w-full">
-      {hovered && (
-        <div className="absolute left-2 top-2 z-10 rounded bg-slate-900/90 border border-slate-700 px-3 py-1.5 text-xs space-x-3">
-          <span className="text-slate-400">{new Date(hovered.time * 1000).toLocaleDateString("vi-VN")}</span>
-          <span>O {fmtNum(hovered.open)}</span>
-          <span>H {fmtNum(hovered.high)}</span>
-          <span>L {fmtNum(hovered.low)}</span>
-          <span className={hovered.close >= hovered.open ? "text-emerald-400" : "text-rose-400"}>
-            C {fmtNum(hovered.close)}
-          </span>
-          <span className="text-slate-400">Vol {fmtVol(hovered.volume)}</span>
-        </div>
-      )}
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="w-full"
-        onMouseLeave={() => setHover(null)}
-        onMouseMove={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          const x = ((e.clientX - rect.left) / rect.width) * width;
-          setHover(Math.max(0, Math.min(data.length - 1, Math.floor(x / step))));
-        }}
-      >
-        {Array.from({ length: gridLines + 1 }, (_, i) => {
-          const price = max - ((max - min) / gridLines) * i;
-          const yy = y(price);
-          return (
-            <g key={i}>
-              <line x1={0} x2={width} y1={yy} y2={yy} stroke="#1c2536" strokeWidth={1} />
-              <text x={width - 4} y={yy - 3} textAnchor="end" fontSize={10} fill="#64748b">
-                {fmtNum(price)}
-              </text>
-            </g>
-          );
-        })}
-        {data.map((b, i) => {
-          const up = b.close >= b.open;
-          const color = up ? "#34d399" : "#fb7185";
-          const cx = i * step + step / 2;
-          const bodyTop = y(Math.max(b.open, b.close));
-          const bodyBot = y(Math.min(b.open, b.close));
-          return (
-            <g key={b.time} opacity={hover === null || hover === i ? 1 : 0.55}>
-              <line x1={cx} x2={cx} y1={y(b.high)} y2={y(b.low)} stroke={color} strokeWidth={1} />
-              <rect
-                x={cx - Math.max(1, step * 0.32)}
-                y={bodyTop}
-                width={Math.max(2, step * 0.64)}
-                height={Math.max(1, bodyBot - bodyTop)}
-                fill={color}
-              />
-              <rect
-                x={cx - Math.max(1, step * 0.32)}
-                y={vy(b.volume)}
-                width={Math.max(2, step * 0.64)}
-                height={height - 20 - vy(b.volume)}
-                fill={color}
-                opacity={0.35}
-              />
-            </g>
-          );
-        })}
-        {hover !== null && (
-          <line
-            x1={hover * step + step / 2}
-            x2={hover * step + step / 2}
-            y1={padTop}
-            y2={height - 20}
-            stroke="#475569"
-            strokeDasharray="3,3"
-          />
-        )}
-      </svg>
-    </div>
-  );
+    const candleData = bars.map((b) => ({
+      time: b.time as Time,
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+    }));
+    candlestickSeries.setData(candleData);
+
+    // 3. Thêm chuỗi dữ liệu Khối lượng (Volume Histogram)
+    const volumeSeries = chart.addHistogramSeries({
+      color: "#26a69a",
+      priceFormat: {
+        type: "volume",
+      },
+      priceScaleId: "", // Overlay (không gắn với cột giá bên phải)
+      scaleMargins: {
+        top: 0.8, // Đẩy volume xuống 20% phía dưới của khung hình
+        bottom: 0,
+      },
+    });
+
+    const volumeData = bars.map((b) => ({
+      time: b.time as Time,
+      value: b.volume,
+      color: b.close >= b.open ? "rgba(52, 211, 153, 0.3)" : "rgba(251, 113, 133, 0.3)",
+    }));
+    volumeSeries.setData(volumeData);
+
+    // 4. Khớp khung nhìn và xử lý Resize
+    chart.timeScale().fitContent();
+
+    const handleResize = () => {
+      if (chartContainerRef.current) {
+        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      }
+    };
+    window.addEventListener("resize", handleResize);
+
+    // Dọn dẹp bộ nhớ khi component bị unmount
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      chart.remove();
+    };
+  }, [bars, height]);
+
+  if (bars.length === 0) {
+    return <div className="flex items-center justify-center text-slate-500 text-sm" style={{ height }}>Không có dữ liệu</div>;
+  }
+
+  return <div ref={chartContainerRef} className="w-full relative" />;
 }
 
+// Giữ nguyên Sparkline cũ dùng SVG vì nó rất nhỏ và hiệu quả cho Dashboard
 export function Sparkline({ bars, width = 120, height = 36 }: { bars: Bar[]; width?: number; height?: number }) {
   if (bars.length < 2) return null;
   const closes = bars.map((b) => b.close);
@@ -124,6 +114,7 @@ export function Sparkline({ bars, width = 120, height = 36 }: { bars: Bar[]; wid
   const range = max - min || 1;
   const pts = closes.map((c, i) => `${(i / (closes.length - 1)) * width},${height - ((c - min) / range) * (height - 4) - 2}`);
   const up = closes[closes.length - 1] >= closes[0];
+  
   return (
     <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height}>
       <polyline points={pts.join(" ")} fill="none" stroke={up ? "#34d399" : "#fb7185"} strokeWidth={1.5} />
