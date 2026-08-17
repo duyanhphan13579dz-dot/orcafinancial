@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-// Cú pháp import mới: Bổ sung thêm CandlestickSeries và HistogramSeries
 import { createChart, ColorType, CrosshairMode, CandlestickSeries, HistogramSeries, Time } from "lightweight-charts";
 
 export interface Bar {
@@ -44,7 +43,7 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
       height: height,
     });
 
-    // 2. Thêm chuỗi dữ liệu Nến (Candlesticks) - Cú pháp chuẩn v5
+    // 2. Thêm chuỗi dữ liệu Nến (Candlesticks)
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
       upColor: "#34d399", 
       downColor: "#fb7185", 
@@ -62,15 +61,19 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
     }));
     candlestickSeries.setData(candleData);
 
-    // 3. Thêm chuỗi khối lượng (Volume Histogram) - Cú pháp chuẩn v5
+    // 3. Thêm chuỗi khối lượng (Volume Histogram)
     const volumeSeries = chart.addSeries(HistogramSeries, {
       color: "#26a69a",
       priceFormat: {
         type: "volume",
       },
-      priceScaleId: "", 
+      priceScaleId: "", // Gắn vào trục giá ẩn (Overlay)
+    });
+
+    // 4. Tách phần cấu hình scaleMargins ra và áp dụng riêng cho trục giá ẩn ""
+    chart.priceScale("").applyOptions({
       scaleMargins: {
-        top: 0.8, 
+        top: 0.8, // Đẩy volume xuống 20% bên dưới
         bottom: 0,
       },
     });
@@ -104,7 +107,7 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
   return <div ref={chartContainerRef} className="w-full relative" />;
 }
 
-// Sparkline SVG giữ nguyên cho Dashboard
+// Sparkline SVG
 export function Sparkline({ bars, width = 120, height = 36 }: { bars: Bar[]; width?: number; height?: number }) {
   if (bars.length < 2) return null;
   const closes = bars.map((b) => b.close);
