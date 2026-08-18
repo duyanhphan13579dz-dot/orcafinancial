@@ -1,10 +1,30 @@
 "use client";
 
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CandleChart, type Bar } from "@/components/candle-chart";
-import { FinancialStatements } from "@/components/financial-statements";
-import { CompanyProfile } from "@/components/company-profile";
-import { SectionTitle } from "@/components/period-pill";
+import {
+  use,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
+import {
+  CandleChart,
+  type Bar,
+} from "@/components/candle-chart";
+
+import {
+  FinancialStatements,
+} from "@/components/financial-statements";
+
+import {
+  CompanyProfile,
+} from "@/components/company-profile";
+
+import {
+  SectionTitle,
+} from "@/components/period-pill";
+
 import {
   EPSTrendChart,
   HealthGauge,
@@ -13,10 +33,12 @@ import {
   RevenueProfitChart,
   ROEvsIndustryChart,
 } from "@/components/fundamental-charts";
+
 import {
   HealthDetailCard,
   type HealthDetail,
 } from "@/components/financial-health-detail";
+
 import {
   api,
   changeColor,
@@ -26,11 +48,14 @@ import {
   timeAgo,
   usePoll,
 } from "@/lib/client";
-import { ProtectedPage } from "@/components/ProtectedPage";
 
-/* ──────────────────────────────────────────────────────────────
- * Types
- * ────────────────────────────────────────────────────────────── */
+import {
+  ProtectedPage,
+} from "@/components/ProtectedPage";
+
+/* ============================================================
+ * TYPES
+ * ============================================================ */
 
 interface Quote {
   symbol: string;
@@ -58,23 +83,29 @@ interface Analysis {
   confidence: number;
   score: number;
   reasons: string[];
+
   rsi14: number | null;
+
   macd: {
     macd: number;
     signal: number;
     histogram: number;
   } | null;
+
   sma20: number | null;
   sma50: number | null;
+
   bollinger: {
     upper: number;
     middle: number;
     lower: number;
   } | null;
+
   supportResistance: {
     support: number;
     resistance: number;
   } | null;
+
   volatilityPct: number | null;
   maxDrawdownPct: number | null;
   changePct1m: number | null;
@@ -92,7 +123,10 @@ interface NewsItem {
 interface CandlePattern {
   name: string;
   nameVi: string;
-  type: "bullish" | "bearish" | "neutral";
+  type:
+    | "bullish"
+    | "bearish"
+    | "neutral";
   time: number;
   reliability: number;
   description: string;
@@ -101,7 +135,10 @@ interface CandlePattern {
 interface ChartPattern {
   name: string;
   nameVi: string;
-  type: "bullish" | "bearish" | "neutral";
+  type:
+    | "bullish"
+    | "bearish"
+    | "neutral";
   reliability: number;
   target: number | null;
   description: string;
@@ -121,6 +158,7 @@ interface HealthBreakdown {
 
 interface FundamentalData {
   currentPrice: number;
+
   eps: number | null;
   roe: number | null;
   roa: number | null;
@@ -138,11 +176,15 @@ interface FundamentalData {
   financialHealth: {
     overallScore: number;
     rating: string;
-    breakdown: Record<string, HealthBreakdown>;
+    breakdown: Record<
+      string,
+      HealthBreakdown
+    >;
   };
 
   valuation: {
     currentPrice: number;
+
     pe: number | null;
     pb: number | null;
     evEbitda: number | null;
@@ -183,6 +225,7 @@ interface SentimentData {
   sentimentScore: number;
   marketSentiment: number;
   newsCount24h: number;
+
   articles: {
     title: string;
     sentiment: number;
@@ -190,21 +233,61 @@ interface SentimentData {
   }[];
 }
 
-/* ──────────────────────────────────────────────────────────────
- * Chart configuration
- * ────────────────────────────────────────────────────────────── */
+interface HistoryResponse {
+  symbol: string;
+  timeframe: string;
+  bars: unknown;
+}
+
+/* ============================================================
+ * TIMEFRAME
+ * ============================================================ */
 
 const TIMEFRAMES = [
-  { key: "15m", label: "15 phút" },
-  { key: "1h", label: "1 giờ" },
-  { key: "1d", label: "Ngày" },
-  { key: "1w", label: "Tuần" },
-  { key: "1M", label: "Tháng" },
+  {
+    key: "15m",
+    label: "15 phút",
+  },
+  {
+    key: "1h",
+    label: "1 giờ",
+  },
+  {
+    key: "1d",
+    label: "Ngày",
+  },
+  {
+    key: "1w",
+    label: "Tuần",
+  },
+  {
+    key: "1M",
+    label: "Tháng",
+  },
 ] as const;
 
-type Timeframe = (typeof TIMEFRAMES)[number]["key"];
+type Timeframe =
+  (typeof TIMEFRAMES)[number]["key"];
 
-const INITIAL_HISTORY_LIMIT: Record<Timeframe, number> = {
+/*
+ * Số nến lấy lần đầu.
+ *
+ * Không nên lấy quá nhiều ngay từ đầu vì:
+ *
+ * 15m -> 1000 candles
+ * 1h  -> 1000 candles
+ * 1d  -> 1000 candles
+ * 1w  -> 600 candles
+ * 1M  -> 240 candles
+ *
+ * Khi user kéo về quá khứ, loadMoreHistory()
+ * sẽ lấy thêm.
+ */
+
+const INITIAL_HISTORY_LIMIT: Record<
+  Timeframe,
+  number
+> = {
   "15m": 1000,
   "1h": 1000,
   "1d": 1000,
@@ -212,7 +295,10 @@ const INITIAL_HISTORY_LIMIT: Record<Timeframe, number> = {
   "1M": 240,
 };
 
-const HISTORY_PAGE_SIZE: Record<Timeframe, number> = {
+const HISTORY_PAGE_SIZE: Record<
+  Timeframe,
+  number
+> = {
   "15m": 1000,
   "1h": 1000,
   "1d": 1000,
@@ -220,7 +306,14 @@ const HISTORY_PAGE_SIZE: Record<Timeframe, number> = {
   "1M": 120,
 };
 
-const RECO_STYLE: Record<string, string> = {
+/* ============================================================
+ * UI CONFIG
+ * ============================================================ */
+
+const RECO_STYLE: Record<
+  string,
+  string
+> = {
   "Strong Buy":
     "bg-emerald-500/20 text-emerald-300 border-emerald-600",
 
@@ -247,13 +340,18 @@ const TABS = [
   "Tin tức",
 ] as const;
 
-type Tab = (typeof TABS)[number];
+type Tab =
+  (typeof TABS)[number];
 
-/* ──────────────────────────────────────────────────────────────
- * Helpers
- * ────────────────────────────────────────────────────────────── */
+/* ============================================================
+ * HELPERS
+ * ============================================================ */
 
-function SentimentBadge({ score }: { score: number }) {
+function SentimentBadge({
+  score,
+}: {
+  score: number;
+}) {
   const label =
     score >= 0.15
       ? "Tích cực"
@@ -269,8 +367,11 @@ function SentimentBadge({ score }: { score: number }) {
         : "text-rose-400";
 
   return (
-    <span className={`text-xs font-medium ${color}`}>
-      {label} ({score >= 0 ? "+" : ""}
+    <span
+      className={`text-xs font-medium ${color}`}
+    >
+      {label} (
+      {score >= 0 ? "+" : ""}
       {score.toFixed(2)})
     </span>
   );
@@ -279,7 +380,10 @@ function SentimentBadge({ score }: { score: number }) {
 function PatternBadge({
   type,
 }: {
-  type: "bullish" | "bearish" | "neutral";
+  type:
+    | "bullish"
+    | "bearish"
+    | "neutral";
 }) {
   const cfg =
     type === "bullish"
@@ -296,7 +400,9 @@ function PatternBadge({
         : "─ Trung lập";
 
   return (
-    <span className={`rounded px-1.5 py-0.5 text-[10px] ${cfg}`}>
+    <span
+      className={`rounded px-1.5 py-0.5 text-[10px] ${cfg}`}
+    >
       {label}
     </span>
   );
@@ -309,25 +415,35 @@ function HealthBar({
   score: number;
   label: string;
 }) {
+  const safeScore = Math.max(
+    0,
+    Math.min(100, score),
+  );
+
   const color =
-    score >= 70
+    safeScore >= 70
       ? "bg-emerald-500"
-      : score >= 40
+      : safeScore >= 40
         ? "bg-amber-500"
         : "bg-rose-500";
 
   return (
     <div className="space-y-0.5">
       <div className="flex justify-between text-[10px]">
-        <span className="text-slate-400">{label}</span>
-        <span>{score}/100</span>
+        <span className="text-slate-400">
+          {label}
+        </span>
+
+        <span>
+          {safeScore}/100
+        </span>
       </div>
 
       <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
         <div
           className={`h-full rounded-full ${color}`}
           style={{
-            width: `${Math.max(0, Math.min(100, score))}%`,
+            width: `${safeScore}%`,
           }}
         />
       </div>
@@ -335,94 +451,105 @@ function HealthBar({
   );
 }
 
-/* ──────────────────────────────────────────────────────────────
- * History helpers
- * ────────────────────────────────────────────────────────────── */
+/* ============================================================
+ * CHART HELPERS
+ * ============================================================ */
 
-function mergeBars(existing: Bar[], incoming: Bar[]): Bar[] {
-  const map = new Map<number, Bar>();
-
-  for (const bar of existing) {
-    map.set(bar.time, bar);
-  }
-
-  for (const bar of incoming) {
-    map.set(bar.time, bar);
-  }
-
-  return Array.from(map.values()).sort(
-    (a, b) => a.time - b.time,
-  );
-}
-
-function normalizeBars(value: unknown): Bar[] {
+function normalizeBars(
+  value: unknown,
+): Bar[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
   return value
-    .filter((bar): bar is Bar => {
-      if (!bar || typeof bar !== "object") {
+    .filter((item): item is Bar => {
+      if (
+        !item ||
+        typeof item !== "object"
+      ) {
         return false;
       }
 
-      const item = bar as Record<string, unknown>;
+      const bar =
+        item as Record<
+          string,
+          unknown
+        >;
 
       return (
-        typeof item.time === "number" &&
-        typeof item.open === "number" &&
-        typeof item.high === "number" &&
-        typeof item.low === "number" &&
-        typeof item.close === "number" &&
-        typeof item.volume === "number"
+        typeof bar.time === "number" &&
+        typeof bar.open === "number" &&
+        typeof bar.high === "number" &&
+        typeof bar.low === "number" &&
+        typeof bar.close === "number" &&
+        typeof bar.volume === "number"
       );
     })
-    .sort((a, b) => a.time - b.time);
+    .sort(
+      (a, b) =>
+        a.time - b.time,
+    );
 }
 
-/* ──────────────────────────────────────────────────────────────
- * Page
- * ────────────────────────────────────────────────────────────── */
+function mergeBars(
+  first: Bar[],
+  second: Bar[],
+): Bar[] {
+  const map =
+    new Map<number, Bar>();
+
+  for (const bar of first) {
+    map.set(
+      bar.time,
+      bar,
+    );
+  }
+
+  for (const bar of second) {
+    map.set(
+      bar.time,
+      bar,
+    );
+  }
+
+  return Array.from(
+    map.values(),
+  ).sort(
+    (a, b) =>
+      a.time - b.time,
+  );
+}
+
+/* ============================================================
+ * PAGE
+ * ============================================================ */
 
 export default function StockPage({
   params,
 }: {
-  params: Promise<{ symbol: string }>;
+  params: Promise<{
+    symbol: string;
+  }>;
 }) {
-  const { symbol: raw } = use(params);
+  const { symbol: raw } =
+    use(params);
 
-  const symbol = raw.toUpperCase();
+  const symbol =
+    raw.toUpperCase();
 
-  const [tf, setTf] = useState<Timeframe>("1d");
-  const [tab, setTab] = useState<Tab>("Tổng quan");
-  const [watchMsg, setWatchMsg] = useState<string | null>(null);
+  const [tf, setTf] =
+    useState<Timeframe>("1d");
 
-  /* ────────────────────────────────────────────────────────────
-   * Chart history state
-   * ──────────────────────────────────────────────────────────── */
+  const [tab, setTab] =
+    useState<Tab>("Tổng quan");
 
-  const [historyBars, setHistoryBars] = useState<Bar[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(true);
-  const [historyLoadingMore, setHistoryLoadingMore] =
-    useState(false);
-
-  const [historyHasMore, setHistoryHasMore] =
-    useState(true);
-
-  const [historyError, setHistoryError] =
+  const [watchMsg, setWatchMsg] =
     useState<string | null>(null);
 
-  const historyRequestRef = useRef(0);
-
-  const historyBeforeRef = useRef<number | null>(null);
-
-  const historyHasMoreRef = useRef(true);
-
-  const historyLoadingMoreRef = useRef(false);
-
-  /* ────────────────────────────────────────────────────────────
-   * Existing polling
-   * ──────────────────────────────────────────────────────────── */
+  /* ==========================================================
+   * STOCK / API DATA
+   * ========================================================== */
 
   const {
     data: stock,
@@ -443,35 +570,45 @@ export default function StockPage({
 
   const {
     data: fundamental,
-  } = usePoll<FundamentalData>(
-    tab === "Cơ bản" || tab === "Tổng quan"
-      ? `/stocks/${symbol}/fundamental`
-      : null,
-    120000,
-  );
+  } =
+    usePoll<FundamentalData>(
+      tab === "Cơ bản" ||
+        tab === "Tổng quan"
+        ? `/stocks/${symbol}/fundamental`
+        : null,
+      120000,
+    );
 
   const {
     data: technical,
-  } = usePoll<TechnicalData>(
-    tab === "Mẫu hình" || tab === "Tổng quan"
-      ? `/stocks/${symbol}/technical?timeframe=${tf}`
-      : null,
-    60000,
-  );
+  } =
+    usePoll<TechnicalData>(
+      tab === "Mẫu hình" ||
+        tab === "Tổng quan"
+        ? `/stocks/${symbol}/technical?timeframe=${encodeURIComponent(tf)}`
+        : null,
+      60000,
+    );
 
   const {
     data: sentiment,
-  } = usePoll<SentimentData>(
-    `/stocks/${symbol}/sentiment`,
-    60000,
-  );
+  } =
+    usePoll<SentimentData>(
+      `/stocks/${symbol}/sentiment`,
+      60000,
+    );
 
   const {
     data: newsData,
-  } = usePoll<{ items: NewsItem[] }>(
-    `/news?symbol=${symbol}&limit=10`,
-    90000,
-  );
+  } =
+    usePoll<{
+      items: NewsItem[];
+    }>(
+      `/news?symbol=${encodeURIComponent(
+        symbol,
+      )}&limit=10`,
+      90000,
+    );
 
   const onFundamentalTab =
     tab === "Cơ bản" ||
@@ -479,642 +616,467 @@ export default function StockPage({
 
   const {
     data: chartData,
-  } = usePoll<any>(
-    onFundamentalTab
-      ? `/stocks/${symbol}/fundamental-chart`
-      : null,
-    120000,
-  );
+  } =
+    usePoll<any>(
+      onFundamentalTab
+        ? `/stocks/${symbol}/fundamental-chart`
+        : null,
+      120000,
+    );
 
   const {
     data: healthDetail,
-  } = usePoll<HealthDetail>(
-    tab === "Cơ bản"
-      ? `/stocks/${symbol}/financial-health-detail`
-      : null,
-    120000,
+  } =
+    usePoll<HealthDetail>(
+      tab === "Cơ bản"
+        ? `/stocks/${symbol}/financial-health-detail`
+        : null,
+      120000,
+    );
+
+  const q =
+    stock?.quote;
+
+  /* ==========================================================
+   * CHART STATE
+   * ========================================================== */
+
+  const [
+    historyBars,
+    setHistoryBars,
+  ] = useState<Bar[]>([]);
+
+  const [
+    historyLoading,
+    setHistoryLoading,
+  ] = useState(true);
+
+  const [
+    historyLoadingMore,
+    setHistoryLoadingMore,
+  ] = useState(false);
+
+  const [
+    historyHasMore,
+    setHistoryHasMore,
+  ] = useState(true);
+
+  const [
+    historyError,
+    setHistoryError,
+  ] = useState<string | null>(
+    null,
   );
 
-  const q = stock?.quote;
+  const historyRequestRef =
+    useRef(0);
 
-  /* ────────────────────────────────────────────────────────────
-   * Reset chart when symbol/timeframe changes
-   * ──────────────────────────────────────────────────────────── */
+  const historyBeforeRef =
+    useRef<number | null>(
+      null,
+    );
+
+  const historyHasMoreRef =
+    useRef(true);
+
+  const historyLoadingMoreRef =
+    useRef(false);
+
+  /* ==========================================================
+   * LOAD HISTORY
+   *
+   * IMPORTANT:
+   *
+   * Do NOT use fetch("/stocks/...")
+   *
+   * Use api("/stocks/...")
+   *
+   * api() automatically becomes:
+   *
+   * /api/v1/stocks/:symbol/history
+   *
+   * ========================================================== */
+
+  const loadHistory =
+    useCallback(
+      async (
+        mode:
+          | "initial"
+          | "refresh",
+      ) => {
+        const requestId =
+          ++historyRequestRef.current;
+
+        try {
+          if (
+            mode === "initial"
+          ) {
+            setHistoryLoading(
+              true,
+            );
+          }
+
+          const limit =
+            INITIAL_HISTORY_LIMIT[
+              tf
+            ];
+
+          const url =
+            `/stocks/${symbol}/history` +
+            `?timeframe=${encodeURIComponent(
+              tf,
+            )}` +
+            `&limit=${limit}`;
+
+          const response =
+            await api<HistoryResponse>(
+              url,
+            );
+
+          if (
+            requestId !==
+            historyRequestRef.current
+          ) {
+            return;
+          }
+
+          const bars =
+            normalizeBars(
+              response.data?.bars,
+            );
+
+          if (
+            mode === "refresh"
+          ) {
+            setHistoryBars(
+              (previous) =>
+                mergeBars(
+                  previous,
+                  bars,
+                ),
+            );
+          } else {
+            setHistoryBars(
+              bars,
+            );
+          }
+
+          if (
+            bars.length > 0
+          ) {
+            historyBeforeRef.current =
+              bars[0].time;
+          }
+
+          const explicitHasMore =
+            response.meta
+              ?.hasMore;
+
+          const hasMore =
+            typeof explicitHasMore ===
+            "boolean"
+              ? explicitHasMore
+              : bars.length >=
+                limit;
+
+          historyHasMoreRef.current =
+            hasMore;
+
+          setHistoryHasMore(
+            hasMore,
+          );
+
+          setHistoryError(
+            null,
+          );
+        } catch (error) {
+          if (
+            requestId !==
+            historyRequestRef.current
+          ) {
+            return;
+          }
+
+          setHistoryError(
+            error instanceof Error
+              ? error.message
+              : "Không tải được dữ liệu chart",
+          );
+
+          if (
+            mode === "initial"
+          ) {
+            setHistoryBars(
+              [],
+            );
+          }
+        } finally {
+          if (
+            requestId ===
+            historyRequestRef.current
+          ) {
+            setHistoryLoading(
+              false,
+            );
+          }
+        }
+      },
+      [symbol, tf],
+    );
+
+  /* ==========================================================
+   * LOAD OLDER HISTORY
+   *
+   * Used when user requests more historical data.
+   * ========================================================== */
+
+  const loadMoreHistory =
+    useCallback(
+      async () => {
+        if (
+          historyLoadingMoreRef.current
+        ) {
+          return;
+        }
+
+        if (
+          !historyHasMoreRef.current
+        ) {
+          return;
+        }
+
+        const oldest =
+          historyBeforeRef.current;
+
+        if (
+          oldest === null
+        ) {
+          return;
+        }
+
+        historyLoadingMoreRef.current =
+          true;
+
+        setHistoryLoadingMore(
+          true,
+        );
+
+        try {
+          const limit =
+            HISTORY_PAGE_SIZE[
+              tf
+            ];
+
+          const url =
+            `/stocks/${symbol}/history` +
+            `?timeframe=${encodeURIComponent(
+              tf,
+            )}` +
+            `&limit=${limit}` +
+            `&before=${encodeURIComponent(
+              String(oldest),
+            )}`;
+
+          const response =
+            await api<HistoryResponse>(
+              url,
+            );
+
+          const olderBars =
+            normalizeBars(
+              response.data?.bars,
+            );
+
+          if (
+            olderBars.length ===
+            0
+          ) {
+            historyHasMoreRef.current =
+              false;
+
+            setHistoryHasMore(
+              false,
+            );
+
+            return;
+          }
+
+          setHistoryBars(
+            (previous) =>
+              mergeBars(
+                olderBars,
+                previous,
+              ),
+          );
+
+          historyBeforeRef.current =
+            olderBars[0].time;
+
+          const explicitHasMore =
+            response.meta
+              ?.hasMore;
+
+          const hasMore =
+            typeof explicitHasMore ===
+            "boolean"
+              ? explicitHasMore
+              : olderBars.length >=
+                limit;
+
+          historyHasMoreRef.current =
+            hasMore;
+
+          setHistoryHasMore(
+            hasMore,
+          );
+        } catch (error) {
+          setHistoryError(
+            error instanceof Error
+              ? error.message
+              : "Không tải thêm được dữ liệu lịch sử",
+          );
+        } finally {
+          historyLoadingMoreRef.current =
+            false;
+
+          setHistoryLoadingMore(
+            false,
+          );
+        }
+      },
+      [symbol, tf],
+    );
+
+  /* ==========================================================
+   * RESET HISTORY WHEN SYMBOL / TIMEFRAME CHANGES
+   * ========================================================== */
 
   useEffect(() => {
-    historyRequestRef.current += 1;
+    historyRequestRef.current +=
+      1;
+
+    historyBeforeRef.current =
+      null;
+
+    historyHasMoreRef.current =
+      true;
+
+    historyLoadingMoreRef.current =
+      false;
 
     setHistoryBars([]);
     setHistoryLoading(true);
     setHistoryLoadingMore(false);
     setHistoryHasMore(true);
     setHistoryError(null);
-
-    historyBeforeRef.current = null;
-    historyHasMoreRef.current = true;
-    historyLoadingMoreRef.current = false;
   }, [symbol, tf]);
 
-  /* ────────────────────────────────────────────────────────────
-   * Initial / realtime history loader
-   *
-   * This deliberately does NOT use usePoll for the chart.
-   * Chart history has different lifecycle requirements from
-   * quote polling:
-   *
-   * - initial dataset
-   * - realtime refresh
-   * - prepend historical pages
-   * - preserve viewport
-   * ──────────────────────────────────────────────────────────── */
-
-  const loadHistory = useCallback(
-  async (
-    mode: "initial" | "refresh",
-  ) => {
-    const requestId =
-      ++historyRequestRef.current;
-
-    try {
-      if (mode === "initial") {
-        setHistoryLoading(true);
-      }
-
-      const limit =
-        INITIAL_HISTORY_LIMIT[tf];
-
-      const url =
-        `/stocks/${symbol}/history` +
-        `?timeframe=${encodeURIComponent(
-          tf,
-        )}` +
-        `&limit=${limit}`;
-
-      /*
-       * IMPORTANT:
-       *
-       * Do NOT use fetch() here.
-       *
-       * api() automatically targets:
-       *
-       * /api/v1/stocks/:symbol/history
-       *
-       * and unwraps the API envelope:
-       *
-       * {
-       *   data: {...},
-       *   meta: {...}
-       * }
-       */
-      const response =
-        await api<{
-          symbol: string;
-          timeframe: string;
-          bars: unknown;
-        }>(url);
-
-      if (
-        requestId !==
-        historyRequestRef.current
-      ) {
-        return;
-      }
-
-      const bars =
-        normalizeBars(
-          response.data?.bars,
-        );
-
-      setHistoryBars(
-        (previous) => {
-          if (
-            mode === "refresh" &&
-            previous.length > 0
-          ) {
-            return mergeBars(
-              previous,
-              bars,
-            );
-          }
-
-          return bars;
-        },
-      );
-
-      if (bars.length > 0) {
-        historyBeforeRef.current =
-          bars[0].time;
-      }
-
-      const explicitHasMore =
-        response.meta?.hasMore;
-
-      if (
-        typeof explicitHasMore ===
-        "boolean"
-      ) {
-        historyHasMoreRef.current =
-          explicitHasMore;
-
-        setHistoryHasMore(
-          explicitHasMore,
-        );
-      } else {
-        const inferred =
-          bars.length >= limit;
-
-        historyHasMoreRef.current =
-          inferred;
-
-        setHistoryHasMore(
-          inferred,
-        );
-      }
-
-      setHistoryError(null);
-    } catch (error) {
-      if (
-        requestId !==
-        historyRequestRef.current
-      ) {
-        return;
-      }
-
-      if (
-        mode === "initial"
-      ) {
-        setHistoryBars([]);
-      }
-
-      setHistoryError(
-        error instanceof Error
-          ? error.message
-          : "Không tải được dữ liệu chart",
-      );
-    } finally {
-      if (
-        requestId ===
-        historyRequestRef.current
-      ) {
-        setHistoryLoading(false);
-      }
-    }
-  },
-  [symbol, tf],
-);
-  
-        const payload =
-          (await response.json()) as {
-            bars?: unknown;
-            meta?: Record<
-              string,
-              unknown
-            >;
-          };
-
-        if (
-          requestId !==
-          historyRequestRef.current
-        ) {
-          return;
-        }
-
-        const bars =
-          normalizeBars(
-            payload.bars,
-          );
-
-        setHistoryBars((previous) => {
-          if (
-            mode === "refresh" &&
-            previous.length > 0
-          ) {
-            /*
-             * Realtime refresh should not discard
-             * historical pages that the user already
-             * loaded.
-             */
-            return mergeBars(
-              previous,
-              bars,
-            );
-          }
-
-          return bars;
-        });
-
-        if (bars.length > 0) {
-          historyBeforeRef.current =
-            bars[0].time;
-        }
-
-        /*
-         * If the backend explicitly returns hasMore,
-         * respect it. Otherwise assume that a full page
-         * means more data may exist.
-         */
-        const explicitHasMore =
-          payload.meta?.hasMore;
-
-        if (
-          typeof explicitHasMore ===
-          "boolean"
-        ) {
-          historyHasMoreRef.current =
-            explicitHasMore;
-
-          setHistoryHasMore(
-            explicitHasMore,
-          );
-        } else {
-          const inferred =
-            bars.length >= limit;
-
-          historyHasMoreRef.current =
-            inferred;
-
-          setHistoryHasMore(
-            inferred,
-          );
-        }
-
-        setHistoryError(null);
-      } catch (error) {
-        if (
-          requestId !==
-          historyRequestRef.current
-        ) {
-          return;
-        }
-
-        if (mode === "initial") {
-          setHistoryBars([]);
-        }
-
-        setHistoryError(
-          error instanceof Error
-            ? error.message
-            : "Không lấy được dữ liệu chart",
-        );
-      } finally {
-        if (
-          requestId ===
-          historyRequestRef.current
-        ) {
-          setHistoryLoading(false);
-        }
-      }
-    },
-    [symbol, tf],
-  );
-
-  /* ────────────────────────────────────────────────────────────
-   * Initial chart request
-   * ──────────────────────────────────────────────────────────── */
+  /* ==========================================================
+   * INITIAL LOAD
+   * ========================================================== */
 
   useEffect(() => {
-    void loadHistory("initial");
-
-    const interval =
-      window.setInterval(() => {
-        void loadHistory("refresh");
-      }, 30000);
-
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [loadHistory]);
-
-  /* ────────────────────────────────────────────────────────────
-   * Load older history
-   * ──────────────────────────────────────────────────────────── */
-
-  const loadMoreHistory = useCallback(
-  async () => {
-    if (
-      historyLoadingMoreRef.current ||
-      !historyHasMoreRef.current
-    ) {
-      return;
-    }
-
-    const currentBars =
-      historyBars;
-
-    if (
-      currentBars.length === 0
-    ) {
-      return;
-    }
-
-    const before =
-      historyBeforeRef.current ??
-      currentBars[0]?.time ??
-      null;
-
-    if (before == null) {
-      return;
-    }
-
-    historyLoadingMoreRef.current =
-      true;
-
-    setHistoryLoadingMore(
-      true,
+    void loadHistory(
+      "initial",
     );
+  }, [
+    loadHistory,
+  ]);
 
-    try {
-      const limit =
-        HISTORY_PAGE_SIZE[tf];
+  /* ==========================================================
+   * REFRESH CHART DATA
+   *
+   * Prices update every 30 seconds.
+   *
+   * This does not reload the entire page.
+   * ========================================================== */
 
-      const url =
-        `/stocks/${symbol}/history` +
-        `?timeframe=${encodeURIComponent(
-          tf,
-        )}` +
-        `&limit=${limit}` +
-        `&before=${encodeURIComponent(
-          String(before),
-        )}`;
-
-      /*
-       * Use the same API client as
-       * the rest of the application.
-       *
-       * This guarantees:
-       *
-       * /stocks/VIC/history
-       *
-       * becomes:
-       *
-       * /api/v1/stocks/VIC/history
-       */
-      const response =
-        await api<{
-          symbol: string;
-          timeframe: string;
-          bars: unknown;
-        }>(url);
-
-      const olderBars =
-        normalizeBars(
-          response.data?.bars,
-        );
-
-      if (
-        olderBars.length === 0
-      ) {
-        historyHasMoreRef.current =
-          false;
-
-        setHistoryHasMore(
-          false,
-        );
-
-        return;
-      }
-
-      setHistoryBars(
-        (previous) => {
-          const merged =
-            mergeBars(
-              olderBars,
-              previous,
-            );
-
-          if (
-            merged.length > 0
-          ) {
-            historyBeforeRef.current =
-              merged[0].time;
-          }
-
-          return merged;
+  useEffect(() => {
+    const timer =
+      window.setInterval(
+        () => {
+          void loadHistory(
+            "refresh",
+          );
         },
+        30000,
       );
 
-      const explicitHasMore =
-        response.meta?.hasMore;
-
-      if (
-        typeof explicitHasMore ===
-        "boolean"
-      ) {
-        historyHasMoreRef.current =
-          explicitHasMore;
-
-        setHistoryHasMore(
-          explicitHasMore,
-        );
-      } else {
-        const hasMore =
-          olderBars.length >=
-          limit;
-
-        historyHasMoreRef.current =
-          hasMore;
-
-        setHistoryHasMore(
-          hasMore,
-        );
-      }
-    } catch (error) {
-      setHistoryError(
-        error instanceof Error
-          ? error.message
-          : "Không tải thêm được dữ liệu lịch sử",
+    return () =>
+      window.clearInterval(
+        timer,
       );
-    } finally {
-      historyLoadingMoreRef.current =
-        false;
+  }, [
+    loadHistory,
+  ]);
 
-      setHistoryLoadingMore(
-        false,
-      );
-    }
-  },
-  [
-    symbol,
-    tf,
-    historyBars,
-  ],
-);
-        const limit =
-          HISTORY_PAGE_SIZE[tf];
+  /* ==========================================================
+   * WATCHLIST
+   * ========================================================== */
 
-        /*
-         * Step 2 frontend is intentionally
-         * backward compatible.
-         *
-         * Phase 2 will make the backend
-         * formally support:
-         *
-         * ?timeframe=1d
-         * &limit=500
-         * &before=<unix>
-         */
-        const url =
-          `/stocks/${symbol}/history` +
-          `?timeframe=${encodeURIComponent(tf)}` +
-          `&limit=${limit}` +
-          `&before=${encodeURIComponent(
-            String(before),
-          )}`;
-
-        const response = await fetch(
-          url,
+  const addToWatchlist =
+    async () => {
+      try {
+        await api(
+          `/watchlist`,
           {
-            method: "GET",
-            cache: "no-store",
+            method: "POST",
+            body: JSON.stringify({
+              symbol,
+            }),
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
           },
         );
 
-        if (!response.ok) {
-          throw new Error(
-            `History API ${response.status}`,
-          );
-        }
-
-        const payload =
-          (await response.json()) as {
-            bars?: unknown;
-            meta?: Record<
-              string,
-              unknown
-            >;
-          };
-
-        const olderBars =
-          normalizeBars(
-            payload.bars,
-          );
-
-        if (olderBars.length === 0) {
-          historyHasMoreRef.current =
-            false;
-
-          setHistoryHasMore(false);
-
-          return;
-        }
-
-        setHistoryBars((previous) => {
-          const merged =
-            mergeBars(
-              olderBars,
-              previous,
-            );
-
-          if (merged.length > 0) {
-            historyBeforeRef.current =
-              merged[0].time;
-          }
-
-          return merged;
-        });
-
-        /*
-         * Prefer backend metadata when available.
-         */
-        const explicitHasMore =
-          payload.meta?.hasMore;
-
-        if (
-          typeof explicitHasMore ===
-          "boolean"
-        ) {
-          historyHasMoreRef.current =
-            explicitHasMore;
-
-          setHistoryHasMore(
-            explicitHasMore,
-          );
-        } else {
-          const hasMore =
-            olderBars.length >= limit;
-
-          historyHasMoreRef.current =
-            hasMore;
-
-          setHistoryHasMore(hasMore);
-        }
+        setWatchMsg(
+          "Đã thêm ✓",
+        );
       } catch (error) {
-        console.error(
-          "[stock-chart] loadMoreHistory:",
-          error,
+        setWatchMsg(
+          error instanceof Error
+            ? error.message
+            : "Lỗi",
         );
-      } finally {
-        historyLoadingMoreRef.current =
-          false;
-
-        setHistoryLoadingMore(false);
       }
-    },
-    [
-      symbol,
-      tf,
-      historyBars,
-    ],
-  );
 
-  /* ────────────────────────────────────────────────────────────
-   * Watchlist
-   * ──────────────────────────────────────────────────────────── */
-
-  const addToWatchlist = async () => {
-    try {
-      await api(
-        `/watchlist`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            symbol,
-          }),
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-        },
+      window.setTimeout(
+        () =>
+          setWatchMsg(
+            null,
+          ),
+        2500,
       );
-
-      setWatchMsg("Đã thêm ✓");
-    } catch (err) {
-      setWatchMsg(
-        err instanceof Error
-          ? err.message
-          : "Lỗi",
-      );
-    }
-
-    setTimeout(
-      () => setWatchMsg(null),
-      2500,
-    );
-  };
-
-  const chartMeta = useMemo(() => {
-    return {
-      count: historyBars.length,
     };
-  }, [historyBars.length]);
+
+  /* ==========================================================
+   * RENDER
+   * ========================================================== */
 
   return (
-    <ProtectedPage featureName="chi tiết cổ phiếu">
+    <ProtectedPage
+      featureName="chi tiết cổ phiếu"
+    >
       <div className="space-y-4">
 
-        {/* ═══════════════════════════════════════════════════════
-            Header
-           ═══════════════════════════════════════════════════════ */}
+        {/* ======================================================
+         * HEADER
+         * ====================================================== */}
 
         <div className="panel p-4 flex flex-wrap items-center gap-x-6 gap-y-3">
+
           <div>
             <div className="flex items-center gap-3">
+
               <h1 className="text-2xl font-bold">
                 {symbol}
               </h1>
 
               <span className="text-xs text-slate-500 border border-slate-700 rounded px-1.5 py-0.5">
-                {stock?.company?.exchange ||
+                {stock?.company
+                  ?.exchange ||
                   "—"}
               </span>
 
@@ -1133,7 +1095,9 @@ export default function StockPage({
             </div>
 
             <div className="text-sm text-slate-400">
-              {stock?.company?.name ?? ""}
+              {stock?.company
+                ?.name ??
+                ""}
             </div>
           </div>
 
@@ -1141,7 +1105,9 @@ export default function StockPage({
             <>
               <div>
                 <div className="text-3xl font-bold">
-                  {fmtNum(q.close)}
+                  {fmtNum(
+                    q.close,
+                  )}
                 </div>
 
                 <div
@@ -1149,85 +1115,110 @@ export default function StockPage({
                     q.changePct,
                   )}`}
                 >
-                  {fmtPct(q.changePct)}
+                  {fmtPct(
+                    q.changePct,
+                  )}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-slate-400">
                 <span>
-                  Mở: {fmtNum(q.open)}
+                  Mở:{" "}
+                  {fmtNum(
+                    q.open,
+                  )}
                 </span>
 
                 <span>
-                  Cao: {fmtNum(q.high)}
+                  Cao:{" "}
+                  {fmtNum(
+                    q.high,
+                  )}
                 </span>
 
                 <span>
-                  Thấp: {fmtNum(q.low)}
+                  Thấp:{" "}
+                  {fmtNum(
+                    q.low,
+                  )}
                 </span>
 
                 <span>
-                  KL: {fmtVol(q.volume)}
+                  KL:{" "}
+                  {fmtVol(
+                    q.volume,
+                  )}
                 </span>
               </div>
 
               <div className="text-[10px] text-slate-600">
-                Nguồn: {q.source}
+                Nguồn:{" "}
+                {q.source}
                 <br />
                 Confidence:{" "}
-                {(q.confidence * 100).toFixed(
-                  0,
-                )}
+                {(
+                  q.confidence *
+                  100
+                ).toFixed(0)}
                 %
               </div>
             </>
           )}
 
           <button
-            onClick={addToWatchlist}
+            onClick={
+              addToWatchlist
+            }
             className="ml-auto rounded-md border border-cyan-700 bg-cyan-500/10 px-3 py-1.5 text-sm text-cyan-300 hover:bg-cyan-500/20"
           >
-            {watchMsg ?? "+ Watchlist"}
+            {watchMsg ??
+              "+ Watchlist"}
           </button>
         </div>
 
         {quoteError && (
           <div className="panel border-rose-800 bg-rose-950/30 p-4 text-sm text-rose-300">
             Không lấy được dữ liệu cho{" "}
-            {symbol}: {quoteError}
+            {symbol}:{" "}
+            {quoteError}
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════
-            Tabs
-           ═══════════════════════════════════════════════════════ */}
+        {/* ======================================================
+         * TABS
+         * ====================================================== */}
 
         <div className="flex gap-1 border-b border-slate-800 pb-0 overflow-x-auto">
-          {TABS.map((t) => (
-            <button
-              key={t}
-              onClick={() =>
-                setTab(t)
-              }
-              className={`px-3 py-2 text-sm border-b-2 -mb-px transition-colors whitespace-nowrap ${
-                tab === t
-                  ? "border-cyan-500 text-cyan-300"
-                  : "border-transparent text-slate-500 hover:text-slate-300"
-              }`}
-            >
-              {t}
-            </button>
-          ))}
+          {TABS.map(
+            (item) => (
+              <button
+                key={item}
+                onClick={() =>
+                  setTab(
+                    item,
+                  )
+                }
+                className={`whitespace-nowrap px-3 py-2 text-sm border-b-2 -mb-px transition-colors ${
+                  tab === item
+                    ? "border-cyan-500 text-cyan-300"
+                    : "border-transparent text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                {item}
+              </button>
+            ),
+          )}
         </div>
 
-        {/* ═══════════════════════════════════════════════════════
-            Tab: Tổng quan
-           ═══════════════════════════════════════════════════════ */}
+        {/* ======================================================
+         * TỔNG QUAN
+         * ====================================================== */}
 
-        {tab === "Tổng quan" && (
+        {tab ===
+          "Tổng quan" && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
 
-            {/* Chart */}
+            {/* CHART */}
 
             <div className="panel p-4 lg:col-span-2">
 
@@ -1239,111 +1230,163 @@ export default function StockPage({
                   </h3>
 
                   <div className="text-[10px] text-slate-600 mt-0.5">
-                    Kéo ngang để xem lịch sử ·
-                    Cuộn để zoom
+                    {historyBars.length > 0
+                      ? `${historyBars.length.toLocaleString()} nến`
+                      : "Đang tải dữ liệu..."}
                   </div>
                 </div>
 
-                <div className="flex gap-1 flex-wrap">
-                  {TIMEFRAMES.map((t) => (
-                    <button
-                      key={t.key}
-                      onClick={() =>
-                        setTf(t.key)
-                      }
-                      className={`rounded px-2 py-1 text-xs ${
-                        tf === t.key
-                          ? "bg-cyan-500/20 text-cyan-300"
-                          : "text-slate-500 hover:text-slate-300"
-                      }`}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
+                <div className="flex gap-1 overflow-x-auto">
+                  {TIMEFRAMES.map(
+                    (item) => (
+                      <button
+                        key={
+                          item.key
+                        }
+                        onClick={() =>
+                          setTf(
+                            item.key,
+                          )
+                        }
+                        className={`rounded px-2 py-1 text-xs whitespace-nowrap ${
+                          tf ===
+                          item.key
+                            ? "bg-cyan-500/20 text-cyan-300"
+                            : "text-slate-500 hover:text-slate-300"
+                        }`}
+                      >
+                        {
+                          item.label
+                        }
+                      </button>
+                    ),
+                  )}
                 </div>
               </div>
 
-              {historyLoading ? (
-                <div className="h-[380px] flex items-center justify-center text-slate-500 text-sm">
-                  Đang tải dữ liệu chart…
-                </div>
-              ) : historyError &&
-                historyBars.length === 0 ? (
-                <div className="h-[380px] flex flex-col items-center justify-center gap-2 text-sm">
-                  <div className="text-rose-400">
+              {/* CHART ERROR */}
+
+              {historyError ? (
+                <div className="h-72 flex flex-col items-center justify-center gap-3">
+
+                  <div className="text-sm text-rose-400">
                     Không tải được dữ liệu chart
                   </div>
 
-                  <div className="text-[11px] text-slate-600">
+                  <div className="text-xs text-slate-500 text-center max-w-md">
                     {historyError}
                   </div>
 
                   <button
+                    type="button"
+                    onClick={() => {
+                      setHistoryError(
+                        null,
+                      );
+
+                      void loadHistory(
+                        "initial",
+                      );
+                    }}
+                    className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                  >
+                    Thử lại
+                  </button>
+                </div>
+              ) : historyLoading &&
+                historyBars.length ===
+                  0 ? (
+                <div className="h-72 flex flex-col items-center justify-center gap-2 text-slate-500 text-sm">
+                  <div>
+                    Đang tải dữ liệu chart…
+                  </div>
+
+                  <div className="text-[10px] text-slate-600">
+                    {symbol} ·{" "}
+                    {tf}
+                  </div>
+                </div>
+              ) : historyBars.length >
+                0 ? (
+                <div className="relative">
+
+                  <CandleChart
+                    bars={
+                      historyBars
+                    }
+                  />
+
+                  {historyLoadingMore && (
+                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded bg-slate-900/90 border border-slate-700 px-3 py-1.5 text-[10px] text-slate-400">
+                      Đang tải thêm lịch sử…
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="h-72 flex flex-col items-center justify-center gap-3 text-slate-500 text-sm">
+                  <div>
+                    Chưa có dữ liệu chart
+                  </div>
+
+                  <button
+                    type="button"
                     onClick={() =>
                       void loadHistory(
                         "initial",
                       )
                     }
-                    className="rounded border border-slate-700 px-3 py-1 text-xs text-slate-400 hover:text-slate-200"
+                    className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
                   >
-                    Thử lại
+                    Tải lại
                   </button>
-                </div>
-              ) : historyBars.length > 0 ? (
-                <CandleChart
-                  bars={historyBars}
-                  height={380}
-                  onLoadMore={
-                    loadMoreHistory
-                  }
-                  loadingMore={
-                    historyLoadingMore
-                  }
-                  hasMore={
-                    historyHasMore
-                  }
-                  loadMoreThreshold={30}
-                />
-              ) : (
-                <div className="h-[380px] flex items-center justify-center text-slate-500 text-sm">
-                  Chưa có dữ liệu giá
                 </div>
               )}
 
-              <div className="mt-2 flex items-center justify-between text-[10px] text-slate-600">
+              {/* CHART FOOTER */}
 
-                <div>
-                  {chartMeta.count} nến
+              {historyBars.length >
+                0 && (
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-600">
+
+                  <span>
+                    {historyBars.length.toLocaleString()} nến
+                  </span>
+
+                  <span>
+                    Timeframe:{" "}
+                    {tf}
+                  </span>
+
+                  <button
+                    type="button"
+                    disabled={
+                      historyLoadingMore ||
+                      !historyHasMore
+                    }
+                    onClick={
+                      loadMoreHistory
+                    }
+                    className="rounded border border-slate-800 px-2 py-1 text-slate-500 hover:text-slate-300 hover:border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {historyLoadingMore
+                      ? "Đang tải…"
+                      : historyHasMore
+                        ? "← Tải thêm lịch sử"
+                        : "Đã hết dữ liệu"}
+                  </button>
                 </div>
-
-                <div className="flex items-center gap-3">
-                  {historyLoadingMore && (
-                    <span className="text-cyan-500">
-                      Đang tải lịch sử…
-                    </span>
-                  )}
-
-                  {!historyLoadingMore &&
-                    !historyHasMore &&
-                    historyBars.length >
-                      0 && (
-                      <span>
-                        Đã đến đầu dữ liệu
-                      </span>
-                    )}
-                </div>
-              </div>
-
+              )}
             </div>
 
-            {/* Right column */}
+            {/* RIGHT COLUMN */}
 
             <div className="space-y-4">
 
-              {/* Quick analysis */}
+              {/* QUICK ANALYSIS */}
 
               {analysis && (
                 <div className="panel p-4">
+
                   <h3 className="text-sm font-semibold text-slate-300 mb-2">
                     Khuyến nghị
                   </h3>
@@ -1351,22 +1394,28 @@ export default function StockPage({
                   <div
                     className={`inline-block rounded-md border px-3 py-1.5 text-sm font-bold ${
                       RECO_STYLE[
-                        analysis.recommendation
+                        analysis
+                          .recommendation
                       ] ?? ""
                     }`}
                   >
-                    {analysis.recommendation}
+                    {
+                      analysis.recommendation
+                    }
 
                     <span className="ml-1 font-normal text-xs opacity-80">
                       {(
                         analysis.confidence *
                         100
-                      ).toFixed(0)}
+                      ).toFixed(
+                        0,
+                      )}
                       %
                     </span>
                   </div>
 
                   <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+
                     <dt className="text-slate-500">
                       RSI(14)
                     </dt>
@@ -1417,22 +1466,24 @@ export default function StockPage({
                 </div>
               )}
 
-              {/* Quick health */}
+              {/* HEALTH */}
 
               {fundamental && (
                 <div className="panel p-4">
+
                   <h3 className="text-sm font-semibold text-slate-300 mb-2">
                     Sức khỏe tài chính:{" "}
                     <span
                       className={
                         fundamental
                           .financialHealth
-                          .rating <= "B"
+                          .overallScore >=
+                        70
                           ? "text-emerald-400"
                           : fundamental
                                 .financialHealth
-                                .rating <=
-                              "C"
+                                .overallScore >=
+                              40
                             ? "text-amber-400"
                             : "text-rose-400"
                       }
@@ -1458,11 +1509,20 @@ export default function StockPage({
                         .financialHealth
                         .breakdown,
                     ).map(
-                      ([k, v]) => (
+                      ([
+                        key,
+                        value,
+                      ]) => (
                         <HealthBar
-                          key={k}
-                          label={k}
-                          score={v.score}
+                          key={
+                            key
+                          }
+                          label={
+                            key
+                          }
+                          score={
+                            value.score
+                          }
                         />
                       ),
                     )}
@@ -1470,53 +1530,73 @@ export default function StockPage({
                 </div>
               )}
 
-              {/* Quick patterns */}
+              {/* PATTERNS */}
 
               {technical &&
                 technical
                   .candlestickPatterns
-                  .length > 0 && (
+                  .length >
+                  0 && (
                   <div className="panel p-4">
+
                     <h3 className="text-sm font-semibold text-slate-300 mb-2">
                       Mẫu nến gần nhất
                     </h3>
 
                     {technical.candlestickPatterns
-                      .slice(0, 3)
-                      .map((p, i) => (
-                        <div
-                          key={i}
-                          className="flex items-center gap-2 text-xs py-1 border-b border-slate-800/50 last:border-0"
-                        >
-                          <PatternBadge
-                            type={p.type}
-                          />
+                      .slice(
+                        0,
+                        3,
+                      )
+                      .map(
+                        (
+                          pattern,
+                          index,
+                        ) => (
+                          <div
+                            key={
+                              index
+                            }
+                            className="flex items-center gap-2 text-xs py-1 border-b border-slate-800/50 last:border-0"
+                          >
+                            <PatternBadge
+                              type={
+                                pattern.type
+                              }
+                            />
 
-                          <span className="font-medium">
-                            {p.nameVi}
-                          </span>
+                            <span className="font-medium">
+                              {
+                                pattern.nameVi
+                              }
+                            </span>
 
-                          <span className="ml-auto text-slate-500">
-                            {(
-                              p.reliability *
-                              100
-                            ).toFixed(0)}
-                            %
-                          </span>
-                        </div>
-                      ))}
+                            <span className="ml-auto text-slate-500">
+                              {(
+                                pattern.reliability *
+                                100
+                              ).toFixed(
+                                0,
+                              )}
+                              %
+                            </span>
+                          </div>
+                        ),
+                      )}
                   </div>
                 )}
 
-              {/* Sentiment */}
+              {/* SENTIMENT */}
 
               {sentiment && (
                 <div className="panel p-4">
+
                   <h3 className="text-sm font-semibold text-slate-300 mb-2">
                     Tâm lý thị trường (NLP)
                   </h3>
 
                   <div className="flex items-center gap-3">
+
                     <SentimentBadge
                       score={
                         sentiment.sentimentScore
@@ -1543,16 +1623,16 @@ export default function StockPage({
                   </div>
                 </div>
               )}
-
             </div>
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════
-            Tab: Phân tích KT
-           ═══════════════════════════════════════════════════════ */}
+        {/* ======================================================
+         * PHÂN TÍCH KỸ THUẬT
+         * ====================================================== */}
 
-        {tab === "Phân tích KT" &&
+        {tab ===
+          "Phân tích KT" &&
           analysis && (
             <div className="panel p-4 max-w-3xl">
 
@@ -1563,7 +1643,9 @@ export default function StockPage({
                   ] ?? ""
                 }`}
               >
-                {analysis.recommendation}
+                {
+                  analysis.recommendation
+                }
 
                 <span className="text-sm font-normal opacity-80">
                   {" "}
@@ -1571,44 +1653,57 @@ export default function StockPage({
                   {(
                     analysis.confidence *
                     100
-                  ).toFixed(0)}
+                  ).toFixed(
+                    0,
+                  )}
                   %
                 </span>
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
 
-                {([
+                {[
                   [
                     "RSI (14)",
                     analysis.rsi14,
                     1,
                   ],
+
                   [
                     "MACD hist",
-                    analysis.macd?.histogram,
+                    analysis.macd
+                      ?.histogram,
                     3,
                   ],
+
                   [
                     "SMA 20",
                     analysis.sma20,
                     2,
                   ],
+
                   [
                     "SMA 50",
                     analysis.sma50,
                     2,
                   ],
+
                   [
                     "Bollinger ↑",
-                    analysis.bollinger?.upper,
+                    analysis
+                      .bollinger
+                      ?.upper,
                     2,
                   ],
+
                   [
                     "Bollinger ↓",
-                    analysis.bollinger?.lower,
+                    analysis
+                      .bollinger
+                      ?.lower,
                     2,
                   ],
+
                   [
                     "Hỗ trợ",
                     analysis
@@ -1616,6 +1711,7 @@ export default function StockPage({
                       ?.support,
                     2,
                   ],
+
                   [
                     "Kháng cự",
                     analysis
@@ -1623,48 +1719,63 @@ export default function StockPage({
                       ?.resistance,
                     2,
                   ],
+
                   [
                     "Biến động (năm)",
                     analysis.volatilityPct,
                     1,
                   ],
+
                   [
                     "Max drawdown",
                     analysis.maxDrawdownPct,
                     1,
                   ],
+
                   [
                     "1 tháng",
                     analysis.changePct1m,
                     2,
                   ],
-                ] as [
-                  string,
-                  number | null | undefined,
-                  number,
-                ][]).map(
-                  ([label, val, dig]) => (
+                ].map(
+                  ([
+                    label,
+                    value,
+                    digits,
+                  ]) => (
                     <div
-                      key={label}
+                      key={
+                        label
+                      }
                       className="bg-slate-800/40 rounded p-2"
                     >
                       <div className="text-[10px] text-slate-500">
-                        {label}
+                        {
+                          label
+                        }
                       </div>
 
                       <div className="text-sm font-semibold">
                         {fmtNum(
-                          val,
-                          dig,
+                          value as
+                            | number
+                            | null
+                            | undefined,
+                          digits as number,
                         )}
-                        {label.includes(
-                          "Biến động",
-                        ) ||
-                        label.includes(
-                          "drawdown",
-                        ) ||
-                        label.includes(
-                          "tháng",
+
+                        {typeof label ===
+                          "string" &&
+                        (
+                          label.includes(
+                            "Biến động",
+                          ) ||
+                          label.includes(
+                            "drawdown",
+                          ) ||
+                          label.includes(
+                            "tháng",
+                          )
                         )
                           ? "%"
                           : ""}
@@ -1680,16 +1791,21 @@ export default function StockPage({
 
               <ul className="space-y-1.5 text-sm text-slate-400">
                 {analysis.reasons.map(
-                  (r, i) => (
+                  (
+                    reason,
+                    index,
+                  ) => (
                     <li
-                      key={i}
+                      key={
+                        index
+                      }
                       className="flex gap-2"
                     >
                       <span className="text-cyan-500">
                         ›
                       </span>
 
-                      {r}
+                      {reason}
                     </li>
                   ),
                 )}
@@ -1697,12 +1813,15 @@ export default function StockPage({
             </div>
           )}
 
-        {/* ═══════════════════════════════════════════════════════
-            Tab: Cơ bản
-           ═══════════════════════════════════════════════════════ */}
+        {/* ======================================================
+         * CƠ BẢN
+         * ====================================================== */}
 
-        {tab === "Cơ bản" && (
+        {tab ===
+          "Cơ bản" && (
           <div className="space-y-6 max-w-6xl">
+
+            {/* VISUAL ANALYST */}
 
             {chartData && (
               <div className="space-y-5">
@@ -1711,8 +1830,7 @@ export default function StockPage({
                   eyebrow="Visual analyst"
                   title={
                     <>
-                      Hiệu suất &amp; định giá
-                      qua{" "}
+                      Hiệu suất & định giá qua{" "}
                       {
                         chartData
                           .quarters
@@ -1739,9 +1857,9 @@ export default function StockPage({
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
                   <div className="panel p-4 lg:col-span-2 reveal">
+
                     <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase mb-2">
-                      Doanh thu · EBITDA · Lợi
-                      nhuận ròng (tỷ VND)
+                      Doanh thu · EBITDA · Lợi nhuận ròng (tỷ VND)
                     </div>
 
                     <RevenueProfitChart
@@ -1752,6 +1870,7 @@ export default function StockPage({
                   </div>
 
                   <div className="panel p-4 reveal">
+
                     <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase mb-2">
                       Gauge sức khỏe tài chính
                     </div>
@@ -1780,6 +1899,7 @@ export default function StockPage({
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
                   <div className="panel p-4 reveal">
+
                     <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase mb-2">
                       ROE · ROA vs ngành
                     </div>
@@ -1795,9 +1915,9 @@ export default function StockPage({
                   </div>
 
                   <div className="panel p-4 reveal">
+
                     <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase mb-2">
-                      Biên lợi nhuận qua các
-                      quý (%)
+                      Biên lợi nhuận qua các quý (%)
                     </div>
 
                     <MarginsTrendChart
@@ -1811,9 +1931,9 @@ export default function StockPage({
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
                   <div className="panel p-4 reveal">
+
                     <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase mb-2">
-                      EPS theo quý (nghìn VND /
-                      cp)
+                      EPS theo quý (nghìn VND / cp)
                     </div>
 
                     <EPSTrendChart
@@ -1824,14 +1944,14 @@ export default function StockPage({
                   </div>
 
                   <div className="panel p-4 reveal">
+
                     <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase mb-2">
                       So sánh với trung bình ngành
                     </div>
 
                     <IndustryCompareBars
                       comparisons={
-                        chartData
-                          .comparisons
+                        chartData.comparisons
                       }
                     />
                   </div>
@@ -1839,21 +1959,27 @@ export default function StockPage({
               </div>
             )}
 
+            {/* HEALTH DETAIL */}
+
             {healthDetail && (
               <div>
+
                 <SectionTitle
                   eyebrow="Health diagnostic"
                   title="Phân tích sức khỏe tài chính chi tiết"
                 >
                   {
-                    healthDetail.groups
-                      .length
+                    healthDetail
+                      .groups.length
                   }{" "}
                   nhóm ·{" "}
                   {healthDetail.groups.reduce(
-                    (s, g) =>
-                      s +
-                      g.indicators
+                    (
+                      total,
+                      group,
+                    ) =>
+                      total +
+                      group.indicators
                         .length,
                     0,
                   )}{" "}
@@ -1868,6 +1994,8 @@ export default function StockPage({
               </div>
             )}
 
+            {/* LEGACY FUNDAMENTAL */}
+
             {!fundamental &&
               !chartData && (
                 <div className="panel p-8 text-center text-sm text-slate-500">
@@ -1877,18 +2005,25 @@ export default function StockPage({
 
             {fundamental && (
               <>
+                {/* FINANCIAL HEALTH */}
 
                 <div className="panel p-4">
+
                   <h3 className="text-sm font-semibold text-slate-300 mb-3">
-                    Sức khỏe tài chính —
-                    Điểm:{" "}
+                    Sức khỏe tài chính — Điểm:{" "}
                     <span
                       className={
                         fundamental
                           .financialHealth
-                          .rating <= "B"
+                          .overallScore >=
+                        70
                           ? "text-emerald-400"
-                          : "text-amber-400"
+                          : fundamental
+                                .financialHealth
+                                .overallScore >=
+                              40
+                            ? "text-amber-400"
+                            : "text-rose-400"
                       }
                     >
                       {
@@ -1907,32 +2042,42 @@ export default function StockPage({
                   </h3>
 
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+
                     {Object.entries(
                       fundamental
                         .financialHealth
                         .breakdown,
                     ).map(
-                      ([k, v]) => (
+                      ([
+                        key,
+                        value,
+                      ]) => (
                         <div
-                          key={k}
+                          key={
+                            key
+                          }
                           className="space-y-1"
                         >
                           <HealthBar
                             label={
-                              k
+                              key
                                 .charAt(
                                   0,
                                 )
                                 .toUpperCase() +
-                              k.slice(1)
+                              key.slice(
+                                1,
+                              )
                             }
                             score={
-                              v.score
+                              value.score
                             }
                           />
 
                           <div className="text-[10px] text-slate-600">
-                            {v.detail}
+                            {
+                              value.detail
+                            }
                           </div>
                         </div>
                       ),
@@ -1940,13 +2085,17 @@ export default function StockPage({
                   </div>
                 </div>
 
+                {/* KEY RATIOS */}
+
                 <div className="panel p-4">
+
                   <h3 className="text-sm font-semibold text-slate-300 mb-3">
                     Chỉ số cơ bản
                   </h3>
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {([
+
+                    {[
                       [
                         "EPS (ước tính)",
                         fundamental.eps,
@@ -1967,21 +2116,27 @@ export default function StockPage({
                         "CAGR 3 năm (%)",
                         fundamental.cagr3y,
                       ],
-                    ] as [
-                      string,
-                      number | null,
-                    ][]).map(
-                      ([label, val]) => (
+                    ].map(
+                      ([
+                        label,
+                        value,
+                      ]) => (
                         <div
-                          key={label}
+                          key={
+                            label
+                          }
                           className="bg-slate-800/40 rounded p-3"
                         >
                           <div className="text-[10px] text-slate-500">
-                            {label}
+                            {
+                              label
+                            }
                           </div>
 
                           <div className="text-lg font-bold">
-                            {fmtNum(val)}
+                            {fmtNum(
+                              value,
+                            )}
                           </div>
                         </div>
                       ),
@@ -1989,18 +2144,24 @@ export default function StockPage({
                   </div>
                 </div>
 
+                {/* DUPONT */}
+
                 {fundamental.dupont && (
                   <div className="panel p-4">
+
                     <h3 className="text-sm font-semibold text-slate-300 mb-2">
                       DuPont Decomposition
                     </h3>
 
                     <div className="flex items-center gap-2 text-sm flex-wrap">
+
                       <span className="bg-slate-800/60 px-2 py-1 rounded">
                         Biên LN:{" "}
-                        {fundamental.dupont.netProfitMargin.toFixed(
-                          1,
-                        )}
+                        {fundamental
+                          .dupont
+                          .netProfitMargin.toFixed(
+                            1,
+                          )}
                         %
                       </span>
 
@@ -2010,9 +2171,11 @@ export default function StockPage({
 
                       <span className="bg-slate-800/60 px-2 py-1 rounded">
                         Vòng quay TS:{" "}
-                        {fundamental.dupont.assetTurnover.toFixed(
-                          2,
-                        )}
+                        {fundamental
+                          .dupont
+                          .assetTurnover.toFixed(
+                            2,
+                          )}
                       </span>
 
                       <span className="text-slate-600">
@@ -2021,9 +2184,11 @@ export default function StockPage({
 
                       <span className="bg-slate-800/60 px-2 py-1 rounded">
                         Đòn bẩy:{" "}
-                        {fundamental.dupont.equityMultiplier.toFixed(
-                          2,
-                        )}
+                        {fundamental
+                          .dupont
+                          .equityMultiplier.toFixed(
+                            2,
+                          )}
                       </span>
 
                       <span className="text-slate-600">
@@ -2032,9 +2197,11 @@ export default function StockPage({
 
                       <span className="bg-cyan-500/15 px-2 py-1 rounded font-bold text-cyan-300">
                         ROE:{" "}
-                        {fundamental.dupont.roe.toFixed(
-                          1,
-                        )}
+                        {fundamental
+                          .dupont
+                          .roe.toFixed(
+                            1,
+                          )}
                         %
                       </span>
                     </div>
@@ -2049,13 +2216,17 @@ export default function StockPage({
                   </div>
                 )}
 
+                {/* VALUATION */}
+
                 <div className="panel p-4">
+
                   <h3 className="text-sm font-semibold text-slate-300 mb-3">
                     Định giá
                   </h3>
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                    {([
+
+                    {[
                       [
                         "P/E",
                         fundamental
@@ -2101,24 +2272,30 @@ export default function StockPage({
                           ? `${fundamental.valuation.reverseDcfGrowth}%`
                           : null,
                       ],
-                    ] as [
-                      string,
-                      number | string | null,
-                    ][]).map(
-                      ([label, val]) => (
+                    ].map(
+                      ([
+                        label,
+                        value,
+                      ]) => (
                         <div
-                          key={label}
+                          key={
+                            label
+                          }
                           className="bg-slate-800/40 rounded p-2"
                         >
                           <div className="text-[10px] text-slate-500">
-                            {label}
+                            {
+                              label
+                            }
                           </div>
 
                           <div className="text-sm font-semibold">
-                            {typeof val ===
+                            {typeof value ===
                             "number"
-                              ? fmtNum(val)
-                              : val ??
+                              ? fmtNum(
+                                  value,
+                                )
+                              : value ??
                                 "—"}
                           </div>
                         </div>
@@ -2130,12 +2307,13 @@ export default function StockPage({
                     .valuation
                     .dcf && (
                     <div className="mb-3">
+
                       <div className="text-xs font-medium text-slate-400 mb-1">
-                        DCF 3 Kịch bản (giá
-                        trị mỗi CP ước tính)
+                        DCF 3 Kịch bản (giá trị mỗi CP ước tính)
                       </div>
 
                       <div className="flex gap-3">
+
                         <div className="flex-1 bg-rose-500/10 border border-rose-800 rounded p-2 text-center">
                           <div className="text-[10px] text-rose-400">
                             Bi quan
@@ -2188,12 +2366,13 @@ export default function StockPage({
                     .valuation
                     .intrinsicValueRange && (
                     <div className="bg-slate-800/40 rounded p-3 mb-2">
+
                       <div className="text-xs text-slate-400 mb-1">
-                        Vùng giá trị nội tại
-                        ước tính
+                        Vùng giá trị nội tại ước tính
                       </div>
 
                       <div className="flex items-center gap-3 text-sm">
+
                         <span className="text-rose-400">
                           {fmtNum(
                             fundamental
@@ -2204,6 +2383,7 @@ export default function StockPage({
                         </span>
 
                         <div className="flex-1 h-2 bg-slate-700 rounded-full relative overflow-hidden">
+
                           <div
                             className="absolute inset-y-0 bg-gradient-to-r from-rose-500 via-amber-500 to-emerald-500 rounded-full"
                             style={{
@@ -2213,24 +2393,25 @@ export default function StockPage({
                           />
 
                           {(() => {
-                            const r =
+                            const range =
                               fundamental
                                 .valuation
-                                .intrinsicValueRange;
+                                .intrinsicValueRange!;
 
-                            const range =
-                              r.high -
-                              r.low;
+                            const total =
+                              range.high -
+                              range.low;
 
                             const pct =
-                              range > 0
+                              total >
+                              0
                                 ? Math.max(
                                     0,
                                     Math.min(
                                       100,
                                       ((fundamental.currentPrice -
-                                        r.low) /
-                                        range) *
+                                        range.low) /
+                                        total) *
                                         80 +
                                         10,
                                     ),
@@ -2283,18 +2464,25 @@ export default function StockPage({
                   </div>
                 </div>
 
+                {/* QUARTERLY */}
+
                 {fundamental
                   .quarterlyMetrics
-                  .length > 0 && (
+                  .length >
+                  0 && (
                   <div className="panel p-4">
+
                     <h3 className="text-sm font-semibold text-slate-300 mb-3">
                       Báo cáo 4 quý gần nhất
                     </h3>
 
                     <div className="overflow-x-auto">
+
                       <table className="w-full text-xs">
+
                         <thead>
                           <tr className="text-left text-slate-500 border-b border-slate-800">
+
                             <th className="py-1.5">
                               Quý
                             </th>
@@ -2323,50 +2511,53 @@ export default function StockPage({
 
                         <tbody>
                           {fundamental.quarterlyMetrics.map(
-                            (q) => (
+                            (
+                              metric,
+                            ) => (
                               <tr
                                 key={
-                                  q.quarter
+                                  metric.quarter
                                 }
                                 className="border-b border-slate-800/50"
                               >
+
                                 <td className="py-1.5 font-medium">
                                   {
-                                    q.quarter
+                                    metric.quarter
                                   }
                                 </td>
 
                                 <td className="text-right text-slate-400">
                                   {
-                                    q.periodEnd
+                                    metric.periodEnd
                                   }
                                 </td>
 
                                 <td className="text-right">
                                   {fmtNum(
-                                    q.avgPrice,
+                                    metric.avgPrice,
                                   )}
                                 </td>
 
                                 <td
                                   className={`text-right font-medium ${changeColor(
-                                    q.returnPct,
+                                    metric.returnPct,
                                   )}`}
                                 >
                                   {fmtPct(
-                                    q.returnPct,
+                                    metric.returnPct,
                                   )}
                                 </td>
 
                                 <td className="text-right text-slate-400">
-                                  {q.volatilityPct.toFixed(
+                                  {metric.volatilityPct.toFixed(
                                     1,
                                   )}
                                   %
                                 </td>
 
                                 <td className="text-right">
-                                  {q.sharpeProxy.toFixed(
+                                  {metric.sharpeProxy.toFixed(
                                     3,
                                   )}
                                 </td>
@@ -2381,8 +2572,7 @@ export default function StockPage({
 
                 <div className="text-[10px] text-slate-600">
                   {
-                    fundamental
-                      .disclaimer
+                    fundamental.disclaimer
                   }
                 </div>
               </>
@@ -2390,53 +2580,66 @@ export default function StockPage({
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════
-            Tab: Tài chính
-           ═══════════════════════════════════════════════════════ */}
+        {/* ======================================================
+         * TÀI CHÍNH
+         * ====================================================== */}
 
-        {tab === "Tài chính" && (
+        {tab ===
+          "Tài chính" && (
           <FinancialStatements
             symbol={symbol}
           />
         )}
 
-        {/* ═══════════════════════════════════════════════════════
-            Tab: Công ty
-           ═══════════════════════════════════════════════════════ */}
+        {/* ======================================================
+         * CÔNG TY
+         * ====================================================== */}
 
-        {tab === "Công ty" && (
+        {tab ===
+          "Công ty" && (
           <CompanyProfile
             symbol={symbol}
           />
         )}
 
-        {/* ═══════════════════════════════════════════════════════
-            Tab: Mẫu hình
-           ═══════════════════════════════════════════════════════ */}
+        {/* ======================================================
+         * MẪU HÌNH
+         * ====================================================== */}
 
-        {tab === "Mẫu hình" && (
+        {tab ===
+          "Mẫu hình" && (
           <div className="space-y-4 max-w-4xl">
 
-            <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <div className="flex items-center gap-2 mb-2">
+
               <h3 className="text-sm font-semibold text-slate-300">
                 Timeframe:
               </h3>
 
-              {TIMEFRAMES.map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() =>
-                    setTf(t.key)
-                  }
-                  className={`rounded px-2 py-1 text-xs ${
-                    tf === t.key
-                      ? "bg-cyan-500/20 text-cyan-300"
-                      : "text-slate-500 hover:text-slate-300"
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
+              {TIMEFRAMES.map(
+                (item) => (
+                  <button
+                    key={
+                      item.key
+                    }
+                    onClick={() =>
+                      setTf(
+                        item.key,
+                      )
+                    }
+                    className={`rounded px-2 py-1 text-xs ${
+                      tf ===
+                      item.key
+                        ? "bg-cyan-500/20 text-cyan-300"
+                        : "text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    {
+                      item.label
+                    }
+                  </button>
+                ),
+              )}
             </div>
 
             {!technical && (
@@ -2447,45 +2650,62 @@ export default function StockPage({
 
             {technical && (
               <>
+                {/* CHART PATTERNS */}
+
                 <div className="panel p-4">
+
                   <h3 className="text-sm font-semibold text-slate-300 mb-3">
-                    Mẫu hình giá (Chart
-                    Patterns)
+                    Mẫu hình giá (Chart Patterns)
                   </h3>
 
-                  {technical.chartPatterns
-                    .length === 0 ? (
+                  {technical
+                    .chartPatterns
+                    .length ===
+                  0 ? (
                     <div className="text-sm text-slate-500">
-                      Không phát hiện mẫu hình
-                      giá nào trong giai đoạn này.
+                      Không phát hiện mẫu hình giá nào trong giai đoạn này.
                     </div>
                   ) : (
                     <div className="space-y-3">
+
                       {technical.chartPatterns.map(
-                        (p, i) => (
+                        (
+                          pattern,
+                          index,
+                        ) => (
                           <div
-                            key={i}
+                            key={
+                              index
+                            }
                             className="bg-slate-800/40 rounded p-3"
                           >
+
                             <div className="flex items-center gap-2 mb-1">
+
                               <PatternBadge
                                 type={
-                                  p.type
+                                  pattern.type
                                 }
                               />
 
                               <span className="font-semibold text-sm">
-                                {p.nameVi}
+                                {
+                                  pattern.nameVi
+                                }
                               </span>
 
                               <span className="text-xs text-slate-500">
-                                ({p.name})
+                                (
+                                {
+                                  pattern.name
+                                }
+                                )
                               </span>
 
                               <span className="ml-auto text-xs text-slate-500">
                                 Tin cậy:{" "}
                                 {(
-                                  p.reliability *
+                                  pattern.reliability *
                                   100
                                 ).toFixed(
                                   0,
@@ -2496,16 +2716,16 @@ export default function StockPage({
 
                             <div className="text-xs text-slate-400">
                               {
-                                p.description
+                                pattern.description
                               }
                             </div>
 
-                            {p.target !==
+                            {pattern.target !==
                               null && (
                               <div className="mt-1 text-xs font-medium text-cyan-400">
                                 Mục tiêu giá:{" "}
                                 {fmtNum(
-                                  p.target,
+                                  pattern.target,
                                 )}
                               </div>
                             )}
@@ -2516,54 +2736,70 @@ export default function StockPage({
                   )}
                 </div>
 
+                {/* CANDLESTICK PATTERNS */}
+
                 <div className="panel p-4">
+
                   <h3 className="text-sm font-semibold text-slate-300 mb-3">
-                    Mô hình nến Nhật
-                    (Candlestick) — 20 phiên
-                    gần nhất
+                    Mô hình nến Nhật — 20 phiên gần nhất
                   </h3>
 
                   {technical
                     .candlestickPatterns
-                    .length === 0 ? (
+                    .length ===
+                  0 ? (
                     <div className="text-sm text-slate-500">
-                      Không phát hiện mô hình
-                      nến đặc biệt nào.
+                      Không phát hiện mô hình nến đặc biệt nào.
                     </div>
                   ) : (
                     <div className="space-y-2">
+
                       {technical.candlestickPatterns.map(
-                        (p, i) => (
+                        (
+                          pattern,
+                          index,
+                        ) => (
                           <div
-                            key={i}
+                            key={
+                              index
+                            }
                             className="flex items-start gap-3 bg-slate-800/30 rounded p-2"
                           >
+
                             <PatternBadge
                               type={
-                                p.type
+                                pattern.type
                               }
                             />
 
                             <div className="flex-1 min-w-0">
+
                               <div className="flex items-center gap-2">
+
                                 <span className="font-medium text-sm">
-                                  {p.nameVi}
+                                  {
+                                    pattern.nameVi
+                                  }
                                 </span>
 
                                 <span className="text-[10px] text-slate-600">
-                                  ({p.name})
+                                  (
+                                  {
+                                    pattern.name
+                                  }
+                                  )
                                 </span>
 
                                 <span className="text-[10px] text-slate-500 ml-auto">
                                   {new Date(
-                                    p.time *
+                                    pattern.time *
                                       1000,
                                   ).toLocaleDateString(
                                     "vi-VN",
                                   )}{" "}
                                   ·{" "}
                                   {(
-                                    p.reliability *
+                                    pattern.reliability *
                                     100
                                   ).toFixed(
                                     0,
@@ -2574,7 +2810,7 @@ export default function StockPage({
 
                               <div className="text-xs text-slate-400 mt-0.5">
                                 {
-                                  p.description
+                                  pattern.description
                                 }
                               </div>
                             </div>
@@ -2601,18 +2837,22 @@ export default function StockPage({
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════
-            Tab: Tin tức
-           ═══════════════════════════════════════════════════════ */}
+        {/* ======================================================
+         * NEWS
+         * ====================================================== */}
 
-        {tab === "Tin tức" && (
+        {tab ===
+          "Tin tức" && (
           <div className="space-y-3 max-w-3xl">
 
             {sentiment && (
               <div className="panel p-4 flex items-center gap-6">
+
                 <div>
                   <div className="text-xs text-slate-500 mb-1">
-                    Sentiment {symbol} (24h)
+                    Sentiment{" "}
+                    {symbol}{" "}
+                    (24h)
                   </div>
 
                   <SentimentBadge
@@ -2635,36 +2875,50 @@ export default function StockPage({
                 </div>
 
                 <div className="text-xs text-slate-500">
-                  {sentiment.newsCount24h}{" "}
+                  {
+                    sentiment.newsCount24h
+                  }{" "}
                   bài 24h
                 </div>
               </div>
             )}
 
-            {(newsData?.items ?? []).map(
-              (n) => (
+            {(newsData?.items ??
+              []).map(
+              (news) => (
                 <a
-                  key={n.id}
-                  href={n.link}
+                  key={
+                    news.id
+                  }
+                  href={
+                    news.link
+                  }
                   target="_blank"
                   rel="noreferrer"
                   className="panel flex items-start gap-3 p-3 hover:border-slate-600"
                 >
                   <div className="flex-1 min-w-0">
+
                     <div className="text-sm font-medium leading-snug">
-                      {n.title}
+                      {
+                        news.title
+                      }
                     </div>
 
                     <div className="mt-1 text-[11px] text-slate-500">
-                      {n.sourceName} ·{" "}
+
+                      {
+                        news.sourceName
+                      }{" "}
+                      ·{" "}
                       {timeAgo(
-                        n.publishedAt,
+                        news.publishedAt,
                       )}
 
                       <span className="ml-2">
                         <SentimentBadge
                           score={
-                            n.sentiment
+                            news.sentiment
                           }
                         />
                       </span>
@@ -2675,7 +2929,8 @@ export default function StockPage({
             )}
 
             {newsData &&
-              newsData.items.length ===
+              newsData.items
+                .length ===
                 0 && (
                 <div className="panel p-8 text-center text-sm text-slate-500">
                   Chưa có tin nhắc đến{" "}
