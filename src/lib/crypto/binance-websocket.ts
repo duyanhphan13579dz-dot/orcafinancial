@@ -44,6 +44,10 @@ interface BinanceTickerMessage {
   c?: string;
 }
 
+type BinanceMessage =
+  | BinanceKlineMessage
+  | BinanceTickerMessage;
+
 interface BinanceWebSocketOptions {
   symbol: string;
   timeframe: string;
@@ -66,11 +70,22 @@ interface BinanceWebSocketOptions {
   ) => void;
 }
 
+/* -------------------------------------------------------------------------- */
+/* CONFIG                                                                     */
+/* -------------------------------------------------------------------------- */
+
 const WS_BASE =
   "wss://stream.binance.com:9443/stream";
 
 const RECONNECT_BASE_DELAY = 1000;
+
 const MAX_RECONNECT_DELAY = 10000;
+
+const HEARTBEAT_INTERVAL = 25000;
+
+/* -------------------------------------------------------------------------- */
+/* NORMALIZATION                                                              */
+/* -------------------------------------------------------------------------- */
 
 function normalizeSymbol(
   symbol: string,
@@ -78,7 +93,10 @@ function normalizeSymbol(
   return symbol
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+    .replace(
+      /[^a-z0-9]/g,
+      "",
+    );
 }
 
 function normalizeTimeframe(
@@ -106,6 +124,10 @@ function normalizeTimeframe(
     : "1h";
 }
 
+/* -------------------------------------------------------------------------- */
+/* WEBSOCKET                                                                  */
+/* -------------------------------------------------------------------------- */
+
 export function createBinanceWebSocket(
   options: BinanceWebSocketOptions,
 ) {
@@ -128,22 +150,36 @@ export function createBinanceWebSocket(
     | ReturnType<typeof setTimeout>
     | null = null;
 
-  let reconnectAttempt = 0;
-
   let heartbeatTimer:
     | ReturnType<typeof setTimeout>
     | null = null;
 
-  function clearTimers() {
-    if (reconnectTimer) {
+  let reconnectAttempt = 0;
+
+  let connectionGeneration = 0;
+
+  /* ------------------------------------------------------------------------ */
+  /* TIMERS                                                                   */
+  /* ------------------------------------------------------------------------ */
+
+  function clearReconnectTimer() {
+    if (
+      reconnectTimer !==
+      null
+    ) {
       clearTimeout(
         reconnectTimer,
       );
 
       reconnectTimer = null;
     }
+  }
 
-    if (heartbeatTimer) {
+  function clearHeartbeatTimer() {
+    if (
+      heartbeatTimer !==
+      null
+    ) {
       clearTimeout(
         heartbeatTimer,
       );
@@ -152,48 +188,119 @@ export function createBinanceWebSocket(
     }
   }
 
-  function scheduleHeartbeat() {
-    if (destroyed) {
+  function clearTimers() {
+    clearReconnectTimer();
+    clearHeartbeatTimer();
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /* HEARTBEAT                                                                */
+  /* ------------------------------------------------------------------------ */
+
+  function scheduleHeartbeat(
+    generation: number,
+  ) {
+    clearHeartbeatTimer();
+
+    if (
+      destroyed ||
+      generation !==
+        connectionGeneration
+    ) {
       return;
     }
 
-    if (heartbeatTimer) {
-      clearTimeout(
-        heartbeatTimer,
-      );
-    }
-
-    /*
-     * Binance stream có thể bị đóng nếu
-     * connection không còn hoạt động.
-     *
-     * Chủ động kiểm tra định kỳ.
-     */
     heartbeatTimer =
       setTimeout(() => {
+        if (
+          destroyed ||
+          generation !==
+            connectionGeneration
+        ) {
+          return;
+        }
+
+        /*
+         * Binance WebSocket server
+         * tự quản lý ping/pong.
+         *
+         * Browser WebSocket không cho
+         * gửi raw Pong frame.
+         *
+         * Vì vậy không gửi
+         * LIST_SUBSCRIPTIONS liên tục.
+         *
+         * Chỉ kiểm tra connection còn OPEN.
+         */
+
         if (
           socket?.readyState ===
           WebSocket.OPEN
         ) {
-          socket.send(
-            JSON.stringify({
-              method: "LIST_SUBSCRIPTIONS",
-              id: Date.now(),
-            }),
+          scheduleHeartbeat(
+            generation,
           );
         }
-
-        scheduleHeartbeat();
-      }, 25_000);
+      }, HEARTBEAT_INTERVAL);
   }
+
+  /* ------------------------------------------------------------------------ */
+  /* RECONNECT                                                                */
+  /* ------------------------------------------------------------------------ */
+
+  function scheduleReconnect() {
+    if (
+      destroyed ||
+      reconnectTimer !==
+        null
+    ) {
+      return;
+    }
+
+    reconnectAttempt += 1;
+
+    const exponent =
+      Math.min(
+        reconnectAttempt - 1,
+        4,
+      );
+
+    const delay =
+      Math.min(
+        MAX_RECONNECT_DELAY,
+        RECONNECT_BASE_DELAY *
+          Math.pow(
+            2,
+            exponent,
+          ),
+      );
+
+    reconnectTimer =
+      setTimeout(() => {
+        reconnectTimer =
+          null;
+
+        connect();
+      }, delay);
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /* CONNECT                                                                  */
+  /* ------------------------------------------------------------------------ */
 
   function connect() {
     if (destroyed) {
       return;
     }
 
+    clearReconnectTimer();
+
+    const generation =
+      ++connectionGeneration;
+
     options.onStatus?.(
-      reconnectAttempt > 0
+      reconnectAttempt >
+        0
         ? "reconnecting"
         : "connecting",
     );
@@ -206,10 +313,19 @@ export function createBinanceWebSocket(
     const url =
       `${WS_BASE}?streams=${streams}`;
 
+    let newSocket: WebSocket;
+
     try {
-      socket =
+      newSocket =
         new WebSocket(url);
     } catch {
+      if (
+        generation !==
+        connectionGeneration
+      ) {
+        return;
+      }
+
       options.onStatus?.(
         "error",
       );
@@ -219,65 +335,158 @@ export function createBinanceWebSocket(
       return;
     }
 
-    socket.onopen = () => {
+    socket = newSocket;
+
+    /* ---------------------------------------------------------------------- */
+    /* OPEN                                                                   */
+    /* ---------------------------------------------------------------------- */
+
+    newSocket.onopen = () => {
+      if (
+        destroyed ||
+        generation !==
+          connectionGeneration
+      ) {
+        newSocket.close();
+        return;
+      }
+
+      /*
+       * Connection đã thành công.
+       *
+       * Reset backoff.
+       */
       reconnectAttempt = 0;
 
       options.onStatus?.(
         "connected",
       );
 
-      scheduleHeartbeat();
+      scheduleHeartbeat(
+        generation,
+      );
     };
 
-    socket.onmessage = (
+    /* ---------------------------------------------------------------------- */
+    /* MESSAGE                                                                */
+    /* ---------------------------------------------------------------------- */
+
+    newSocket.onmessage = (
       event,
     ) => {
+      if (
+        destroyed ||
+        generation !==
+          connectionGeneration
+      ) {
+        return;
+      }
+
       try {
         const message =
           JSON.parse(
             event.data,
-          );
-
-        const data =
-          message.data ?? message;
+          ) as {
+            stream?: string;
+            data?: BinanceMessage;
+          };
 
         /*
-         * ------------------------------------------------------
-         * TICKER
-         * ------------------------------------------------------
+         * Combined stream:
+         *
+         * {
+         *   stream: "btcusdt@ticker",
+         *   data: {...}
+         * }
          */
+
+        const data =
+          message.data ??
+          message;
+
+        /* ------------------------------------------------------------------ */
+        /* TICKER                                                             */
+        /* ------------------------------------------------------------------ */
+
         if (
           data.e ===
             "24hrTicker" &&
           data.s &&
           data.c
         ) {
-          options.onTicker?.({
-            symbol: data.s,
-            price: Number(
+          const price =
+            Number(
               data.c,
-            ),
-            eventTime:
-              Number(
-                data.E ??
-                  Date.now(),
-              ),
-          });
+            );
+
+          if (
+            Number.isFinite(
+              price,
+            )
+          ) {
+            options.onTicker?.({
+              symbol:
+                data.s,
+
+              price,
+
+              eventTime:
+                Number(
+                  data.E ??
+                    Date.now(),
+                ),
+            });
+          }
 
           return;
         }
 
-        /*
-         * ------------------------------------------------------
-         * KLINE
-         * ------------------------------------------------------
-         */
+        /* ------------------------------------------------------------------ */
+        /* KLINE                                                              */
+        /* ------------------------------------------------------------------ */
+
         if (
-          data.e === "kline" &&
+          data.e ===
+            "kline" &&
           data.k
         ) {
           const k =
             data.k;
+
+          const open =
+            Number(k.o);
+
+          const high =
+            Number(k.h);
+
+          const low =
+            Number(k.l);
+
+          const close =
+            Number(k.c);
+
+          const volume =
+            Number(k.v);
+
+          if (
+            !Number.isFinite(
+              open,
+            ) ||
+            !Number.isFinite(
+              high,
+            ) ||
+            !Number.isFinite(
+              low,
+            ) ||
+            !Number.isFinite(
+              close,
+            ) ||
+            !Number.isFinite(
+              volume,
+            )
+          ) {
+            return;
+          }
 
           options.onKline?.({
             symbol:
@@ -292,20 +501,15 @@ export function createBinanceWebSocket(
             closeTime:
               Number(k.T),
 
-            open:
-              Number(k.o),
+            open,
 
-            high:
-              Number(k.h),
+            high,
 
-            low:
-              Number(k.l),
+            low,
 
-            close:
-              Number(k.c),
+            close,
 
-            volume:
-              Number(k.v),
+            volume,
 
             isClosed:
               Boolean(k.x),
@@ -313,21 +517,56 @@ export function createBinanceWebSocket(
         }
       } catch {
         /*
-         * Ignore malformed websocket payload.
+         * Ignore malformed messages.
          */
       }
     };
 
-    socket.onerror = () => {
+    /* ---------------------------------------------------------------------- */
+    /* ERROR                                                                  */
+    /* ---------------------------------------------------------------------- */
+
+    newSocket.onerror = () => {
+      if (
+        destroyed ||
+        generation !==
+          connectionGeneration
+      ) {
+        return;
+      }
+
       options.onStatus?.(
         "error",
       );
+
+      /*
+       * Không reconnect trực tiếp
+       * ở đây.
+       *
+       * Browser sẽ gọi onclose.
+       */
     };
 
-    socket.onclose = () => {
-      socket = null;
+    /* ---------------------------------------------------------------------- */
+    /* CLOSE                                                                  */
+    /* ---------------------------------------------------------------------- */
 
-      clearTimers();
+    newSocket.onclose = () => {
+      if (
+        generation !==
+        connectionGeneration
+      ) {
+        return;
+      }
+
+      clearHeartbeatTimer();
+
+      if (
+        socket ===
+        newSocket
+      ) {
+        socket = null;
+      }
 
       if (destroyed) {
         options.onStatus?.(
@@ -345,68 +584,65 @@ export function createBinanceWebSocket(
     };
   }
 
-  function scheduleReconnect() {
-    if (
-      destroyed ||
-      reconnectTimer
-    ) {
+  /* ------------------------------------------------------------------------ */
+  /* DISCONNECT                                                               */
+  /* ------------------------------------------------------------------------ */
+
+  function disconnect() {
+    if (destroyed) {
       return;
     }
 
-    reconnectAttempt += 1;
-
-    const delay =
-      Math.min(
-        MAX_RECONNECT_DELAY,
-        RECONNECT_BASE_DELAY *
-          Math.pow(
-            2,
-            Math.min(
-              reconnectAttempt - 1,
-              4,
-            ),
-          ),
-      );
-
-    reconnectTimer =
-      setTimeout(() => {
-        reconnectTimer = null;
-
-        connect();
-      }, delay);
-  }
-
-  function disconnect() {
     destroyed = true;
+
+    /*
+     * Invalidate toàn bộ callback
+     * của socket cũ.
+     */
+    connectionGeneration += 1;
 
     clearTimers();
 
-    if (socket) {
-      socket.onclose =
+    const currentSocket =
+      socket;
+
+    socket = null;
+
+    if (currentSocket) {
+      currentSocket.onopen =
         null;
 
-      socket.onerror =
+      currentSocket.onmessage =
         null;
 
-      socket.onmessage =
+      currentSocket.onerror =
+        null;
+
+      currentSocket.onclose =
         null;
 
       if (
-        socket.readyState ===
+        currentSocket.readyState ===
           WebSocket.OPEN ||
-        socket.readyState ===
+        currentSocket.readyState ===
           WebSocket.CONNECTING
       ) {
-        socket.close();
+        try {
+          currentSocket.close();
+        } catch {
+          /* ignore */
+        }
       }
-
-      socket = null;
     }
 
     options.onStatus?.(
       "disconnected",
     );
   }
+
+  /* ------------------------------------------------------------------------ */
+  /* START                                                                    */
+  /* ------------------------------------------------------------------------ */
 
   connect();
 
