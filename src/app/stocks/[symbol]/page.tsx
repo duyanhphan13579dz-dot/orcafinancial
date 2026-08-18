@@ -2096,51 +2096,54 @@ export default function StockPage({
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
 
                     {[
-                      [
-                        "EPS (ước tính)",
-                        fundamental.eps,
-                      ],
-                      [
-                        "ROE (%)",
-                        fundamental.roe,
-                      ],
-                      [
-                        "ROA (%)",
-                        fundamental.roa,
-                      ],
-                      [
-                        "ROS (%)",
-                        fundamental.ros,
-                      ],
-                      [
-                        "CAGR 3 năm (%)",
-                        fundamental.cagr3y,
-                      ],
-                    ].map(
-                      ([
-                        label,
-                        value,
-                      ]) => (
-                        <div
-                          key={
-                            label
-                          }
-                          className="bg-slate-800/40 rounded p-3"
-                        >
-                          <div className="text-[10px] text-slate-500">
-                            {
-                              label
-                            }
-                          </div>
+  [
+    "EPS (ước tính)",
+    fundamental.eps,
+  ],
+  [
+    "ROE (%)",
+    fundamental.roe,
+  ],
+  [
+    "ROA (%)",
+    fundamental.roa,
+  ],
+  [
+    "ROS (%)",
+    fundamental.ros,
+  ],
+  [
+    "CAGR 3 năm (%)",
+    fundamental.cagr3y,
+  ],
+].map(
+  ([
+    label,
+    value,
+  ]) => (
+    <div
+      key={
+        label
+      }
+      className="bg-slate-800/40 rounded p-3"
+    >
+      <div className="text-[10px] text-slate-500">
+        {
+          label
+        }
+      </div>
 
-                          <div className="text-lg font-bold">
-                            {fmtNum(
-                              value,
-                            )}
-                          </div>
-                        </div>
-                      ),
-                    )}
+      <div className="text-lg font-bold">
+        {fmtNum(
+          value as
+            | number
+            | null
+            | undefined,
+        )}
+      </div>
+    </div>
+  ),
+)}
                   </div>
                 </div>
 
