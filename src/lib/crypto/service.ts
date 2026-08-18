@@ -1,7 +1,6 @@
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { exchangeRates } from "@/lib/commodities/schema";
-import { fetchExchangeRates } from "@/lib/commodities/connectors";
 import { saveExchangeRates } from "@/lib/commodities/service";
 import { cryptoAnalysis, cryptoCoins, cryptoOhlcv, cryptoPrices, cryptoSentiment } from "./schema";
 import { fetchBinanceKlines, fetchCoinGeckoMarkets, fetchCoinGeckoProfile, fetchCryptoMarketsWithFallback, fetchCryptoNews } from "./connectors";
