@@ -2,11 +2,12 @@
   "name": "nextjs-postgresql-template",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+  "dev": "next dev",
+  "build": "drizzle-kit push && next build",
+  "start": "next start",
+  "lint": "eslint .",
+  "typecheck": "tsc --noEmit"
+}
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0",
