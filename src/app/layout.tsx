@@ -39,6 +39,7 @@ const NAV = [
   { href: "/", label: "Tổng quan" },
   { href: "/heatmap", label: "Heatmap" },
   { href: "/commodities", label: "Hàng hóa" },
+  { href: "/crypto", label: "Crypto" },
   { href: "/reports", label: "Báo cáo" },
   { href: "/screener", label: "Bộ lọc" },
   { href: "/news", label: "Tin tức" },
