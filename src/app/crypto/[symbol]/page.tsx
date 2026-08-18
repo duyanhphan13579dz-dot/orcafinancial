@@ -41,14 +41,6 @@ interface Detail {
     circulatingSupply: number | null;
     totalSupply: number | null;
     maxSupply: number | null;
-
-    /*
-     * Quan trọng cho Binance WebSocket.
-     *
-     * Ví dụ:
-     * BTC -> BTCUSDT
-     * ETH -> ETHUSDT
-     */
     binanceSymbol?: string | null;
   };
 
@@ -115,7 +107,7 @@ interface SentimentData {
 }
 
 /* -------------------------------------------------------------------------- */
-/*                               CONSTANTS                                    */
+/*                              CONSTANTS                                     */
 /* -------------------------------------------------------------------------- */
 
 const TFS = [
@@ -128,51 +120,69 @@ const TFS = [
 ];
 
 /* -------------------------------------------------------------------------- */
-/*                              MAIN COMPONENT                                */
+/*                              COMPONENT                                     */
 /* -------------------------------------------------------------------------- */
 
 export default function CryptoDetail() {
   const params = useParams();
 
-  const symbol =
-    String(
-      params.symbol ?? "",
-    ).toUpperCase();
+  const symbol = String(
+    params.symbol ?? "",
+  ).toUpperCase();
+
+  /* ------------------------------------------------------------------------ */
+  /* TIMEFRAME                                                                */
+  /* ------------------------------------------------------------------------ */
 
   const [tf, setTf] =
     useState("1h");
 
+  /* ------------------------------------------------------------------------ */
+  /* WEBSOCKET STATUS                                                         */
+  /* ------------------------------------------------------------------------ */
+
+  const [
+    wsStatus,
+    setWsStatus,
+  ] = useState<
+    | "connecting"
+    | "connected"
+    | "reconnecting"
+    | "disconnected"
+    | "error"
+  >("connecting");
+
+  /* ------------------------------------------------------------------------ */
+  /* WEBSOCKET PRICE                                                          */
+  /* ------------------------------------------------------------------------ */
+
+  const [
+    wsPrice,
+    setWsPrice,
+  ] = useState<
+    number | null
+  >(null);
+
+  /* ------------------------------------------------------------------------ */
+  /* WEBSOCKET CANDLE                                                         */
+  /* ------------------------------------------------------------------------ */
+
+  const [
+    wsKline,
+    setWsKline,
+  ] = useState<
+    BinanceKline | null
+  >(null);
+
+  /* ------------------------------------------------------------------------ */
+  /* DETAIL                                                                   */
+  /* ------------------------------------------------------------------------ */
+
   /*
-   * ------------------------------------------------------------------------
-   * BINANCE REALTIME STATE
-   * ------------------------------------------------------------------------
-   */
-
-  const [wsPrice, setWsPrice] =
-    useState<number | null>(
-      null,
-    );
-
-  const [wsKline, setWsKline] =
-    useState<BinanceKline | null>(
-      null,
-    );
-
-  const [wsStatus, setWsStatus] =
-    useState<
-      | "connecting"
-      | "connected"
-      | "reconnecting"
-      | "disconnected"
-      | "error"
-    >("connecting");
-
-  /*
-   * ------------------------------------------------------------------------
-   * DETAIL
-   * ------------------------------------------------------------------------
+   * Profile / metadata thay đổi rất ít.
    *
-   * Profile không cần realtime.
+   * Poll 5 phút để đảm bảo dữ liệu vẫn được refresh
+   * nhưng không tạo tải lớn cho API.
    */
   const detail =
     usePoll<Detail>(
@@ -180,56 +190,73 @@ export default function CryptoDetail() {
       5 * 60_000,
     );
 
+  /* ------------------------------------------------------------------------ */
+  /* REST PRICE FALLBACK                                                      */
+  /* ------------------------------------------------------------------------ */
+
   /*
-   * ------------------------------------------------------------------------
-   * REST PRICE FALLBACK
-   * ------------------------------------------------------------------------
+   * Binance WebSocket là nguồn giá realtime chính.
    *
-   * WebSocket là nguồn realtime chính.
-   * REST vẫn giữ làm fallback.
+   * Khi WS connected:
+   *   REST = fallback mỗi 5 phút.
+   *
+   * Khi WS mất:
+   *   REST = fallback nhanh mỗi 15 giây.
    */
   const realtime =
     usePoll<{
       price: Detail["price"];
     }>(
       `/crypto/${symbol}/price`,
-      30_000,
+      wsStatus ===
+        "connected"
+        ? 5 * 60_000
+        : 15_000,
     );
 
+  /* ------------------------------------------------------------------------ */
+  /* REST OHLCV                                                               */
+  /* ------------------------------------------------------------------------ */
+
   /*
-   * ------------------------------------------------------------------------
-   * REST OHLCV
-   * ------------------------------------------------------------------------
+   * Binance WebSocket cập nhật candle hiện tại.
    *
-   * REST chỉ làm initial/history refresh.
+   * REST chỉ dùng để:
    *
-   * Candle hiện tại được Binance WebSocket
-   * cập nhật realtime.
+   * 1. lấy lịch sử ban đầu
+   * 2. backup khi WS mất
+   * 3. đồng bộ lại chart định kỳ
    */
   const ohlcv =
     usePoll<{
       bars: Bar[];
     }>(
       `/crypto/${symbol}/ohlcv?timeframe=${tf}&limit=200`,
-      60_000,
+      wsStatus ===
+        "connected"
+        ? 10 * 60_000
+        : 30_000,
     );
 
+  /* ------------------------------------------------------------------------ */
+  /* ANALYSIS                                                                 */
+  /* ------------------------------------------------------------------------ */
+
   /*
-   * ------------------------------------------------------------------------
-   * ANALYSIS
-   * ------------------------------------------------------------------------
+   * Analysis không cần realtime từng giây.
+   *
+   * 10 phút là hợp lý để giảm tải server.
    */
   const analysis =
     usePoll<Analysis>(
       `/crypto/${symbol}/analysis?timeframe=${tf}`,
-      5 * 60_000,
+      10 * 60_000,
     );
 
-  /*
-   * ------------------------------------------------------------------------
-   * SENTIMENT
-   * ------------------------------------------------------------------------
-   */
+  /* ------------------------------------------------------------------------ */
+  /* SENTIMENT                                                                */
+  /* ------------------------------------------------------------------------ */
+
   const sentiment =
     usePoll<SentimentData>(
       `/crypto/${symbol}/sentiment`,
@@ -237,7 +264,7 @@ export default function CryptoDetail() {
     );
 
   /* ------------------------------------------------------------------------ */
-  /*                         BINANCE WEBSOCKET                                */
+  /* BINANCE WEBSOCKET                                                         */
   /* ------------------------------------------------------------------------ */
 
   useEffect(() => {
@@ -248,36 +275,23 @@ export default function CryptoDetail() {
     /*
      * Reset realtime state khi:
      *
-     * BTC 1h
-     * ↓
-     * BTC 4h
+     * BTC -> ETH
      *
      * hoặc:
      *
-     * BTC
-     * ↓
-     * ETH
+     * 1h -> 4h
      */
     setWsPrice(null);
-
     setWsKline(null);
-
-    setWsStatus(
-      "connecting",
-    );
+    setWsStatus("connecting");
 
     /*
-     * Binance symbol.
+     * Ưu tiên symbol Binance được backend cung cấp.
      *
-     * Ưu tiên:
-     *
-     * coin.binanceSymbol
-     *
-     * nhưng coin profile có thể chưa load.
-     *
-     * Khi chưa có thì fallback:
+     * Nếu backend chưa có thì:
      *
      * BTC -> BTCUSDT
+     * ETH -> ETHUSDT
      */
     const binanceSymbol =
       detail.data?.coin
@@ -289,7 +303,8 @@ export default function CryptoDetail() {
         symbol:
           binanceSymbol,
 
-        timeframe: tf,
+        timeframe:
+          tf,
 
         onTicker: (
           ticker,
@@ -327,28 +342,31 @@ export default function CryptoDetail() {
   ]);
 
   /* ------------------------------------------------------------------------ */
-  /*                              COIN                                        */
+  /* COIN                                                                      */
   /* ------------------------------------------------------------------------ */
 
   const coin =
     detail.data?.coin;
 
   /* ------------------------------------------------------------------------ */
-  /*                              PRICE                                       */
+  /* REST PRICE                                                               */
   /* ------------------------------------------------------------------------ */
 
   const restPrice =
     realtime.data?.price ??
     detail.data?.price;
 
+  /* ------------------------------------------------------------------------ */
+  /* MERGED PRICE                                                             */
+  /* ------------------------------------------------------------------------ */
+
   /*
-   * WebSocket price được ưu tiên.
+   * WS price được ưu tiên.
    *
-   * Các field khác như:
+   * Những dữ liệu Binance WS không cung cấp cho UI:
    *
-   * marketCap
-   * volume24h
-   * change24h
+   * - marketCap
+   * - priceVnd
    *
    * vẫn lấy từ REST.
    */
@@ -372,7 +390,7 @@ export default function CryptoDetail() {
               null,
 
             source:
-              "binance-websocket",
+              "Binance WebSocket",
 
             timestamp:
               new Date().toISOString(),
@@ -382,7 +400,7 @@ export default function CryptoDetail() {
             wsPrice,
 
           source:
-            "binance-websocket",
+            "Binance WebSocket",
 
           timestamp:
             new Date().toISOString(),
@@ -390,20 +408,17 @@ export default function CryptoDetail() {
       : restPrice;
 
   /* ------------------------------------------------------------------------ */
-  /*                         REALTIME CHART DATA                               */
+  /* CHART DATA                                                               */
   /* ------------------------------------------------------------------------ */
 
   /*
-   * Kết hợp:
+   * Ghép:
    *
-   * REST 200 candles
+   * REST historical candles
    *
    * +
    *
    * Binance realtime candle.
-   *
-   * useMemo giúp tránh tạo lại array
-   * khi những phần khác của page render.
    */
   const chartBars =
     useMemo(() => {
@@ -411,62 +426,54 @@ export default function CryptoDetail() {
         ohlcv.data?.bars ?? [];
 
       /*
-       * Chưa có WebSocket candle.
-       *
-       * Dùng nguyên REST data.
+       * Chưa có REST hoặc WS candle.
        */
       if (
         !wsKline ||
-        historicalBars.length === 0
+        historicalBars.length ===
+          0
       ) {
         return historicalBars;
       }
 
-      const realtimeBar: Bar = {
-        /*
-         * lightweight-charts sử dụng
-         * Unix timestamp tính bằng giây.
-         */
-        time: Math.floor(
-          wsKline.startTime /
-            1000,
-        ),
+      const realtimeBar: Bar =
+        {
+          /*
+           * lightweight-charts:
+           * timestamp tính bằng giây.
+           */
+          time: Math.floor(
+            wsKline.startTime /
+              1000,
+          ),
 
-        open:
-          wsKline.open,
+          open:
+            wsKline.open,
 
-        high:
-          wsKline.high,
+          high:
+            wsKline.high,
 
-        low:
-          wsKline.low,
+          low:
+            wsKline.low,
 
-        close:
-          wsKline.close,
+          close:
+            wsKline.close,
 
-        volume:
-          wsKline.volume,
-      };
+          volume:
+            wsKline.volume,
+        };
 
       const last =
         historicalBars[
-          historicalBars.length - 1
+          historicalBars.length -
+            1
         ];
 
       /*
        * ------------------------------------------------------
-       * CASE 1
+       * Candle hiện tại trùng candle cuối REST.
        *
-       * Binance đang update candle
-       * hiện tại.
-       *
-       * REST:
-       *
-       * ... 100
-       *
-       * WS:
-       *
-       * ... 101
+       * Chỉ replace candle cuối.
        * ------------------------------------------------------
        */
       if (
@@ -479,18 +486,15 @@ export default function CryptoDetail() {
             0,
             -1,
           ),
-
           realtimeBar,
         ];
       }
 
       /*
        * ------------------------------------------------------
-       * CASE 2
+       * Binance đã sang candle mới.
        *
-       * Binance đã bước sang
-       * candle mới.
-       *
+       * Append candle mới.
        * ------------------------------------------------------
        */
       if (
@@ -506,11 +510,9 @@ export default function CryptoDetail() {
 
       /*
        * ------------------------------------------------------
-       * CASE 3
-       *
        * WS candle cũ hơn REST.
        *
-       * Không dùng.
+       * Không sử dụng.
        * ------------------------------------------------------
        */
       return historicalBars;
@@ -520,7 +522,7 @@ export default function CryptoDetail() {
     ]);
 
   /* ------------------------------------------------------------------------ */
-  /*                            ANALYSIS                                      */
+  /* ANALYSIS                                                                 */
   /* ------------------------------------------------------------------------ */
 
   const a =
@@ -536,7 +538,7 @@ export default function CryptoDetail() {
         : "border-amber-600 bg-amber-500/10 text-amber-300";
 
   /* ------------------------------------------------------------------------ */
-  /*                         TIMEFRAME HANDLER                                */
+  /* TIMEFRAME CHANGE                                                         */
   /* ------------------------------------------------------------------------ */
 
   const handleTimeframeChange =
@@ -550,31 +552,36 @@ export default function CryptoDetail() {
       }
 
       /*
-       * Xóa candle realtime cũ
-       * trước khi chuyển timeframe.
+       * Xóa candle WS cũ.
        */
       setWsKline(null);
 
+      /*
+       * Xóa price WS cũ.
+       *
+       * Sau đó REST fallback tạm thời
+       * cho đến khi WS mới connected.
+       */
       setWsPrice(null);
 
       setTf(nextTf);
     };
 
   /* ------------------------------------------------------------------------ */
-  /*                         WEBSOCKET STATUS                                 */
+  /* WEBSOCKET STATUS UI                                                      */
   /* ------------------------------------------------------------------------ */
 
   const websocketStatusText =
     wsStatus ===
     "connected"
-      ? "REALTIME"
+      ? "BINANCE LIVE"
       : wsStatus ===
           "reconnecting"
         ? "RECONNECTING"
         : wsStatus ===
             "connecting"
           ? "CONNECTING"
-          : "FALLBACK";
+          : "REST FALLBACK";
 
   const websocketStatusClass =
     wsStatus ===
@@ -586,14 +593,14 @@ export default function CryptoDetail() {
         : "bg-slate-500";
 
   /* ------------------------------------------------------------------------ */
-  /*                                  UI                                      */
+  /* RENDER                                                                   */
   /* ------------------------------------------------------------------------ */
 
   return (
     <div className="space-y-5">
 
       {/* ------------------------------------------------------------------ */}
-      {/* BACK                                                               */}
+      {/* BACK                                                                */}
       {/* ------------------------------------------------------------------ */}
 
       <div>
@@ -606,12 +613,13 @@ export default function CryptoDetail() {
       </div>
 
       {/* ------------------------------------------------------------------ */}
-      {/* HEADER                                                             */}
+      {/* HEADER                                                              */}
       {/* ------------------------------------------------------------------ */}
 
       <div className="panel p-4 flex flex-wrap items-center gap-4">
 
         {/* Logo */}
+
         {coin?.logoUrl ? (
           <img
             src={
@@ -631,8 +639,10 @@ export default function CryptoDetail() {
           </div>
         )}
 
-        {/* Coin name */}
+        {/* Coin information */}
+
         <div>
+
           <div className="flex items-center gap-2">
 
             <h1 className="text-2xl font-black text-white">
@@ -644,9 +654,10 @@ export default function CryptoDetail() {
               {symbol}
             </span>
 
-            {/* WebSocket indicator */}
             <span
-              title={`Binance ${websocketStatusText}`}
+              title={
+                websocketStatusText
+              }
               className={`h-2 w-2 rounded-full ${websocketStatusClass} ${
                 wsStatus ===
                 "connected"
@@ -654,6 +665,7 @@ export default function CryptoDetail() {
                   : ""
               }`}
             />
+
           </div>
 
           <div className="text-[10px] text-slate-500">
@@ -663,16 +675,31 @@ export default function CryptoDetail() {
             · GMT+7
           </div>
 
-          <div className="text-[9px] mt-1 text-slate-600">
+          <div
+            className={`text-[9px] mt-1 ${
+              wsStatus ===
+              "connected"
+                ? "text-emerald-500"
+                : wsStatus ===
+                    "reconnecting"
+                  ? "text-amber-500"
+                  : "text-slate-600"
+            }`}
+          >
             Binance WebSocket:{" "}
-            {websocketStatusText}
+            {
+              websocketStatusText
+            }
           </div>
+
         </div>
 
         {/* Price */}
+
         <div className="sm:ml-auto">
 
           <div className="text-3xl font-black text-white">
+
             $
             {fmtNum(
               price?.price,
@@ -682,6 +709,7 @@ export default function CryptoDetail() {
                 ? 6
                 : 2,
             )}
+
           </div>
 
           <div
@@ -695,16 +723,17 @@ export default function CryptoDetail() {
           </div>
 
         </div>
+
       </div>
 
       {/* ------------------------------------------------------------------ */}
-      {/* CHART + SIGNAL                                                     */}
+      {/* CHART + SIGNAL                                                      */}
       {/* ------------------------------------------------------------------ */}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
 
         {/* ---------------------------------------------------------------- */}
-        {/* CHART                                                            */}
+        {/* CANDLE CHART                                                      */}
         {/* ---------------------------------------------------------------- */}
 
         <div className="panel p-3 xl:col-span-2">
@@ -718,7 +747,6 @@ export default function CryptoDetail() {
                 {symbol}/USDT
               </h2>
 
-              {/* Realtime label */}
               {wsStatus ===
                 "connected" && (
                 <span className="text-[9px] uppercase tracking-wider text-emerald-400">
@@ -729,6 +757,7 @@ export default function CryptoDetail() {
             </div>
 
             {/* Timeframes */}
+
             <div className="flex gap-1 overflow-x-auto">
 
               {TFS.map(
@@ -756,9 +785,11 @@ export default function CryptoDetail() {
               )}
 
             </div>
+
           </div>
 
-          {/* Candle chart */}
+          {/* Chart */}
+
           {chartBars.length >
           0 ? (
             <CandleChart
@@ -778,7 +809,7 @@ export default function CryptoDetail() {
         </div>
 
         {/* ---------------------------------------------------------------- */}
-        {/* QUANT SIGNAL                                                     */}
+        {/* QUANT SIGNAL                                                      */}
         {/* ---------------------------------------------------------------- */}
 
         <div
@@ -871,16 +902,17 @@ export default function CryptoDetail() {
           </div>
 
         </div>
+
       </div>
 
       {/* ------------------------------------------------------------------ */}
-      {/* TECHNICAL / SENTIMENT / MARKET                                    */}
+      {/* INDICATORS / SENTIMENT / MARKET                                    */}
       {/* ------------------------------------------------------------------ */}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
         {/* ---------------------------------------------------------------- */}
-        {/* INDICATORS                                                       */}
+        {/* TECHNICAL INDICATORS                                              */}
         {/* ---------------------------------------------------------------- */}
 
         <div className="panel p-4">
@@ -910,11 +942,13 @@ export default function CryptoDetail() {
                       key={k}
                       className="rounded bg-slate-900/40 p-2"
                     >
+
                       <div className="text-slate-500">
                         {k}
                       </div>
 
                       <div className="font-mono text-white mt-1">
+
                         {typeof v ===
                         "number"
                           ? fmtNum(
@@ -922,12 +956,15 @@ export default function CryptoDetail() {
                               4,
                             )
                           : "—"}
+
                       </div>
+
                     </div>
                   ),
                 )}
 
           </div>
+
         </div>
 
         {/* ---------------------------------------------------------------- */}
@@ -946,8 +983,7 @@ export default function CryptoDetail() {
               ?.score !=
             null
               ? `${
-                  sentiment
-                    .data
+                  sentiment.data
                     .score >
                   0
                     ? "+"
@@ -998,10 +1034,11 @@ export default function CryptoDetail() {
               )}
 
           </div>
+
         </div>
 
         {/* ---------------------------------------------------------------- */}
-        {/* MARKET INFORMATION                                               */}
+        {/* MARKET INFORMATION                                                */}
         {/* ---------------------------------------------------------------- */}
 
         <div className="panel p-4">
@@ -1080,6 +1117,7 @@ export default function CryptoDetail() {
           )}
 
         </div>
+
       </div>
 
       {/* ------------------------------------------------------------------ */}
@@ -1101,6 +1139,32 @@ export default function CryptoDetail() {
 
         </div>
       )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* DATA STATUS                                                        */}
+      {/* ------------------------------------------------------------------ */}
+
+      <div className="text-[10px] text-slate-600 flex flex-wrap gap-x-4 gap-y-1">
+
+        <span>
+          Market data:{" "}
+          {price?.source ??
+            "—"}
+        </span>
+
+        <span>
+          Chart: Binance{" "}
+          {wsStatus ===
+          "connected"
+            ? "WebSocket"
+            : "REST fallback"}
+        </span>
+
+        <span>
+          Timeframe: {tf}
+        </span>
+
+      </div>
 
     </div>
   );
