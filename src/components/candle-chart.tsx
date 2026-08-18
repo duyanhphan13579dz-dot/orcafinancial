@@ -12,6 +12,7 @@ import {
   type ISeriesApi,
   type CandlestickData,
   type HistogramData,
+  type LogicalRange,
 } from "lightweight-charts";
 
 export interface Bar {
@@ -24,11 +25,62 @@ export interface Bar {
 }
 
 interface CandleChartProps {
+  /**
+   * Historical OHLCV data.
+   *
+   * Bars MUST be sorted ascending by time.
+   */
   bars: Bar[];
+
+  /**
+   * Chart height.
+   */
   height?: number;
+
+  /**
+   * Called when the user scrolls close to the
+   * beginning of the loaded dataset.
+   *
+   * Parent component is responsible for fetching
+   * older bars and merging them into `bars`.
+   */
+  onLoadMore?: () => void;
+
+  /**
+   * Prevent duplicate historical requests.
+   */
+  loadingMore?: boolean;
+
+  /**
+   * Whether more historical data exists.
+   *
+   * If false, onLoadMore will no longer be triggered.
+   */
+  hasMore?: boolean;
+
+  /**
+   * How close to the left edge the user must scroll
+   * before requesting more data.
+   *
+   * Example:
+   * 30 = request more when fewer than ~30 logical
+   * bars remain before the left edge.
+   */
+  loadMoreThreshold?: number;
+
+  /**
+   * Optional callback when visible logical range changes.
+   *
+   * Useful for debugging or future chart state management.
+   */
+  onVisibleRangeChange?: (
+    range: LogicalRange | null,
+  ) => void;
 }
 
-function toCandleData(bar: Bar): CandlestickData<Time> {
+function toCandleData(
+  bar: Bar,
+): CandlestickData<Time> {
   return {
     time: bar.time as Time,
     open: bar.open,
@@ -38,10 +90,13 @@ function toCandleData(bar: Bar): CandlestickData<Time> {
   };
 }
 
-function toVolumeData(bar: Bar): HistogramData<Time> {
+function toVolumeData(
+  bar: Bar,
+): HistogramData<Time> {
   return {
     time: bar.time as Time,
     value: bar.volume,
+
     color:
       bar.close >= bar.open
         ? "rgba(52, 211, 153, 0.3)"
@@ -49,7 +104,14 @@ function toVolumeData(bar: Bar): HistogramData<Time> {
   };
 }
 
-function barsAreEqual(a: Bar, b: Bar) {
+function barsAreEqual(
+  a: Bar | undefined,
+  b: Bar | undefined,
+) {
+  if (!a || !b) {
+    return false;
+  }
+
   return (
     a.time === b.time &&
     a.open === b.open &&
@@ -57,50 +119,6 @@ function barsAreEqual(a: Bar, b: Bar) {
     a.low === b.low &&
     a.close === b.close &&
     a.volume === b.volume
-  );
-}
-
-function isAppendOnlyUpdate(
-  previous: Bar[],
-  next: Bar[],
-) {
-  if (previous.length === 0) return false;
-
-  /*
-   * Trường hợp phổ biến nhất:
-   *
-   * previous:
-   * [1, 2, 3, 4]
-   *
-   * next:
-   * [1, 2, 3, 4]
-   *
-   * chỉ candle cuối thay đổi.
-   */
-  if (next.length !== previous.length) {
-    return false;
-  }
-
-  if (next.length === 0) {
-    return false;
-  }
-
-  /*
-   * Tất cả candle trước candle cuối phải giống nhau.
-   */
-  for (let i = 0; i < next.length - 1; i++) {
-    if (!barsAreEqual(previous[i], next[i])) {
-      return false;
-    }
-  }
-
-  /*
-   * Timestamp candle cuối phải giống nhau.
-   * Nếu timestamp thay đổi thì đây có thể là candle mới.
-   */
-  return (
-    previous[next.length - 1]?.time ===
-    next[next.length - 1]?.time
   );
 }
 
@@ -116,9 +134,6 @@ function isSameBars(
     return true;
   }
 
-  /*
-   * Kiểm tra nhanh timestamp đầu/cuối trước.
-   */
   if (
     previous[0]?.time !== next[0]?.time ||
     previous[previous.length - 1]?.time !==
@@ -127,11 +142,13 @@ function isSameBars(
     return false;
   }
 
-  /*
-   * Chỉ khi cần mới kiểm tra toàn bộ.
-   */
   for (let i = 0; i < next.length; i++) {
-    if (!barsAreEqual(previous[i], next[i])) {
+    if (
+      !barsAreEqual(
+        previous[i],
+        next[i],
+      )
+    ) {
       return false;
     }
   }
@@ -139,9 +156,156 @@ function isSameBars(
   return true;
 }
 
+/**
+ * Detects the common realtime case:
+ *
+ * previous:
+ * [1, 2, 3, 4]
+ *
+ * next:
+ * [1, 2, 3, 4]
+ *
+ * Only candle #4 changed.
+ */
+function isLastCandleUpdate(
+  previous: Bar[],
+  next: Bar[],
+) {
+  if (
+    previous.length === 0 ||
+    previous.length !== next.length
+  ) {
+    return false;
+  }
+
+  for (
+    let i = 0;
+    i < next.length - 1;
+    i++
+  ) {
+    if (
+      !barsAreEqual(
+        previous[i],
+        next[i],
+      )
+    ) {
+      return false;
+    }
+  }
+
+  const previousLast =
+    previous[previous.length - 1];
+
+  const nextLast =
+    next[next.length - 1];
+
+  if (
+    !previousLast ||
+    !nextLast
+  ) {
+    return false;
+  }
+
+  return (
+    previousLast.time ===
+    nextLast.time
+  );
+}
+
+/**
+ * Detects newly appended candles.
+ *
+ * previous:
+ * [1, 2, 3, 4]
+ *
+ * next:
+ * [1, 2, 3, 4, 5]
+ */
+function getAppendedBars(
+  previous: Bar[],
+  next: Bar[],
+): Bar[] | null {
+  if (
+    previous.length === 0 ||
+    next.length <= previous.length
+  ) {
+    return null;
+  }
+
+  for (
+    let i = 0;
+    i < previous.length;
+    i++
+  ) {
+    if (
+      !barsAreEqual(
+        previous[i],
+        next[i],
+      )
+    ) {
+      return null;
+    }
+  }
+
+  return next.slice(
+    previous.length,
+  );
+}
+
+/**
+ * Detects newly prepended historical candles.
+ *
+ * previous:
+ * [4, 5, 6, 7]
+ *
+ * next:
+ * [1, 2, 3, 4, 5, 6, 7]
+ *
+ * Returns the number of newly inserted bars.
+ */
+function getPrependedCount(
+  previous: Bar[],
+  next: Bar[],
+): number {
+  if (
+    previous.length === 0 ||
+    next.length <= previous.length
+  ) {
+    return 0;
+  }
+
+  const additional =
+    next.length -
+    previous.length;
+
+  for (
+    let i = 0;
+    i < previous.length;
+    i++
+  ) {
+    if (
+      !barsAreEqual(
+        previous[i],
+        next[
+          i + additional
+        ],
+      )
+    ) {
+      return 0;
+    }
+  }
+
+  return additional;
+}
+
 export function CandleChart({
   bars,
   height = 380,
+  onLoadMore,
+  loadingMore = false,
+  hasMore = true,
+  loadMoreThreshold = 30,
+  onVisibleRangeChange,
 }: CandleChartProps) {
   const chartContainerRef =
     useRef<HTMLDivElement>(null);
@@ -150,36 +314,50 @@ export function CandleChart({
     useRef<IChartApi | null>(null);
 
   const candleSeriesRef =
-    useRef<ISeriesApi<"Candlestick"> | null>(null);
+    useRef<
+      ISeriesApi<"Candlestick"> | null
+    >(null);
 
   const volumeSeriesRef =
-    useRef<ISeriesApi<"Histogram"> | null>(null);
+    useRef<
+      ISeriesApi<"Histogram"> | null
+    >(null);
 
-  /*
-   * Lưu dữ liệu đã render gần nhất.
+  /**
+   * Last dataset rendered by the chart.
    */
   const previousBarsRef =
     useRef<Bar[]>([]);
 
-  /*
-   * Đánh dấu chart đã được khởi tạo.
+  /**
+   * Prevents chart recreation.
    */
   const initializedRef =
     useRef(false);
 
-  /*
-   * Lần đầu load chart thì fitContent().
-   * Sau đó không tự động fit lại nữa.
+  /**
+   * Used to avoid repeatedly calling
+   * onLoadMore while the user remains
+   * near the left edge.
    */
-  const firstDataRenderRef =
-    useRef(true);
+  const loadMoreTriggeredRef =
+    useRef(false);
 
-  /*
-   * ------------------------------------------------------------------
-   * CREATE CHART
-   * ------------------------------------------------------------------
+  /**
+   * Stores the logical range before
+   * prepending historical candles.
    *
-   * Chart chỉ được tạo một lần.
+   * This allows us to preserve the user's
+   * viewport after new candles are inserted
+   * before the current dataset.
+   */
+  const pendingPrependRangeRef =
+    useRef<LogicalRange | null>(null);
+
+  /**
+   * --------------------------------------------------------------
+   * CREATE CHART
+   * --------------------------------------------------------------
    */
   useEffect(() => {
     if (
@@ -192,82 +370,136 @@ export function CandleChart({
     const container =
       chartContainerRef.current;
 
-    const chart = createChart(
-      container,
-      {
-        layout: {
-          background: {
-            type: ColorType.Solid,
-            color: "transparent",
+    const chart =
+      createChart(
+        container,
+        {
+          layout: {
+            background: {
+              type:
+                ColorType.Solid,
+              color:
+                "transparent",
+            },
+
+            textColor:
+              "#7aa8d4",
+
+            fontFamily:
+              "'JetBrains Mono', monospace",
           },
-          textColor: "#7aa8d4",
-          fontFamily:
-            "'JetBrains Mono', monospace",
-        },
 
-        grid: {
-          vertLines: {
-            color:
-              "rgba(26, 53, 88, 0.4)",
+          grid: {
+            vertLines: {
+              color:
+                "rgba(26, 53, 88, 0.4)",
+            },
+
+            horzLines: {
+              color:
+                "rgba(26, 53, 88, 0.4)",
+            },
           },
-          horzLines: {
-            color:
-              "rgba(26, 53, 88, 0.4)",
+
+          crosshair: {
+            mode:
+              CrosshairMode.Normal,
           },
+
+          rightPriceScale: {
+            borderColor:
+              "rgba(26, 53, 88, 0.8)",
+          },
+
+          timeScale: {
+            borderColor:
+              "rgba(26, 53, 88, 0.8)",
+
+            timeVisible: true,
+
+            secondsVisible: false,
+
+            rightOffset: 5,
+
+            /**
+             * Enables smooth scrolling/zooming.
+             */
+            fixLeftEdge: false,
+
+            fixRightEdge: false,
+          },
+
+          handleScroll: {
+            mouseWheel: true,
+            pressedMouseMove: true,
+            horzTouchDrag: true,
+            vertTouchDrag: true,
+          },
+
+          handleScale: {
+            axisPressedMouseMove: true,
+            mouseWheel: true,
+            pinch: true,
+          },
+
+          width:
+            container.clientWidth,
+
+          height,
         },
+      );
 
-        crosshair: {
-          mode: CrosshairMode.Normal,
-        },
-
-        rightPriceScale: {
-          borderColor:
-            "rgba(26, 53, 88, 0.8)",
-        },
-
-        timeScale: {
-          borderColor:
-            "rgba(26, 53, 88, 0.8)",
-
-          timeVisible: true,
-
-          /*
-           * Cho phép người dùng zoom/pan.
-           */
-          rightOffset: 5,
-        },
-
-        width: container.clientWidth,
-        height,
-      },
-    );
-
+    /**
+     * ------------------------------------------------------------
+     * CANDLE SERIES
+     * ------------------------------------------------------------
+     */
     const candlestickSeries =
       chart.addSeries(
         CandlestickSeries,
         {
-          upColor: "#34d399",
-          downColor: "#fb7185",
-          borderVisible: false,
-          wickUpColor: "#34d399",
-          wickDownColor: "#fb7185",
+          upColor:
+            "#34d399",
+
+          downColor:
+            "#fb7185",
+
+          borderVisible:
+            false,
+
+          wickUpColor:
+            "#34d399",
+
+          wickDownColor:
+            "#fb7185",
+
+          priceLineVisible:
+            true,
+
+          lastValueVisible:
+            true,
         },
       );
 
+    /**
+     * ------------------------------------------------------------
+     * VOLUME SERIES
+     * ------------------------------------------------------------
+     */
     const volumeSeries =
       chart.addSeries(
         HistogramSeries,
         {
-          color: "#26a69a",
+          color:
+            "#26a69a",
 
           priceFormat: {
-            type: "volume",
+            type:
+              "volume",
           },
 
-          /*
-           * Volume nằm trên price scale riêng.
-           */
-          priceScaleId: "",
+          priceScaleId:
+            "",
         },
       );
 
@@ -280,7 +512,8 @@ export function CandleChart({
         },
       });
 
-    chartRef.current = chart;
+    chartRef.current =
+      chart;
 
     candleSeriesRef.current =
       candlestickSeries;
@@ -288,46 +521,136 @@ export function CandleChart({
     volumeSeriesRef.current =
       volumeSeries;
 
-    initializedRef.current = true;
+    initializedRef.current =
+      true;
 
-    /*
-     * Responsive chart.
+    /**
+     * ------------------------------------------------------------
+     * VISIBLE RANGE / LOAD MORE
+     * ------------------------------------------------------------
      */
-    const resizeObserver =
-      new ResizeObserver(() => {
-        const currentContainer =
-          chartContainerRef.current;
+    const timeScale =
+      chart.timeScale();
 
-        const currentChart =
-          chartRef.current;
+    const handleVisibleRangeChange =
+      (
+        range: LogicalRange | null,
+      ) => {
+        onVisibleRangeChange?.(
+          range,
+        );
 
         if (
-          !currentContainer ||
-          !currentChart
+          !range ||
+          !onLoadMore ||
+          !hasMore ||
+          loadingMore
         ) {
           return;
         }
 
-        const width =
-          currentContainer.clientWidth;
+        /**
+         * The user is close to the beginning
+         * of the currently loaded dataset.
+         */
+        if (
+          range.from <=
+          loadMoreThreshold
+        ) {
+          /**
+           * Prevent duplicate requests
+           * while the same range is visible.
+           */
+          if (
+            loadMoreTriggeredRef.current
+          ) {
+            return;
+          }
 
-        if (width <= 0) {
-          return;
+          /**
+           * Save current viewport before
+           * parent prepends historical bars.
+           */
+          pendingPrependRangeRef.current =
+            {
+              from: range.from,
+              to: range.to,
+            };
+
+          loadMoreTriggeredRef.current =
+            true;
+
+          onLoadMore();
+        } else {
+          /**
+           * User moved away from the left edge.
+           *
+           * Allow another load-more request
+           * when they approach the edge again.
+           */
+          loadMoreTriggeredRef.current =
+            false;
         }
+      };
 
-        currentChart.applyOptions({
-          width,
-        });
-      });
+    timeScale.subscribeVisibleLogicalRangeChange(
+      handleVisibleRangeChange,
+    );
 
-    resizeObserver.observe(container);
+    /**
+     * ------------------------------------------------------------
+     * RESPONSIVE WIDTH
+     * ------------------------------------------------------------
+     */
+    const resizeObserver =
+      new ResizeObserver(
+        () => {
+          const currentContainer =
+            chartContainerRef.current;
 
+          const currentChart =
+            chartRef.current;
+
+          if (
+            !currentContainer ||
+            !currentChart
+          ) {
+            return;
+          }
+
+          const width =
+            currentContainer.clientWidth;
+
+          if (width <= 0) {
+            return;
+          }
+
+          currentChart.applyOptions({
+            width,
+          });
+        },
+      );
+
+    resizeObserver.observe(
+      container,
+    );
+
+    /**
+     * ------------------------------------------------------------
+     * CLEANUP
+     * ------------------------------------------------------------
+     */
     return () => {
       resizeObserver.disconnect();
 
+      timeScale.unsubscribeVisibleLogicalRangeChange(
+        handleVisibleRangeChange,
+      );
+
       chart.remove();
 
-      chartRef.current = null;
+      chartRef.current =
+        null;
 
       candleSeriesRef.current =
         null;
@@ -338,39 +661,46 @@ export function CandleChart({
       initializedRef.current =
         false;
 
-      previousBarsRef.current = [];
+      previousBarsRef.current =
+        [];
 
-      firstDataRenderRef.current =
-        true;
+      pendingPrependRangeRef.current =
+        null;
+
+      loadMoreTriggeredRef.current =
+        false;
     };
-  }, [height]);
+  }, [
+    height,
+    onLoadMore,
+    hasMore,
+    loadingMore,
+    loadMoreThreshold,
+    onVisibleRangeChange,
+  ]);
 
-  /*
-   * ------------------------------------------------------------------
+  /**
+   * --------------------------------------------------------------
+   * RESET LOAD-MORE LOCK AFTER REQUEST COMPLETES
+   * --------------------------------------------------------------
+   */
+  useEffect(() => {
+    if (!loadingMore) {
+      loadMoreTriggeredRef.current =
+        false;
+    }
+  }, [loadingMore]);
+
+  /**
+   * --------------------------------------------------------------
    * UPDATE DATA
-   * ------------------------------------------------------------------
+   * --------------------------------------------------------------
    */
   useEffect(() => {
     if (
       !initializedRef.current ||
       !candleSeriesRef.current ||
-      !volumeSeriesRef.current ||
-      bars.length === 0
-    ) {
-      return;
-    }
-
-    const previous =
-      previousBarsRef.current;
-
-    /*
-     * Không làm gì nếu dữ liệu hoàn toàn giống nhau.
-     *
-     * Điều này rất hữu ích vì frontend đang polling API.
-     */
-    if (
-      previous.length > 0 &&
-      isSameBars(previous, bars)
+      !volumeSeriesRef.current
     ) {
       return;
     }
@@ -381,119 +711,139 @@ export function CandleChart({
     const volumeSeries =
       volumeSeriesRef.current;
 
-    /*
-     * --------------------------------------------------------------
-     * FIRST LOAD
-     * --------------------------------------------------------------
+    const previous =
+      previousBarsRef.current;
+
+    /**
+     * No data.
      */
-    if (previous.length === 0) {
-      const candleData =
-        bars.map(toCandleData);
+    if (bars.length === 0) {
+      return;
+    }
 
-      const volumeData =
-        bars.map(toVolumeData);
+    /**
+     * ------------------------------------------------------------
+     * NOTHING CHANGED
+     * ------------------------------------------------------------
+     */
+    if (
+      previous.length > 0 &&
+      isSameBars(
+        previous,
+        bars,
+      )
+    ) {
+      return;
+    }
 
+    /**
+     * ------------------------------------------------------------
+     * FIRST LOAD
+     * ------------------------------------------------------------
+     */
+    if (
+      previous.length === 0
+    ) {
       candleSeries.setData(
-        candleData,
+        bars.map(
+          toCandleData,
+        ),
       );
 
       volumeSeries.setData(
-        volumeData,
+        bars.map(
+          toVolumeData,
+        ),
       );
 
-      /*
-       * Chỉ fit một lần.
+      /**
+       * Only the first dataset is fitted.
+       *
+       * After this we NEVER automatically
+       * call fitContent().
        */
       chartRef.current
         ?.timeScale()
         .fitContent();
 
       previousBarsRef.current =
-        bars.map((bar) => ({
-          ...bar,
-        }));
-
-      firstDataRenderRef.current =
-        false;
+        bars.map(
+          (bar) => ({
+            ...bar,
+          }),
+        );
 
       return;
     }
 
-    /*
-     * --------------------------------------------------------------
-     * ONLY LAST CANDLE CHANGED
-     * --------------------------------------------------------------
+    /**
+     * ------------------------------------------------------------
+     * REALTIME LAST-CANDLE UPDATE
+     * ------------------------------------------------------------
      *
-     * Đây là trường hợp quan trọng nhất cho realtime.
+     * Example:
      *
-     * Thay vì:
+     * previous:
+     * 1 2 3 4
      *
-     * setData(200 candles)
-     *
-     * chúng ta chỉ:
-     *
-     * update(last candle)
+     * next:
+     * 1 2 3 4*
      */
     if (
-      isAppendOnlyUpdate(
+      isLastCandleUpdate(
         previous,
         bars,
       )
     ) {
       const last =
-        bars[bars.length - 1];
+        bars[
+          bars.length - 1
+        ];
 
-      candleSeries.update(
-        toCandleData(last),
-      );
+      if (last) {
+        candleSeries.update(
+          toCandleData(last),
+        );
 
-      volumeSeries.update(
-        toVolumeData(last),
-      );
+        volumeSeries.update(
+          toVolumeData(last),
+        );
+      }
 
       previousBarsRef.current =
-        bars.map((bar) => ({
-          ...bar,
-        }));
+        bars.map(
+          (bar) => ({
+            ...bar,
+          }),
+        );
 
       return;
     }
 
-    /*
-     * --------------------------------------------------------------
-     * NEW CANDLE APPENDED
-     * --------------------------------------------------------------
+    /**
+     * ------------------------------------------------------------
+     * APPEND NEW CANDLES
+     * ------------------------------------------------------------
      *
-     * Ví dụ:
-     *
-     * trước:
+     * previous:
      * 1 2 3 4
      *
-     * sau:
-     * 1 2 3 4 5
+     * next:
+     * 1 2 3 4 5 6
      */
-    if (
-      bars.length >
-        previous.length &&
-      bars
-        .slice(
-          0,
-          previous.length,
-        )
-        .every(
-          (bar, index) =>
-            barsAreEqual(
-              bar,
-              previous[index],
-            ),
-        )
-    ) {
-      const newBars =
-        bars.slice(
-          previous.length,
-        );
+    const appended =
+      getAppendedBars(
+        previous,
+        bars,
+      );
 
-      for (const bar of newBars) {
+    if (
+      appended &&
+      appended.length > 0
+    ) {
+      for (
+        const bar of appended
+      ) {
         candleSeries.update(
           toCandleData(bar),
         );
@@ -504,60 +854,159 @@ export function CandleChart({
       }
 
       previousBarsRef.current =
-        bars.map((bar) => ({
-          ...bar,
-        }));
+        bars.map(
+          (bar) => ({
+            ...bar,
+          }),
+        );
 
       return;
     }
 
-    /*
-     * --------------------------------------------------------------
-     * FULL RESET
-     * --------------------------------------------------------------
+    /**
+     * ------------------------------------------------------------
+     * PREPEND HISTORICAL DATA
+     * ------------------------------------------------------------
      *
-     * Chỉ xảy ra khi:
+     * previous:
+     * 4 5 6 7
      *
-     * - đổi timeframe
-     * - dữ liệu lịch sử thay đổi
-     * - API trả về bộ candles khác hoàn toàn
+     * next:
+     * 1 2 3 4 5 6 7
+     *
+     * Lightweight Charts does not have a native prepend
+     * operation.
+     *
+     * Therefore we set the complete dataset again,
+     * then restore the user's logical viewport.
+     *
+     * This only happens when loading older history,
+     * not during normal realtime updates.
      */
-    const candleData =
-      bars.map(toCandleData);
+    const prependedCount =
+      getPrependedCount(
+        previous,
+        bars,
+      );
 
-    const volumeData =
-      bars.map(toVolumeData);
+    if (
+      prependedCount > 0
+    ) {
+      const savedRange =
+        pendingPrependRangeRef.current;
 
+      candleSeries.setData(
+        bars.map(
+          toCandleData,
+        ),
+      );
+
+      volumeSeries.setData(
+        bars.map(
+          toVolumeData,
+        ),
+      );
+
+      /**
+       * Restore viewport after prepending.
+       *
+       * Because N candles were inserted
+       * before the previous dataset, logical
+       * indexes move forward by N.
+       */
+      if (savedRange) {
+        requestAnimationFrame(
+          () => {
+            chartRef.current
+              ?.timeScale()
+              .setVisibleLogicalRange(
+                {
+                  from:
+                    savedRange.from +
+                    prependedCount,
+
+                  to:
+                    savedRange.to +
+                    prependedCount,
+                },
+              );
+          },
+        );
+      }
+
+      pendingPrependRangeRef.current =
+        null;
+
+      previousBarsRef.current =
+        bars.map(
+          (bar) => ({
+            ...bar,
+          }),
+        );
+
+      /**
+       * Allow another historical request
+       * after the current dataset has been
+       * successfully merged.
+       */
+      loadMoreTriggeredRef.current =
+        false;
+
+      return;
+    }
+
+    /**
+     * ------------------------------------------------------------
+     * FULL DATA RESET
+     * ------------------------------------------------------------
+     *
+     * Used for:
+     *
+     * - timeframe changes
+     * - range changes
+     * - completely different datasets
+     */
     candleSeries.setData(
-      candleData,
+      bars.map(
+        toCandleData,
+      ),
     );
 
     volumeSeries.setData(
-      volumeData,
+      bars.map(
+        toVolumeData,
+      ),
     );
 
-    /*
-     * Quan trọng:
+    /**
+     * IMPORTANT:
      *
-     * Không gọi fitContent() ở đây.
+     * Do NOT call fitContent() here.
      *
-     * Nếu user đang zoom chart,
-     * chúng ta không phá zoom của họ.
+     * The user may already be zoomed/panned.
      */
     previousBarsRef.current =
-      bars.map((bar) => ({
-        ...bar,
-      }));
+      bars.map(
+        (bar) => ({
+          ...bar,
+        }),
+      );
   }, [bars]);
 
-  /*
-   * Khi không có dữ liệu.
+  /**
+   * --------------------------------------------------------------
+   * EMPTY STATE
+   * --------------------------------------------------------------
    */
-  if (bars.length === 0) {
+  if (
+    bars.length === 0
+  ) {
     return (
       <div
         className="flex items-center justify-center text-slate-500 text-sm"
-        style={{ height }}
+        style={{
+          height,
+        }}
       >
         Không có dữ liệu
       </div>
@@ -566,10 +1015,41 @@ export function CandleChart({
 
   return (
     <div
-      ref={chartContainerRef}
-      className="w-full relative"
-      style={{ height }}
-    />
+      className="relative w-full"
+      style={{
+        height,
+      }}
+    >
+      <div
+        ref={
+          chartContainerRef
+        }
+        className="absolute inset-0"
+      />
+
+      {/**
+       * ----------------------------------------------------------
+       * LOAD MORE INDICATOR
+       * ----------------------------------------------------------
+       */}
+      {loadingMore && (
+        <div className="absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-md border border-slate-700 bg-slate-900/90 px-3 py-1 text-[10px] text-slate-400 shadow-lg backdrop-blur">
+          Đang tải thêm dữ liệu…
+        </div>
+      )}
+
+      {/**
+       * ----------------------------------------------------------
+       * END OF HISTORY
+       * ----------------------------------------------------------
+       */}
+      {!hasMore &&
+        !loadingMore && (
+          <div className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-md border border-slate-800 bg-slate-950/80 px-2 py-0.5 text-[9px] text-slate-600">
+            Đã tải hết lịch sử
+          </div>
+        )}
+    </div>
   );
 }
 
@@ -586,25 +1066,37 @@ export function Sparkline({
   width?: number;
   height?: number;
 }) {
-  if (bars.length < 2) {
+  if (
+    bars.length < 2
+  ) {
     return null;
   }
 
   const closes =
-    bars.map((bar) => bar.close);
+    bars.map(
+      (bar) =>
+        bar.close,
+    );
 
   const min =
-    Math.min(...closes);
+    Math.min(
+      ...closes,
+    );
 
   const max =
-    Math.max(...closes);
+    Math.max(
+      ...closes,
+    );
 
   const range =
     max - min || 1;
 
   const points =
     closes.map(
-      (close, index) => {
+      (
+        close,
+        index,
+      ) => {
         const x =
           (index /
             (closes.length - 1)) *
@@ -624,7 +1116,8 @@ export function Sparkline({
   const up =
     closes[
       closes.length - 1
-    ] >= closes[0];
+    ] >=
+    closes[0];
 
   return (
     <svg
@@ -635,7 +1128,9 @@ export function Sparkline({
       aria-hidden="true"
     >
       <polyline
-        points={points.join(" ")}
+        points={points.join(
+          " ",
+        )}
         fill="none"
         stroke={
           up
