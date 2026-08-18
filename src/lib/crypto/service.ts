@@ -1,7 +1,6 @@
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { exchangeRates } from "@/lib/commodities/schema";
-import { saveExchangeRates } from "@/lib/commodities/service";
 import { cryptoAnalysis, cryptoCoins, cryptoOhlcv, cryptoPrices, cryptoSentiment } from "./schema";
 import { fetchBinanceKlines, fetchCoinGeckoMarkets, fetchCoinGeckoProfile, fetchCryptoMarketsWithFallback, fetchCryptoNews } from "./connectors";
 import { analyzeCrypto, cryptoSentimentScore } from "./analysis";
@@ -13,11 +12,13 @@ interface CryptoSyncResult { source: string; coins: number; prices: number; time
 const syncPromises: Record<"market" | "catalog", Promise<CryptoSyncResult> | null> = { market: null, catalog: null };
 
 async function usdVndRate() {
-  let [row] = await db.select().from(exchangeRates).where(eq(exchangeRates.currency, "USD")).orderBy(desc(exchangeRates.date)).limit(1);
-  if (!row || Date.now() - row.createdAt.getTime() > 24 * 60 * 60_000) {
-    const rates = await fetchExchangeRates(); await saveExchangeRates(rates);
-    [row] = await db.select().from(exchangeRates).where(eq(exchangeRates.currency, "USD")).orderBy(desc(exchangeRates.date)).limit(1);
-  }
+  const [row] = await db
+    .select()
+    .from(exchangeRates)
+    .where(eq(exchangeRates.currency, "USD"))
+    .orderBy(desc(exchangeRates.date))
+    .limit(1);
+
   return row?.rate ?? null;
 }
 
