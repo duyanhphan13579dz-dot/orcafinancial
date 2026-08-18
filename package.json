@@ -7,8 +7,7 @@
   "start": "next start",
   "lint": "eslint .",
   "typecheck": "tsc --noEmit"
-}
-  },
+},
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0",
     "@types/bcryptjs": "^2.4.6",
