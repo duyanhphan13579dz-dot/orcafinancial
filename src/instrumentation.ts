@@ -52,4 +52,10 @@ export async function register() {
   } catch (err) {
     console.error("[instrumentation] commodities scheduler failed to start:", err);
   }
+  try {
+    const { startCryptoScheduler } = await import("@/lib/crypto/scheduler");
+    startCryptoScheduler();
+  } catch (err) {
+    console.error("[instrumentation] crypto scheduler failed to start:", err);
+  }
 }
