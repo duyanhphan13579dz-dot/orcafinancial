@@ -529,35 +529,140 @@ export default function StockPage({
    * ──────────────────────────────────────────────────────────── */
 
   const loadHistory = useCallback(
-    async (
-      mode: "initial" | "refresh",
-    ) => {
-      const requestId =
-        ++historyRequestRef.current;
+  async (
+    mode: "initial" | "refresh",
+  ) => {
+    const requestId =
+      ++historyRequestRef.current;
 
-      try {
-        const limit =
-          INITIAL_HISTORY_LIMIT[tf];
+    try {
+      if (mode === "initial") {
+        setHistoryLoading(true);
+      }
 
-        const url =
-          `/stocks/${symbol}/history` +
-          `?timeframe=${encodeURIComponent(tf)}` +
-          `&limit=${limit}`;
+      const limit =
+        INITIAL_HISTORY_LIMIT[tf];
 
-        const response = await fetch(
-          url,
-          {
-            method: "GET",
-            cache: "no-store",
-          },
+      const url =
+        `/stocks/${symbol}/history` +
+        `?timeframe=${encodeURIComponent(
+          tf,
+        )}` +
+        `&limit=${limit}`;
+
+      /*
+       * IMPORTANT:
+       *
+       * Do NOT use fetch() here.
+       *
+       * api() automatically targets:
+       *
+       * /api/v1/stocks/:symbol/history
+       *
+       * and unwraps the API envelope:
+       *
+       * {
+       *   data: {...},
+       *   meta: {...}
+       * }
+       */
+      const response =
+        await api<{
+          symbol: string;
+          timeframe: string;
+          bars: unknown;
+        }>(url);
+
+      if (
+        requestId !==
+        historyRequestRef.current
+      ) {
+        return;
+      }
+
+      const bars =
+        normalizeBars(
+          response.data?.bars,
         );
 
-        if (!response.ok) {
-          throw new Error(
-            `History API ${response.status}`,
-          );
-        }
+      setHistoryBars(
+        (previous) => {
+          if (
+            mode === "refresh" &&
+            previous.length > 0
+          ) {
+            return mergeBars(
+              previous,
+              bars,
+            );
+          }
 
+          return bars;
+        },
+      );
+
+      if (bars.length > 0) {
+        historyBeforeRef.current =
+          bars[0].time;
+      }
+
+      const explicitHasMore =
+        response.meta?.hasMore;
+
+      if (
+        typeof explicitHasMore ===
+        "boolean"
+      ) {
+        historyHasMoreRef.current =
+          explicitHasMore;
+
+        setHistoryHasMore(
+          explicitHasMore,
+        );
+      } else {
+        const inferred =
+          bars.length >= limit;
+
+        historyHasMoreRef.current =
+          inferred;
+
+        setHistoryHasMore(
+          inferred,
+        );
+      }
+
+      setHistoryError(null);
+    } catch (error) {
+      if (
+        requestId !==
+        historyRequestRef.current
+      ) {
+        return;
+      }
+
+      if (
+        mode === "initial"
+      ) {
+        setHistoryBars([]);
+      }
+
+      setHistoryError(
+        error instanceof Error
+          ? error.message
+          : "Không tải được dữ liệu chart",
+      );
+    } finally {
+      if (
+        requestId ===
+        historyRequestRef.current
+      ) {
+        setHistoryLoading(false);
+      }
+    }
+  },
+  [symbol, tf],
+);
+  
         const payload =
           (await response.json()) as {
             bars?: unknown;
@@ -685,36 +790,155 @@ export default function StockPage({
    * ──────────────────────────────────────────────────────────── */
 
   const loadMoreHistory = useCallback(
-    async () => {
+  async () => {
+    if (
+      historyLoadingMoreRef.current ||
+      !historyHasMoreRef.current
+    ) {
+      return;
+    }
+
+    const currentBars =
+      historyBars;
+
+    if (
+      currentBars.length === 0
+    ) {
+      return;
+    }
+
+    const before =
+      historyBeforeRef.current ??
+      currentBars[0]?.time ??
+      null;
+
+    if (before == null) {
+      return;
+    }
+
+    historyLoadingMoreRef.current =
+      true;
+
+    setHistoryLoadingMore(
+      true,
+    );
+
+    try {
+      const limit =
+        HISTORY_PAGE_SIZE[tf];
+
+      const url =
+        `/stocks/${symbol}/history` +
+        `?timeframe=${encodeURIComponent(
+          tf,
+        )}` +
+        `&limit=${limit}` +
+        `&before=${encodeURIComponent(
+          String(before),
+        )}`;
+
+      /*
+       * Use the same API client as
+       * the rest of the application.
+       *
+       * This guarantees:
+       *
+       * /stocks/VIC/history
+       *
+       * becomes:
+       *
+       * /api/v1/stocks/VIC/history
+       */
+      const response =
+        await api<{
+          symbol: string;
+          timeframe: string;
+          bars: unknown;
+        }>(url);
+
+      const olderBars =
+        normalizeBars(
+          response.data?.bars,
+        );
+
       if (
-        historyLoadingMoreRef.current ||
-        !historyHasMoreRef.current
+        olderBars.length === 0
       ) {
+        historyHasMoreRef.current =
+          false;
+
+        setHistoryHasMore(
+          false,
+        );
+
         return;
       }
 
-      const currentBars =
-        historyBars;
+      setHistoryBars(
+        (previous) => {
+          const merged =
+            mergeBars(
+              olderBars,
+              previous,
+            );
 
-      if (currentBars.length === 0) {
-        return;
+          if (
+            merged.length > 0
+          ) {
+            historyBeforeRef.current =
+              merged[0].time;
+          }
+
+          return merged;
+        },
+      );
+
+      const explicitHasMore =
+        response.meta?.hasMore;
+
+      if (
+        typeof explicitHasMore ===
+        "boolean"
+      ) {
+        historyHasMoreRef.current =
+          explicitHasMore;
+
+        setHistoryHasMore(
+          explicitHasMore,
+        );
+      } else {
+        const hasMore =
+          olderBars.length >=
+          limit;
+
+        historyHasMoreRef.current =
+          hasMore;
+
+        setHistoryHasMore(
+          hasMore,
+        );
       }
-
-      const before =
-        historyBeforeRef.current ??
-        currentBars[0]?.time ??
-        null;
-
-      if (before == null) {
-        return;
-      }
-
+    } catch (error) {
+      setHistoryError(
+        error instanceof Error
+          ? error.message
+          : "Không tải thêm được dữ liệu lịch sử",
+      );
+    } finally {
       historyLoadingMoreRef.current =
-        true;
+        false;
 
-      setHistoryLoadingMore(true);
-
-      try {
+      setHistoryLoadingMore(
+        false,
+      );
+    }
+  },
+  [
+    symbol,
+    tf,
+    historyBars,
+  ],
+);
         const limit =
           HISTORY_PAGE_SIZE[tf];
 
