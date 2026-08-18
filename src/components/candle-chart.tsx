@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { createChart, ColorType, CrosshairMode, CandlestickSeries, HistogramSeries, Time } from "lightweight-charts";
 
 export interface Bar {
-  time: number;
+  time: number; // Unix timestamp
   open: number;
   high: number;
   low: number;
@@ -18,15 +18,15 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
   useEffect(() => {
     if (!chartContainerRef.current || bars.length === 0) return;
 
-    // 1. Khởi tạo biểu đồ
+    // 1. Khá»Ÿi táº¡o biá»ƒu Ä‘á»“ TradingView
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#7aa8d4",
+        textColor: "#7aa8d4", // ORCA muted text
         fontFamily: "'JetBrains Mono', monospace",
       },
       grid: {
-        vertLines: { color: "rgba(26, 53, 88, 0.4)" },
+        vertLines: { color: "rgba(26, 53, 88, 0.4)" }, // ORCA border color
         horzLines: { color: "rgba(26, 53, 88, 0.4)" },
       },
       crosshair: {
@@ -43,10 +43,10 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
       height: height,
     });
 
-    // 2. Thêm chuỗi dữ liệu Nến (Candlesticks)
+    // 2. ThÃªm chuá»—i dá»¯ liá»‡u Náº¿n (Candlesticks)
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#34d399", 
-      downColor: "#fb7185", 
+      upColor: "#34d399", // emerald-400
+      downColor: "#fb7185", // rose-400
       borderVisible: false,
       wickUpColor: "#34d399",
       wickDownColor: "#fb7185",
@@ -61,19 +61,17 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
     }));
     candlestickSeries.setData(candleData);
 
-    // 3. Thêm chuỗi khối lượng (Volume Histogram)
+    // 3. ThÃªm chuá»—i dá»¯ liá»‡u Khá»‘i lÆ°á»£ng (Volume Histogram)
     const volumeSeries = chart.addSeries(HistogramSeries, {
       color: "#26a69a",
       priceFormat: {
         type: "volume",
       },
-      priceScaleId: "", // Gắn vào trục giá ẩn (Overlay)
+      priceScaleId: "",
     });
-
-    // 4. Tách phần cấu hình scaleMargins ra và áp dụng riêng cho trục giá ẩn ""
-    chart.priceScale("").applyOptions({
+    volumeSeries.priceScale().applyOptions({
       scaleMargins: {
-        top: 0.8, // Đẩy volume xuống 20% bên dưới
+        top: 0.8,
         bottom: 0,
       },
     });
@@ -85,6 +83,7 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
     }));
     volumeSeries.setData(volumeData);
 
+    // 4. Khá»›p khung nhÃ¬n vÃ  xá»­ lÃ½ Resize
     chart.timeScale().fitContent();
 
     const handleResize = () => {
@@ -94,6 +93,7 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
     };
     window.addEventListener("resize", handleResize);
 
+    // Dá»n dáº¹p bá»™ nhá»› khi component bá»‹ unmount
     return () => {
       window.removeEventListener("resize", handleResize);
       chart.remove();
@@ -101,13 +101,13 @@ export function CandleChart({ bars, height = 380 }: { bars: Bar[]; height?: numb
   }, [bars, height]);
 
   if (bars.length === 0) {
-    return <div className="flex items-center justify-center text-slate-500 text-sm" style={{ height }}>Không có dữ liệu</div>;
+    return <div className="flex items-center justify-center text-slate-500 text-sm" style={{ height }}>KhÃ´ng cÃ³ dá»¯ liá»‡u</div>;
   }
 
   return <div ref={chartContainerRef} className="w-full relative" />;
 }
 
-// Sparkline SVG
+// Giá»¯ nguyÃªn Sparkline cÅ© dÃ¹ng SVG vÃ¬ nÃ³ ráº¥t nhá» vÃ  hiá»‡u quáº£ cho Dashboard
 export function Sparkline({ bars, width = 120, height = 36 }: { bars: Bar[]; width?: number; height?: number }) {
   if (bars.length < 2) return null;
   const closes = bars.map((b) => b.close);
