@@ -253,6 +253,16 @@ export {
 } from "@/lib/commodities/schema";
 
 // ═══════════════════════════════════════════════════════════════════════
+// Crypto Module — re-export from lib/crypto/schema
+// ═══════════════════════════════════════════════════════════════════════
+export {
+  cryptoCoins,
+  cryptoPrices,
+  cryptoOhlcv,
+  cryptoSentiment,
+  cryptoAnalysis,
+} from "@/lib/crypto/schema";
+// ═══════════════════════════════════════════════════════════════════════
 // Authentication & Users Module
 // ═══════════════════════════════════════════════════════════════════════
 
