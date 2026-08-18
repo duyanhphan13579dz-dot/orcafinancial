@@ -321,7 +321,7 @@ export default function CryptoPage() {
    * vì hai API này nặng hơn và chỉ cần khi user
    * thực sự mở trang detail.
    */
-  const prefetchCoin =
+    const prefetchCoin =
     async (
       symbol: string,
     ) => {
@@ -330,18 +330,13 @@ export default function CryptoPage() {
           symbol,
         );
 
-      if (
-        !normalized
-      ) {
+      if (!normalized) {
         return;
       }
 
       const key =
         `${normalized}:${PREFETCH_TIMEFRAME}`;
 
-      /*
-       * Đã có cache.
-       */
       if (
         prefetchedRef.current.has(
           key,
@@ -350,9 +345,6 @@ export default function CryptoPage() {
         return;
       }
 
-      /*
-       * Request đang chạy.
-       */
       if (
         prefetchingRef.current.has(
           key,
@@ -366,15 +358,64 @@ export default function CryptoPage() {
       );
 
       try {
-        /*
-         * Profile + OHLCV chạy song song.
-         *
-         * force-cache cho phép browser/CDN tận dụng
-         * cache HTTP nếu có.
-         *
-         * Đây chỉ là prefetch optimization.
-         * Nếu request thất bại, trang chính vẫn hoạt động.
-         */
+        const [
+          profileResponse,
+          ohlcvResponse,
+        ] =
+          await Promise.allSettled([
+            fetch(
+              `/api/v1/crypto/${encodeURIComponent(
+                normalized,
+              )}`,
+              {
+                method: "GET",
+                cache:
+                  "force-cache",
+                credentials:
+                  "same-origin",
+              },
+            ),
+
+            fetch(
+              `/api/v1/crypto/${encodeURIComponent(
+                normalized,
+              )}/ohlcv?timeframe=${PREFETCH_TIMEFRAME}&limit=${PREFETCH_CANDLE_LIMIT}`,
+              {
+                method: "GET",
+                cache:
+                  "force-cache",
+                credentials:
+                  "same-origin",
+              },
+            ),
+          ]);
+
+        const profileOk =
+          profileResponse.status ===
+            "fulfilled" &&
+          profileResponse.value.ok;
+
+        const ohlcvOk =
+          ohlcvResponse.status ===
+            "fulfilled" &&
+          ohlcvResponse.value.ok;
+
+        if (
+          profileOk &&
+          ohlcvOk
+        ) {
+          prefetchedRef.current.add(
+            key,
+          );
+        }
+      } catch {
+        // Prefetch failure must never break /crypto.
+      } finally {
+        prefetchingRef.current.delete(
+          key,
+        );
+      }
+    };
         const profilePromise =
           fetch(
             `/api/v1/crypto/${encodeURIComponent(
