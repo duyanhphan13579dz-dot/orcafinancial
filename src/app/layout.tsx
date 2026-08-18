@@ -37,6 +37,7 @@ export const metadata: Metadata = {
 
 const NAV = [
   { href: "/", label: "Tổng quan" },
+  { href: "/heatmap", label: "Heatmap" },
   { href: "/commodities", label: "Hàng hóa" },
   { href: "/reports", label: "Báo cáo" },
   { href: "/screener", label: "Bộ lọc" },
