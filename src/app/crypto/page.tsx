@@ -55,67 +55,24 @@ interface RealtimePatch {
 /*                              PREFETCH CONFIG                               */
 /* -------------------------------------------------------------------------- */
 
-/*
- * Số coin sẽ được prefetch khi trang /crypto mở.
- *
- * 15 coin đầu tiên được lấy trực tiếp từ market ranking,
- * không hard-code BTC/ETH/SOL.
- */
 const PREFETCH_COUNT = 15;
-
-/*
- * Mỗi batch chỉ xử lý 3 coin.
- *
- * Ví dụ:
- *
- * Batch 1: BTC ETH BNB
- * Batch 2: SOL XRP DOGE
- * Batch 3: ADA TRX AVAX
- *
- * Điều này tránh tạo 30 request cùng lúc.
- */
 const PREFETCH_BATCH_SIZE = 3;
-
-/*
- * Khoảng nghỉ giữa các batch.
- */
 const PREFETCH_BATCH_DELAY = 150;
-
-/*
- * Prefetch chart mặc định ở timeframe 1h.
- */
 const PREFETCH_TIMEFRAME = "1h";
-
-/*
- * Số candle historical được preload.
- */
 const PREFETCH_CANDLE_LIMIT = 200;
 
 /* -------------------------------------------------------------------------- */
 /*                              HELPER FUNCTIONS                              */
 /* -------------------------------------------------------------------------- */
 
-function normalizeSymbol(
-  symbol: string,
-): string {
-  return symbol
-    .toUpperCase()
-    .trim();
+function normalizeSymbol(symbol: string): string {
+  return symbol.toUpperCase().trim();
 }
 
-/*
- * Delay helper.
- */
-function sleep(
-  ms: number,
-): Promise<void> {
-  return new Promise(
-    (resolve) =>
-      setTimeout(
-        resolve,
-        ms,
-      ),
-  );
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -127,17 +84,9 @@ export default function CryptoPage() {
   /* INITIAL REST DATA                                                      */
   /* ---------------------------------------------------------------------- */
 
-  /*
-   * REST chỉ lấy initial snapshot.
-   *
-   * Realtime market price được Binance WebSocket cập nhật.
-   */
   const feed = usePoll<{
     prices: Row[];
-    freshness: Record<
-      string,
-      unknown
-    >;
+    freshness: Record<string, unknown>;
   }>(
     "/crypto/prices?limit=100",
     60_000,
@@ -147,34 +96,21 @@ export default function CryptoPage() {
   /* UI STATE                                                               */
   /* ---------------------------------------------------------------------- */
 
-  const [query, setQuery] =
-    useState("");
+  const [query, setQuery] = useState("");
 
-  const [sort, setSort] =
-    useState<
-      | "volume"
-      | "gainers"
-      | "losers"
-    >("volume");
+  const [sort, setSort] = useState<
+    "volume" | "gainers" | "losers"
+  >("volume");
 
   /* ---------------------------------------------------------------------- */
   /* REALTIME STATE                                                         */
   /* ---------------------------------------------------------------------- */
 
-  const [
-    realtime,
-    setRealtime,
-  ] = useState<
-    Record<
-      string,
-      RealtimePatch
-    >
+  const [realtime, setRealtime] = useState<
+    Record<string, RealtimePatch>
   >({});
 
-  const [
-    wsStatus,
-    setWsStatus,
-  ] = useState<
+  const [wsStatus, setWsStatus] = useState<
     | "connecting"
     | "connected"
     | "reconnecting"
@@ -190,116 +126,69 @@ export default function CryptoPage() {
    * Những coin đã prefetch thành công.
    *
    * Ví dụ:
-   *
    * BTC:1h
    * ETH:1h
    * SOL:1h
    */
-  const prefetchedRef =
-    useRef<
-      Set<string>
-    >(new Set());
+  const prefetchedRef = useRef<Set<string>>(new Set());
 
   /*
    * Những coin đang được prefetch.
    *
-   * Set này chống việc hover BTC trong lúc BTC
-   * đang được prefetch rồi tạo thêm request.
+   * Dùng để tránh request trùng khi user hover
+   * trong lúc background prefetch đang chạy.
    */
-  const prefetchingRef =
-    useRef<
-      Set<string>
-    >(new Set());
+  const prefetchingRef = useRef<Set<string>>(new Set());
 
   /*
-   * Chặn nhiều lần chạy background prefetch
-   * với cùng một snapshot.
+   * Chỉ chạy background prefetch một lần cho
+   * snapshot market đầu tiên.
    */
-  const prefetchRunRef =
-    useRef(false);
+  const prefetchRunRef = useRef(false);
 
   /* ---------------------------------------------------------------------- */
   /* BINANCE MARKET WEBSOCKET                                               */
   /* ---------------------------------------------------------------------- */
 
-  /*
-   * Chỉ một WebSocket cho toàn bộ trang /crypto.
-   *
-   * Không tạo WebSocket riêng cho từng row.
-   */
   useEffect(() => {
-    const connection =
-      createBinanceMarketWebSocket(
-        {
-          onStatus: (
-            status,
-          ) => {
-            setWsStatus(
-              status,
-            );
-          },
+    const connection = createBinanceMarketWebSocket({
+      onStatus: (status) => {
+        setWsStatus(status);
+      },
 
-          onTicker: (
-            ticker: BinanceMarketTicker,
-          ) => {
-            setRealtime(
-              (
-                current,
-              ) => {
-                const next = {
-                  ...current,
-                };
+      onTicker: (ticker: BinanceMarketTicker) => {
+        setRealtime((current) => {
+          const next = {
+            ...current,
+          };
 
-                /*
-                 * Binance:
-                 *
-                 * BTCUSDT
-                 *
-                 * Orca:
-                 *
-                 * BTC
-                 */
-                const symbol =
-                  ticker.symbol.endsWith(
-                    "USDT",
-                  )
-                    ? ticker.symbol.slice(
-                        0,
-                        -4,
-                      )
-                    : ticker.symbol;
+          /*
+           * Binance symbol:
+           *
+           * BTCUSDT
+           *
+           * Orca symbol:
+           *
+           * BTC
+           */
+          const symbol = ticker.symbol.endsWith("USDT")
+            ? ticker.symbol.slice(0, -4)
+            : ticker.symbol;
 
-                next[
-                  symbol.toUpperCase()
-                ] = {
-                  price:
-                    ticker.price,
+          next[symbol.toUpperCase()] = {
+            price: ticker.price,
+            change24h: ticker.priceChangePercent,
+            volume24h: ticker.quoteVolume24h,
+            source: "Binance WS",
+            timestamp: new Date(
+              ticker.eventTime,
+            ).toISOString(),
+          };
 
-                  change24h:
-                    ticker.priceChangePercent,
-
-                  /*
-                   * quoteVolume24h là volume
-                   * theo USDT/USD.
-                   */
-                  volume24h:
-                    ticker.quoteVolume24h,
-
-                  source:
-                    "Binance WS",
-
-                  timestamp:
-                    new Date(
-                      ticker.eventTime,
-                    ).toISOString(),
-                };
-
-                return next;
-              },
-            );
-          },
-        },
-      );
+          return next;
+        });
+      },
+    });
 
     return () => {
       connection.disconnect();
@@ -311,476 +200,298 @@ export default function CryptoPage() {
   /* ---------------------------------------------------------------------- */
 
   /*
-   * Prefetch profile + OHLCV của một coin.
+   * Prefetch:
    *
-   * Không prefetch:
+   * 1. Coin profile
+   * 2. OHLCV 1h
    *
-   * - analysis
-   * - sentiment
-   *
-   * vì hai API này nặng hơn và chỉ cần khi user
-   * thực sự mở trang detail.
+   * Không prefetch analysis/sentiment vì hai API
+   * này nặng hơn và chỉ cần khi user mở detail.
    */
-    const prefetchCoin =
-    async (
-      symbol: string,
-    ) => {
-      const normalized =
-        normalizeSymbol(
-          symbol,
-        );
+  const prefetchCoin = async (symbol: string) => {
+    const normalized = normalizeSymbol(symbol);
 
-      if (!normalized) {
-        return;
-      }
+    if (!normalized) {
+      return;
+    }
 
-      const key =
-        `${normalized}:${PREFETCH_TIMEFRAME}`;
+    const key = `${normalized}:${PREFETCH_TIMEFRAME}`;
 
-      if (
-        prefetchedRef.current.has(
-          key,
-        )
-      ) {
-        return;
-      }
+    /*
+     * Đã prefetch rồi.
+     */
+    if (prefetchedRef.current.has(key)) {
+      return;
+    }
 
-      if (
-        prefetchingRef.current.has(
-          key,
-        )
-      ) {
-        return;
-      }
+    /*
+     * Request đang chạy.
+     */
+    if (prefetchingRef.current.has(key)) {
+      return;
+    }
 
-      prefetchingRef.current.add(
-        key,
-      );
+    prefetchingRef.current.add(key);
 
-      try {
-        const [
-          profileResponse,
-          ohlcvResponse,
-        ] =
-          await Promise.allSettled([
-            fetch(
-              `/api/v1/crypto/${encodeURIComponent(
-                normalized,
-              )}`,
-              {
-                method: "GET",
-                cache:
-                  "force-cache",
-                credentials:
-                  "same-origin",
-              },
-            ),
-
-            fetch(
-              `/api/v1/crypto/${encodeURIComponent(
-                normalized,
-              )}/ohlcv?timeframe=${PREFETCH_TIMEFRAME}&limit=${PREFETCH_CANDLE_LIMIT}`,
-              {
-                method: "GET",
-                cache:
-                  "force-cache",
-                credentials:
-                  "same-origin",
-              },
-            ),
-          ]);
-
-        const profileOk =
-          profileResponse.status ===
-            "fulfilled" &&
-          profileResponse.value.ok;
-
-        const ohlcvOk =
-          ohlcvResponse.status ===
-            "fulfilled" &&
-          ohlcvResponse.value.ok;
-
-        if (
-          profileOk &&
-          ohlcvOk
-        ) {
-          prefetchedRef.current.add(
-            key,
-          );
-        }
-      } catch {
-        // Prefetch failure must never break /crypto.
-      } finally {
-        prefetchingRef.current.delete(
-          key,
-        );
-      }
-    };
-        const profilePromise =
+    try {
+      /*
+       * Profile + OHLCV chạy song song.
+       *
+       * Đây là prefetch optimization.
+       * Nếu một request lỗi thì request còn lại
+       * vẫn được giữ.
+       */
+      const [profileResult, ohlcvResult] =
+        await Promise.allSettled([
           fetch(
             `/api/v1/crypto/${encodeURIComponent(
               normalized,
             )}`,
             {
               method: "GET",
-              cache:
-                "force-cache",
-              credentials:
-                "same-origin",
+              cache: "force-cache",
+              credentials: "same-origin",
             },
-          );
+          ),
 
-        const ohlcvPromise =
           fetch(
             `/api/v1/crypto/${encodeURIComponent(
               normalized,
             )}/ohlcv?timeframe=${PREFETCH_TIMEFRAME}&limit=${PREFETCH_CANDLE_LIMIT}`,
             {
               method: "GET",
-              cache:
-                "force-cache",
-              credentials:
-                "same-origin",
+              cache: "force-cache",
+              credentials: "same-origin",
             },
-          );
+          ),
+        ]);
 
-        /*
-         * Không để một request fail làm request còn lại
-         * bị hủy.
-         */
-        await Promise.allSettled(
-          [
-            profilePromise,
-            ohlcvPromise,
-          ],
-        );
+      /*
+       * Chỉ đánh dấu prefetch thành công khi
+       * cả profile và OHLCV đều lấy được.
+       *
+       * Nếu một API lỗi, lần mở detail sau vẫn
+       * có thể request lại.
+       */
+      const profileOk =
+        profileResult.status === "fulfilled" &&
+        profileResult.value.ok;
 
-        /*
-         * Đánh dấu đã prefetch.
-         *
-         * Nếu API server trả lỗi thì request detail
-         * sau này vẫn có thể tự fetch lại.
-         *
-         * Vì vậy kiểm tra response trước khi đánh dấu.
-         */
-        const [
-          profileResponse,
-          ohlcvResponse,
-        ] =
-          await Promise.allSettled(
-            [
-              profilePromise,
-              ohlcvPromise,
-            ],
-          );
+      const ohlcvOk =
+        ohlcvResult.status === "fulfilled" &&
+        ohlcvResult.value.ok;
 
-        const profileOk =
-          profileResponse.status ===
-            "fulfilled" &&
-          profileResponse.value.ok;
-
-        const ohlcvOk =
-          ohlcvResponse.status ===
-            "fulfilled" &&
-          ohlcvResponse.value.ok;
-
-        if (
-          profileOk ||
-          ohlcvOk
-        ) {
-          prefetchedRef.current.add(
-            key,
-          );
-        }
-      } catch {
-        /*
-         * Prefetch không được phép phá UI.
-         */
-      } finally {
-        prefetchingRef.current.delete(
-          key,
-        );
+      if (profileOk && ohlcvOk) {
+        prefetchedRef.current.add(key);
       }
-    };
+    } catch {
+      /*
+       * Prefetch không được phép làm hỏng trang /crypto.
+       */
+    } finally {
+      prefetchingRef.current.delete(key);
+    }
+  };
 
   /* ---------------------------------------------------------------------- */
   /* PREFETCH TOP 15                                                       */
   /* ---------------------------------------------------------------------- */
 
   useEffect(() => {
-    const prices =
-      feed.data?.prices;
+    const prices = feed.data?.prices;
 
-    if (
-      !prices ||
-      prices.length === 0
-    ) {
+    if (!prices || prices.length === 0) {
       return;
     }
 
     /*
-     * Chỉ chạy một lần cho market snapshot đầu tiên.
+     * Chỉ chạy một lần khi snapshot đầu tiên
+     * đã có dữ liệu.
      */
-    if (
-      prefetchRunRef.current
-    ) {
+    if (prefetchRunRef.current) {
       return;
     }
 
-    prefetchRunRef.current =
-      true;
+    prefetchRunRef.current = true;
 
     /*
-     * Lấy 15 coin đầu tiên theo ranking hiện tại.
+     * Lấy Top 15 theo thứ tự market API trả về.
+     *
+     * Không hard-code BTC/ETH/SOL.
      */
-    const topCoins =
-      prices
-        .map(
-          (item) =>
-            item.symbol,
-        )
-        .filter(
-          Boolean,
-        )
-        .map(
-          normalizeSymbol,
-        )
-        .filter(
-          (
-            symbol,
-            index,
-            array,
-          ) =>
-            array.indexOf(
-              symbol,
-            ) === index,
-        )
-        .slice(
-          0,
-          PREFETCH_COUNT,
+    const topCoins = prices
+      .map((item) => item.symbol)
+      .filter(Boolean)
+      .map(normalizeSymbol)
+      .filter(
+        (symbol, index, array) =>
+          array.indexOf(symbol) === index,
+      )
+      .slice(0, PREFETCH_COUNT);
+
+    let cancelled = false;
+
+    const run = async () => {
+      /*
+       * Chạy theo batch 3 coin.
+       */
+      for (
+        let i = 0;
+        i < topCoins.length;
+        i += PREFETCH_BATCH_SIZE
+      ) {
+        if (cancelled) {
+          return;
+        }
+
+        const batch = topCoins.slice(
+          i,
+          i + PREFETCH_BATCH_SIZE,
         );
 
-    let cancelled =
-      false;
-
-    const run =
-      async () => {
         /*
-         * Chia thành batch.
+         * 3 coin trong một batch chạy song song.
          */
-        for (
-          let i = 0;
-          i <
-            topCoins.length;
-          i +=
-            PREFETCH_BATCH_SIZE
-        ) {
-          if (
-            cancelled
-          ) {
-            return;
-          }
+        await Promise.all(
+          batch.map((symbol) =>
+            prefetchCoin(symbol),
+          ),
+        );
 
-          const batch =
-            topCoins.slice(
-              i,
-              i +
-                PREFETCH_BATCH_SIZE,
-            );
-
-          /*
-           * 3 coin chạy song song.
-           */
-          await Promise.all(
-            batch.map(
-              (
-                symbol,
-              ) =>
-                prefetchCoin(
-                  symbol,
-                ),
-            ),
-          );
-
-          if (
-            cancelled
-          ) {
-            return;
-          }
-
-          /*
-           * Nghỉ ngắn giữa các batch.
-           */
-          if (
-            i +
-              PREFETCH_BATCH_SIZE <
-            topCoins.length
-          ) {
-            await sleep(
-              PREFETCH_BATCH_DELAY,
-            );
-          }
+        if (cancelled) {
+          return;
         }
-      };
+
+        /*
+         * Nghỉ một chút trước batch tiếp theo.
+         */
+        if (
+          i + PREFETCH_BATCH_SIZE <
+          topCoins.length
+        ) {
+          await sleep(
+            PREFETCH_BATCH_DELAY,
+          );
+        }
+      }
+    };
 
     void run();
 
     return () => {
       cancelled = true;
     };
-  }, [
-    feed.data?.prices,
-  ]);
+  }, [feed.data?.prices]);
 
   /* ---------------------------------------------------------------------- */
   /* MERGE REST + WEBSOCKET                                                 */
   /* ---------------------------------------------------------------------- */
 
-  const mergedRows =
-    useMemo(() => {
-      return (
-        feed.data?.prices ??
-        []
-      ).map(
-        (row) => {
-          const live =
-            realtime[
-              normalizeSymbol(
-                row.symbol,
-              )
-            ];
+  const mergedRows = useMemo(() => {
+    return (feed.data?.prices ?? []).map(
+      (row) => {
+        const live =
+          realtime[
+            normalizeSymbol(row.symbol)
+          ];
 
-          if (!live) {
-            return row;
-          }
+        if (!live) {
+          return row;
+        }
 
-          return {
-            ...row,
+        return {
+          ...row,
 
-            price:
-              live.price,
+          price: live.price,
 
-            change24h:
-              live.change24h,
+          change24h:
+            live.change24h,
 
-            volume24h:
-              live.volume24h,
+          volume24h:
+            live.volume24h,
 
-            source:
-              live.source,
+          source:
+            live.source,
 
-            timestamp:
-              live.timestamp,
-          };
-        },
-      );
-    }, [
-      feed.data,
-      realtime,
-    ]);
+          timestamp:
+            live.timestamp,
+        };
+      },
+    );
+  }, [
+    feed.data,
+    realtime,
+  ]);
 
   /* ---------------------------------------------------------------------- */
   /* SEARCH + SORT                                                          */
   /* ---------------------------------------------------------------------- */
 
-  const rows =
-    useMemo(() => {
-      const normalizedQuery =
-        query
-          .trim()
-          .toLowerCase();
+  const rows = useMemo(() => {
+    const normalizedQuery =
+      query.trim().toLowerCase();
 
-      const filtered =
-        mergedRows.filter(
-          (x) => {
-            if (
-              !normalizedQuery
-            ) {
-              return true;
-            }
+    const filtered =
+      mergedRows.filter((x) => {
+        if (!normalizedQuery) {
+          return true;
+        }
 
-            return (
-              x.symbol
-                .toLowerCase()
-                .includes(
-                  normalizedQuery,
-                ) ||
-              x.name
-                .toLowerCase()
-                .includes(
-                  normalizedQuery,
-                )
-            );
-          },
+        return (
+          x.symbol
+            .toLowerCase()
+            .includes(normalizedQuery) ||
+          x.name
+            .toLowerCase()
+            .includes(normalizedQuery)
         );
+      });
 
-      return [
-        ...filtered,
-      ].sort(
-        (
-          x,
-          y,
-        ) => {
-          if (
-            sort ===
-            "gainers"
-          ) {
-            return (
-              (y.change24h ??
-                0) -
-              (x.change24h ??
-                0)
-            );
-          }
-
-          if (
-            sort ===
-            "losers"
-          ) {
-            return (
-              (x.change24h ??
-                0) -
-              (y.change24h ??
-                0)
-            );
-          }
-
+    return [...filtered].sort(
+      (x, y) => {
+        if (sort === "gainers") {
           return (
-            (y.volume24h ??
-              0) -
-            (x.volume24h ??
-              0)
+            (y.change24h ?? 0) -
+            (x.change24h ?? 0)
           );
-        },
-      );
-    }, [
-      mergedRows,
-      query,
-      sort,
-    ]);
+        }
+
+        if (sort === "losers") {
+          return (
+            (x.change24h ?? 0) -
+            (y.change24h ?? 0)
+          );
+        }
+
+        return (
+          (y.volume24h ?? 0) -
+          (x.volume24h ?? 0)
+        );
+      },
+    );
+  }, [
+    mergedRows,
+    query,
+    sort,
+  ]);
 
   /* ---------------------------------------------------------------------- */
-  /* WEBSOCKET UI                                                           */
+  /* WEBSOCKET STATUS                                                       */
   /* ---------------------------------------------------------------------- */
 
   const websocketText =
-    wsStatus ===
-    "connected"
+    wsStatus === "connected"
       ? "BINANCE LIVE"
-      : wsStatus ===
-          "reconnecting"
+      : wsStatus === "reconnecting"
         ? "RECONNECTING"
-        : wsStatus ===
-            "connecting"
+        : wsStatus === "connecting"
           ? "CONNECTING"
           : "FALLBACK";
 
   const websocketDot =
-    wsStatus ===
-    "connected"
+    wsStatus === "connected"
       ? "bg-emerald-400 live-dot"
-      : wsStatus ===
-          "reconnecting"
+      : wsStatus === "reconnecting"
         ? "bg-amber-400"
         : "bg-slate-500";
 
@@ -798,7 +509,6 @@ export default function CryptoPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
 
         <div>
-
           <div className="font-mono text-[10px] tracking-[.3em] text-[#00d4ff] uppercase">
             Binance Market Intelligence
           </div>
@@ -810,19 +520,14 @@ export default function CryptoPage() {
           <p className="text-sm text-slate-400 mt-1">
             Giá USDT realtime · Binance WebSocket
           </p>
-
         </div>
 
-        {/* LIVE STATUS */}
-
         <span className="inline-flex items-center gap-2 text-xs text-emerald-300">
-
           <i
             className={`h-2 w-2 rounded-full ${websocketDot}`}
           />
 
           {websocketText}
-
         </span>
 
       </div>
@@ -836,9 +541,7 @@ export default function CryptoPage() {
         <input
           value={query}
           onChange={(e) =>
-            setQuery(
-              e.target.value,
-            )
+            setQuery(e.target.value)
           }
           placeholder="Tìm BTC, ETH, SOL..."
           className="Input flex-1"
@@ -847,44 +550,29 @@ export default function CryptoPage() {
         <div className="flex gap-1">
 
           {[
-            [
-              "volume",
-              "Thanh khoản",
-            ],
-            [
-              "gainers",
-              "Tăng mạnh",
-            ],
-            [
-              "losers",
-              "Giảm mạnh",
-            ],
-          ].map(
-            ([
-              value,
-              label,
-            ]) => (
-              <button
-                key={value}
-                onClick={() =>
-                  setSort(
-                    value as
-                      | "volume"
-                      | "gainers"
-                      | "losers",
-                  )
-                }
-                className={`min-h-11 rounded-lg px-3 text-xs ${
-                  sort ===
-                  value
-                    ? "bg-[#00d4ff]/15 text-[#00d4ff] border border-[#00d4ff]/40"
-                    : "border border-slate-700 text-slate-400 hover:bg-slate-800"
-                }`}
-              >
-                {label}
-              </button>
-            ),
-          )}
+            ["volume", "Thanh khoản"],
+            ["gainers", "Tăng mạnh"],
+            ["losers", "Giảm mạnh"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() =>
+                setSort(
+                  value as
+                    | "volume"
+                    | "gainers"
+                    | "losers",
+                )
+              }
+              className={`min-h-11 rounded-lg px-3 text-xs ${
+                sort === value
+                  ? "bg-[#00d4ff]/15 text-[#00d4ff] border border-[#00d4ff]/40"
+                  : "border border-slate-700 text-slate-400 hover:bg-slate-800"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
 
         </div>
 
@@ -920,7 +608,6 @@ export default function CryptoPage() {
         <table className="w-full min-w-[760px] text-sm">
 
           <thead>
-
             <tr className="border-b border-slate-700 text-xs text-slate-500">
 
               <th className="text-left p-3">
@@ -948,174 +635,158 @@ export default function CryptoPage() {
               </th>
 
             </tr>
-
           </thead>
 
           <tbody>
 
-            {rows.map(
-              (r) => {
-                const live =
-                  realtime[
-                    normalizeSymbol(
-                      r.symbol,
-                    )
-                  ];
+            {rows.map((r) => {
+              const live =
+                realtime[
+                  normalizeSymbol(
+                    r.symbol,
+                  )
+                ];
 
-                return (
-                  <tr
-                    key={
-                      r.symbol
-                    }
-                    className={`border-b border-slate-800/70 hover:bg-slate-800/30 ${
-                      live
-                        ? "transition-colors duration-300"
-                        : ""
-                    }`}
-                  >
+              return (
+                <tr
+                  key={r.symbol}
+                  className={`border-b border-slate-800/70 hover:bg-slate-800/30 ${
+                    live
+                      ? "transition-colors duration-300"
+                      : ""
+                  }`}
+                >
 
-                    {/* -------------------------------------------------- */}
-                    {/* COIN                                                */}
-                    {/* -------------------------------------------------- */}
+                  {/* ---------------------------------------------------- */}
+                  {/* COIN                                                  */}
+                  {/* ---------------------------------------------------- */}
 
-                    <td className="p-3">
+                  <td className="p-3">
 
-                      <Link
-                        href={`/crypto/${r.symbol}`}
-                        prefetch
-                        onMouseEnter={() => {
-                          void prefetchCoin(
-                            r.symbol,
-                          );
-                        }}
-                        onFocus={() => {
-                          void prefetchCoin(
-                            r.symbol,
-                          );
-                        }}
-                        className="flex items-center gap-2"
-                      >
+                    <Link
+                      href={`/crypto/${r.symbol}`}
+                      prefetch
+                      onMouseEnter={() => {
+                        void prefetchCoin(
+                          r.symbol,
+                        );
+                      }}
+                      onFocus={() => {
+                        void prefetchCoin(
+                          r.symbol,
+                        );
+                      }}
+                      className="flex items-center gap-2"
+                    >
 
-                        {r.logoUrl ? (
-                          <img
-                            src={
-                              r.logoUrl
-                            }
-                            alt=""
-                            className="h-8 w-8 rounded-full"
-                            loading="lazy"
-                            decoding="async"
-                          />
-                        ) : (
-                          <span className="h-8 w-8 rounded-full bg-[#00d4ff]/15 flex items-center justify-center text-xs font-bold text-[#00d4ff]">
-                            {r.symbol.slice(
-                              0,
-                              2,
-                            )}
-                          </span>
-                        )}
+                      {r.logoUrl ? (
+                        <img
+                          src={r.logoUrl}
+                          alt=""
+                          className="h-8 w-8 rounded-full"
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      ) : (
+                        <span className="h-8 w-8 rounded-full bg-[#00d4ff]/15 flex items-center justify-center text-xs font-bold text-[#00d4ff]">
+                          {r.symbol.slice(
+                            0,
+                            2,
+                          )}
+                        </span>
+                      )}
 
-                        <div>
+                      <div>
 
-                          <div className="font-bold text-white">
-                            {
-                              r.symbol
-                            }
-                          </div>
-
-                          <div className="text-[10px] text-slate-500">
-                            {r.name}
-                          </div>
-
+                        <div className="font-bold text-white">
+                          {r.symbol}
                         </div>
 
-                      </Link>
+                        <div className="text-[10px] text-slate-500">
+                          {r.name}
+                        </div>
 
-                    </td>
+                      </div>
 
-                    {/* -------------------------------------------------- */}
-                    {/* PRICE                                               */}
-                    {/* -------------------------------------------------- */}
+                    </Link>
 
-                    <td className="text-right font-mono">
+                  </td>
 
-                      $
-                      {fmtNum(
-                        r.price,
-                        r.price <
-                          1
-                          ? 6
-                          : 2,
-                      )}
+                  {/* ---------------------------------------------------- */}
+                  {/* PRICE                                                 */}
+                  {/* ---------------------------------------------------- */}
 
-                    </td>
+                  <td className="text-right font-mono">
+                    $
+                    {fmtNum(
+                      r.price,
+                      r.price < 1
+                        ? 6
+                        : 2,
+                    )}
+                  </td>
 
-                    {/* -------------------------------------------------- */}
-                    {/* VND                                                 */}
-                    {/* -------------------------------------------------- */}
+                  {/* ---------------------------------------------------- */}
+                  {/* VND                                                   */}
+                  {/* ---------------------------------------------------- */}
 
-                    <td className="text-right font-mono text-slate-400">
+                  <td className="text-right font-mono text-slate-400">
+                    {r.priceVnd
+                      ? fmtNum(
+                          r.priceVnd,
+                          0,
+                        )
+                      : "—"}
+                  </td>
 
-                      {r.priceVnd
-                        ? fmtNum(
-                            r.priceVnd,
-                            0,
-                          )
-                        : "—"}
+                  {/* ---------------------------------------------------- */}
+                  {/* CHANGE                                                */}
+                  {/* ---------------------------------------------------- */}
 
-                    </td>
+                  <td
+                    className={`text-right font-mono font-bold ${changeColor(
+                      r.change24h,
+                    )}`}
+                  >
+                    {fmtPct(
+                      r.change24h,
+                    )}
+                  </td>
 
-                    {/* -------------------------------------------------- */}
-                    {/* CHANGE                                              */}
-                    {/* -------------------------------------------------- */}
+                  {/* ---------------------------------------------------- */}
+                  {/* VOLUME                                                */}
+                  {/* ---------------------------------------------------- */}
 
-                    <td
-                      className={`text-right font-mono font-bold ${changeColor(
-                        r.change24h,
-                      )}`}
+                  <td className="text-right text-slate-400">
+                    $
+                    {fmtVol(
+                      r.volume24h,
+                    )}
+                  </td>
+
+                  {/* ---------------------------------------------------- */}
+                  {/* SOURCE                                                */}
+                  {/* ---------------------------------------------------- */}
+
+                  <td className="text-right pr-3">
+
+                    <span
+                      className={`text-[10px] ${
+                        live
+                          ? "text-emerald-400"
+                          : "text-slate-600"
+                      }`}
                     >
-                      {fmtPct(
-                        r.change24h,
-                      )}
-                    </td>
+                      {live
+                        ? "Binance WS"
+                        : r.source}
+                    </span>
 
-                    {/* -------------------------------------------------- */}
-                    {/* VOLUME                                              */}
-                    {/* -------------------------------------------------- */}
+                  </td>
 
-                    <td className="text-right text-slate-400">
-
-                      $
-                      {fmtVol(
-                        r.volume24h,
-                      )}
-
-                    </td>
-
-                    {/* -------------------------------------------------- */}
-                    {/* SOURCE                                              */}
-                    {/* -------------------------------------------------- */}
-
-                    <td className="text-right pr-3">
-
-                      <span
-                        className={`text-[10px] ${
-                          live
-                            ? "text-emerald-400"
-                            : "text-slate-600"
-                        }`}
-                      >
-                        {live
-                          ? "Binance WS"
-                          : r.source}
-                      </span>
-
-                    </td>
-
-                  </tr>
-                );
-              },
-            )}
+                </tr>
+              );
+            })}
 
           </tbody>
 
@@ -1129,8 +800,7 @@ export default function CryptoPage() {
 
       {!feed.loading &&
         feed.data &&
-        rows.length ===
-          0 && (
+        rows.length === 0 && (
           <div className="panel p-10 text-center text-slate-500">
             Không tìm thấy coin phù hợp.
           </div>
