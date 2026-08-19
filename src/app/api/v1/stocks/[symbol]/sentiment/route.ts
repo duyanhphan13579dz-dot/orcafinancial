@@ -3,6 +3,7 @@ import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { getNewsSentiment } from "@/lib/market";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 45;
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: string }> }) {
   const limited = checkRateLimit(req);
@@ -13,7 +14,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
 
   try {
     const result = await getNewsSentiment(symbol);
-    return ok(result, { source: "vnexpress+cafef+vietstock (NLP rule-engine)" });
+    return ok(result, {
+      source:
+        result.source === "hybrid" || result.source === "llm"
+          ? `rss+nlp+llm(${result.model ?? "multi"})`
+          : "vnexpress+cafef+vietstock (NLP rule-engine)",
+    });
   } catch (err) {
     return handleError(err, `sentiment:${symbol}`);
   }

@@ -1,0 +1,56 @@
+import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
+
+/** Prefer free models on OpenRouter; override via OPENROUTER_MODEL. */
+const DEFAULT_MODEL = process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.3-70b-instruct:free";
+
+function isConfigured() {
+  return Boolean(process.env.OPENROUTER_API_KEY?.trim());
+}
+
+async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<LlmChatResult> {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY missing");
+
+  const model = DEFAULT_MODEL;
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 25_000);
+
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        "http-referer": process.env.OPENROUTER_SITE_URL ?? "https://orcafinancial.local",
+        "x-title": process.env.OPENROUTER_APP_NAME ?? "VNStock Terminal",
+      },
+      body: JSON.stringify({
+        model,
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        max_tokens: opts.maxTokens ?? 1500,
+        temperature: opts.temperature ?? 0.3,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`OpenRouter HTTP ${res.status}: ${errText.slice(0, 200)}`);
+    }
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const text = data.choices?.[0]?.message?.content ?? "";
+    if (!text.trim()) throw new Error("OpenRouter empty response");
+    return { text: text.trim(), provider: "openrouter", model, latencyMs: Date.now() - started };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export const openrouterProvider: LlmProvider = {
+  id: "openrouter",
+  label: "OpenRouter (free models)",
+  isConfigured,
+  chat,
+};

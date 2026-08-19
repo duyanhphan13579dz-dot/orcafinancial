@@ -11,6 +11,7 @@ import {
   yahooHistory,
   type CryptoQuote,
 } from "@/lib/connectors/providers";
+import { scoreSentimentHybrid } from "@/lib/llm";
 import { logger } from "@/lib/logger";
 import { analyzeSentiment } from "@/lib/sentiment";
 
@@ -77,7 +78,6 @@ export async function getQuote(symbol: string): Promise<Quote> {
     }
   });
 
-  // Persist normalized snapshot (fire-and-forget, keeps latency low).
   void db
     .insert(priceSnapshots)
     .values({
@@ -158,7 +158,6 @@ export async function searchSymbols(query: string): Promise<SymbolInfo[]> {
   const q = query.trim();
   if (!q) return [];
 
-  // Fast path: local DB (kept in sync from provider results).
   const local = await db
     .select()
     .from(companies)
@@ -168,7 +167,6 @@ export async function searchSymbols(query: string): Promise<SymbolInfo[]> {
   let remote: SymbolInfo[] = [];
   try {
     remote = await cached(`search:${q.toUpperCase()}`, 300_000, () => vndirectSearch(q));
-    // Sync provider results into normalized companies table.
     for (const r of remote.slice(0, 20)) {
       void db
         .insert(companies)
@@ -228,7 +226,7 @@ export async function syncNews(): Promise<{ inserted: number; errors: string[] }
     for (const m of `${item.title} ${item.description}`.matchAll(TICKER_RE)) {
       if (knownSymbols.has(m[1])) matched.add(m[1]);
     }
-    // Run Vietnamese sentiment NLP on title + description
+    // Fast path on ingest: rule-based only (LLM runs on demand per-symbol API)
     const sentimentScore = analyzeSentiment(`${item.title} ${item.description}`);
     try {
       const res = await db
@@ -258,7 +256,6 @@ export async function syncNews(): Promise<{ inserted: number; errors: string[] }
 
 let lastNewsSync = 0;
 export async function getNews(opts: { page?: number; limit?: number; symbol?: string } = {}) {
-  // Refresh from real feeds at most once per 90s (lazy scheduler).
   if (Date.now() - lastNewsSync > 90_000) {
     lastNewsSync = Date.now();
     await syncNews().catch((err) => logger.error("sync_news_failed", { error: String(err) }));
@@ -287,8 +284,7 @@ export async function getNews(opts: { page?: number; limit?: number; symbol?: st
 
 /* ----------------------------- Sentiment API ------------------------------ */
 export async function getNewsSentiment(symbol: string) {
-  return cached(`sentiment:${symbol}`, 30_000, async () => {
-    // Ensure news are fresh
+  return cached(`sentiment:${symbol}`, 60_000, async () => {
     if (Date.now() - lastNewsSync > 90_000) {
       lastNewsSync = Date.now();
       await syncNews().catch(() => undefined);
@@ -306,21 +302,27 @@ export async function getNewsSentiment(symbol: string) {
       .orderBy(desc(news.publishedAt))
       .limit(20);
 
-    // Also get overall market sentiment (all news last 24h)
     const allRows = await db
       .select({ sentiment: news.sentiment })
       .from(news)
       .where(gte(news.publishedAt, cutoff))
       .limit(100);
 
-    const symbolAvg = rows.length > 0 ? rows.reduce((s, r) => s + r.sentiment, 0) / rows.length : 0;
+    const headlines = rows.map((r) => r.title);
+    const hybrid = await scoreSentimentHybrid(symbol, headlines);
+
     const marketAvg = allRows.length > 0 ? allRows.reduce((s, r) => s + r.sentiment, 0) / allRows.length : 0;
 
     return {
       symbol,
-      sentimentScore: Number(symbolAvg.toFixed(3)),
+      sentimentScore: hybrid.score,
       marketSentiment: Number(marketAvg.toFixed(3)),
       newsCount24h: rows.length,
+      label: hybrid.label,
+      confidence: hybrid.confidence,
+      rationale: hybrid.rationale,
+      source: hybrid.source,
+      model: hybrid.model ?? null,
       articles: rows.map((r) => ({
         title: r.title,
         sentiment: r.sentiment,
