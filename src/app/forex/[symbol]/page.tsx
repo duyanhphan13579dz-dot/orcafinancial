@@ -46,8 +46,9 @@ export default function ForexDetail() {
   const [tf, setTf] = useState("1h");
   const detail = usePoll<Detail>(`/forex/${symbol}`, 60000);
   const live = usePoll<Detail>(`/forex/${symbol}/price`, 5000);
-  const chart = usePoll<{ bars: Bar[] }>(`/forex/${symbol}/ohlcv?timeframe=${tf}&limit=300`, 15000);
-  const analysis = usePoll<Analysis>(`/forex/${symbol}/analysis?timeframe=${tf}`, 60000);
+  // Fewer bars on first paint for faster chart; poll every 20s
+  const chart = usePoll<{ bars: Bar[] }>(`/forex/${symbol}/ohlcv?timeframe=${tf}&limit=180`, 20000);
+  const analysis = usePoll<Analysis>(`/forex/${symbol}/analysis?timeframe=${tf}`, 90000);
 
   const d = detail.data;
   const p = live.data?.price ?? d?.price;
@@ -75,7 +76,7 @@ export default function ForexDetail() {
             <span className="h-2 w-2 rounded-full bg-emerald-400 live-dot" />
           </div>
           <div className="text-[10px] text-slate-500">
-            {p?.source ?? "Yahoo Finance"} · Asia/Ho_Chi_Minh
+            {p?.source ?? String(chart.meta?.source ?? "multi-source")} · Asia/Ho_Chi_Minh
           </div>
         </div>
         <div className="sm:ml-auto">
@@ -91,7 +92,14 @@ export default function ForexDetail() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div className="panel p-3 xl:col-span-2">
           <div className="flex flex-wrap justify-between gap-2 mb-2">
-            <h2 className="font-semibold text-white">Biểu đồ {symbol}</h2>
+            <h2 className="font-semibold text-white">
+              Biểu đồ {symbol}
+              {chart.meta?.source ? (
+                <span className="ml-2 text-[10px] font-normal text-slate-500">
+                  via {String(chart.meta.source)}
+                </span>
+              ) : null}
+            </h2>
             <div className="flex gap-1 overflow-x-auto">
               {TFS.map((x) => (
                 <button
@@ -110,7 +118,7 @@ export default function ForexDetail() {
             <CandleChart bars={chart.data.bars} height={400} />
           ) : (
             <div className="h-96 flex items-center justify-center text-slate-500">
-              Đang tải Yahoo OHLCV...
+              {chart.loading ? "Đang tải multi-source OHLCV..." : chart.error ?? "Không có dữ liệu"}
             </div>
           )}
         </div>
