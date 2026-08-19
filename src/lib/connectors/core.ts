@@ -1,4 +1,5 @@
 import { forProvider, logger, recentLogs } from "@/lib/logger";
+import { sharedCacheGet, sharedCacheSet } from "@/lib/connectors/redis-cache";
 
 /* ═══════════════════════════════════════════════════════════════════════
    Domain types (unchanged)
@@ -542,34 +543,52 @@ export async function safeDbQuery<T>(
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   In-memory TTL cache and rate limiter (unchanged semantics)
+   Shared TTL cache and rate limiter
+   Backed by Upstash Redis when configured (shared across all serverless
+   instances); falls back to a local in-memory Map otherwise. See
+   @/lib/connectors/redis-cache for details. Call-site signatures below
+   are unchanged from the previous in-memory-only implementation.
    ═══════════════════════════════════════════════════════════════════════ */
 
-const cache = new Map<string, { value: unknown; expiresAt: number }>();
 export async function cached<T>(key: string, ttlMs: number, loader: () => Promise<T>): Promise<T> {
-  const hit = cache.get(key);
-  if (hit && hit.expiresAt > Date.now()) return hit.value as T;
+  const hit = await sharedCacheGet<T>(key);
+  if (hit !== undefined) return hit;
   const value = await loader();
-  cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  await sharedCacheSet(key, value, ttlMs);
   return value;
 }
 
-/** Read-through cache that returns the last-known-good value when loader fails. */
+/**
+ * Read-through cache that returns the last-known-good value when the loader
+ * fails. `sharedCacheGet` enforces the real TTL and won't return an expired
+ * entry, so "stale" values are kept separately here (no expiry, capped size)
+ * — best-effort, per-instance, matching the previous implementation's
+ * fallback behavior.
+ */
+const staleShadow = new Map<string, unknown>();
+const STALE_SHADOW_MAX = 500;
+
 export async function cachedWithStaleFallback<T>(
   key: string,
   ttlMs: number,
   loader: () => Promise<T>,
 ): Promise<{ value: T; stale: boolean }> {
-  const hit = cache.get(key);
-  if (hit && hit.expiresAt > Date.now()) return { value: hit.value as T, stale: false };
+  const hit = await sharedCacheGet<T>(key);
+  if (hit !== undefined) {
+    staleShadow.set(key, hit);
+    return { value: hit, stale: false };
+  }
   try {
     const value = await loader();
-    cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+    await sharedCacheSet(key, value, ttlMs);
+    if (staleShadow.size >= STALE_SHADOW_MAX) staleShadow.delete(staleShadow.keys().next().value as string);
+    staleShadow.set(key, value);
     return { value, stale: false };
   } catch (err) {
-    if (hit) {
+    const shadow = staleShadow.get(key);
+    if (shadow !== undefined) {
       logger.warn("cache_stale_fallback_used", { key, error: err instanceof Error ? err.message : String(err) });
-      return { value: hit.value as T, stale: true };
+      return { value: shadow as T, stale: true };
     }
     throw err;
   }
