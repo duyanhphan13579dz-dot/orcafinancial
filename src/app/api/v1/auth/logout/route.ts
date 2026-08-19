@@ -25,6 +25,10 @@ export async function POST(req: NextRequest) {
 
     const response = ok({ success: true });
     response.cookies.delete("refreshToken");
+    
+    response.cookies.delete(
+  "orca_2fa_challenge",
+);
 
     return response;
   } catch (err) {
