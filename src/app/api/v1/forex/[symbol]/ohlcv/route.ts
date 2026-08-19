@@ -14,10 +14,20 @@ export async function GET(req: NextRequest, c: { params: Promise<{ symbol: strin
   const limit = Math.min(1000, Math.max(20, Number(req.nextUrl.searchParams.get("limit") ?? 300)));
   try {
     const d = await syncForexOhlcv(symbol.toUpperCase(), tf, limit);
-    return ok(
+    const response = ok(
       { symbol: d.pair.symbol, timeframe: tf, bars: d.bars },
       { source: d.source, timezone: "Asia/Ho_Chi_Minh" },
     );
+    // DB-first SWR on server; short CDN cache for repeated chart loads
+    response.headers.set(
+      "Cache-Control",
+      "public, s-maxage=15, stale-while-revalidate=60",
+    );
+    response.headers.set(
+      "CDN-Cache-Control",
+      "public, s-maxage=15, stale-while-revalidate=60",
+    );
+    return response;
   } catch (e) {
     return handleError(e, `forex_ohlcv:${symbol}`);
   }

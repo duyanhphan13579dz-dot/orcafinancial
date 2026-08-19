@@ -1,5 +1,5 @@
-import { forProvider } from "@/lib/logger";
 import { FOREX_PAIRS } from "./data";
+import { forProvider } from "@/lib/logger";
 import { initializeForexPairs, runForexAnalysis, syncForexOhlcv, syncForexPrices } from "./service";
 
 const log = forProvider("forex-scheduler");
@@ -23,33 +23,56 @@ async function job(name: string, fn: () => Promise<unknown>) {
   }
 }
 
+/** Parallel map with concurrency limit. */
+async function mapPool<T>(items: T[], concurrency: number, fn: (item: T) => Promise<unknown>) {
+  const queue = items.slice();
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (queue.length) {
+      const item = queue.shift()!;
+      await fn(item).catch(() => null);
+    }
+  });
+  await Promise.all(workers);
+}
+
 export function startForexScheduler() {
   if (g.__orcaForexScheduler) return;
   g.__orcaForexScheduler = true;
   log.info("scheduler_started", {
     pairs: FOREX_PAIRS.length,
     pricesMs: 5000,
-    ohlcvMs: 60000,
-    analysisMs: 300000,
+    ohlcvMs: 45000,
+    analysisMs: 240000,
   });
 
   const pairs = () => void job("pairs", initializeForexPairs);
   const prices = () => void job("prices", syncForexPrices);
+
+  // Warm popular timeframes in parallel (concurrency 4)
   const ohlcv = () =>
     void job("ohlcv", async () => {
-      for (const p of FOREX_PAIRS) await syncForexOhlcv(p.symbol, "1h", 300).catch(() => null);
-    });
-  const analysis = () =>
-    void job("analysis", async () => {
-      for (const p of FOREX_PAIRS) await runForexAnalysis(p.symbol, "1h").catch(() => null);
+      const targets: Array<{ symbol: string; tf: string }> = [];
+      for (const p of FOREX_PAIRS) {
+        targets.push({ symbol: p.symbol, tf: "1h" });
+      }
+      // Top liquid pairs also warm 15m / 1d for faster chart switches
+      for (const s of ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "USDVND", "DXY"]) {
+        targets.push({ symbol: s, tf: "15m" }, { symbol: s, tf: "1d" });
+      }
+      await mapPool(targets, 4, (t) => syncForexOhlcv(t.symbol, t.tf, 300));
     });
 
-  setTimeout(pairs, 3000);
-  setTimeout(prices, 8000);
-  setTimeout(ohlcv, 18000);
-  setTimeout(analysis, 35000);
+  const analysis = () =>
+    void job("analysis", async () => {
+      await mapPool(FOREX_PAIRS, 3, (p) => runForexAnalysis(p.symbol, "1h"));
+    });
+
+  setTimeout(pairs, 2000);
+  setTimeout(prices, 5000);
+  setTimeout(ohlcv, 12000);
+  setTimeout(analysis, 28000);
   setInterval(pairs, 24 * 3600_000);
   setInterval(prices, 5000);
-  setInterval(ohlcv, 60000);
-  setInterval(analysis, 300000);
+  setInterval(ohlcv, 45_000);
+  setInterval(analysis, 240_000);
 }
