@@ -45,7 +45,7 @@ export default function WatchlistPage() {
 
       {data && data.items.length > 0 && (
         <div className="panel p-4 overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[620px]">
             <thead>
               <tr className="text-left text-xs text-slate-500 border-b border-slate-800">
                 <th className="py-2">Mã</th>
@@ -73,7 +73,7 @@ export default function WatchlistPage() {
                     {item.quote ? `${(item.quote.confidence * 100).toFixed(0)}%` : "—"}
                   </td>
                   <td className="text-right">
-                    <button onClick={() => void remove(item.symbol)} className="text-xs text-rose-400 hover:underline">
+                    <button onClick={() => void remove(item.symbol)} className="text-xs text-rose-400 hover:underline touch-min px-2">
                       Xóa
                     </button>
                   </td>
