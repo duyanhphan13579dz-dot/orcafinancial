@@ -2,7 +2,13 @@ import { NextRequest } from "next/server";
 import { checkRateLimit, fail, ok } from "@/lib/api";
 import { db } from "@/db";
 import { users, refreshTokens } from "@/db/schema";
-import { verifyPassword, generateAccessToken, generateRefreshToken, getRefreshTokenExpiresAt } from "@/lib/auth/service";
+import {
+  verifyPassword,
+  generateAccessToken,
+  generateRefreshToken,
+  getRefreshTokenExpiresAt,
+  generateTwoFactorChallenge,
+} from "@/lib/auth/service";
 import { eq, and, gte } from "drizzle-orm";
 import { upsertSession } from "@/lib/settings/service";
 import { recordAudit } from "@/lib/auth/guard";
@@ -47,7 +53,50 @@ export async function POST(req: NextRequest) {
     if (!valid) {
       return fail("Email hoặc mật khẩu không đúng", 401);
     }
+/*
+ * 2FA ENFORCEMENT
+ *
+ * Password authentication succeeded,
+ * but this is NOT a full session yet.
+ */
 
+if (user.twoFactorEnabled) {
+  const challenge =
+    await generateTwoFactorChallenge({
+      userId: user.id,
+      provider: user.provider,
+    });
+
+  recordAudit(
+    req,
+    user.id,
+    "2fa_login_challenge_created",
+    {
+      provider: user.provider,
+    },
+  );
+
+  const response = ok({
+    requiresTwoFactor: true,
+  });
+
+  response.cookies.set(
+    "orca_2fa_challenge",
+    challenge,
+    {
+      httpOnly: true,
+      secure:
+        process.env.NODE_ENV ===
+        "production",
+      sameSite: "lax",
+      maxAge: 5 * 60,
+      path: "/",
+    },
+  );
+
+  return response;
+}
+    
     // Generate tokens
     const accessToken = await generateAccessToken({
       userId: user.id,
