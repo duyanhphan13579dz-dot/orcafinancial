@@ -5,6 +5,7 @@ import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { analyze, type AnalysisResult } from "@/lib/analysis";
 import type { Quote } from "@/lib/connectors/core";
 import { generateFundamentalReport, type FundamentalReport } from "@/lib/fundamental";
+import { agentNarrative, listConfiguredProviders } from "@/lib/llm";
 import { getHistory, getMarketOverview, getNews, getNewsSentiment, getQuote, searchSymbols } from "@/lib/market";
 import { sentimentLabel } from "@/lib/sentiment";
 import { detectCandlestickPatterns, detectChartPatterns, type CandlePattern, type ChartPattern } from "@/lib/technical-patterns";
@@ -92,7 +93,6 @@ function composeDeterministicAnswer(
       `Giá: **${fmt(a.lastClose)}** | 1d: ${fmt(a.changePct1d)}% | 1m: ${fmt(a.changePct1m)}% | Nguồn: ${c.quote.source}`,
     );
 
-    // Technical indicators
     parts.push("### Chỉ báo kỹ thuật");
     parts.push(
       `RSI(14)=${fmt(a.rsi14, 1)}, MACD hist=${fmt(a.macd?.histogram, 3)}, SMA20=${fmt(a.sma20)}, SMA50=${fmt(a.sma50)}, Biến động=${fmt(a.volatilityPct, 1)}%, Drawdown=${fmt(a.maxDrawdownPct, 1)}%`,
@@ -101,11 +101,9 @@ function composeDeterministicAnswer(
       parts.push(`Hỗ trợ ~ ${fmt(a.supportResistance.support)} | Kháng cự ~ ${fmt(a.supportResistance.resistance)}`);
     }
 
-    // Reasons
     parts.push("**Lý do:**");
     for (const r of a.reasons) parts.push(`- ${r}`);
 
-    // Fundamental
     if (c.fundamental) {
       const f = c.fundamental;
       const h = f.financialHealth;
@@ -126,7 +124,6 @@ function composeDeterministicAnswer(
       parts.push(`**${v.verdictVi}**`);
     }
 
-    // Technical patterns
     if (c.candlePatterns.length > 0 || c.chartPatterns.length > 0) {
       parts.push("### Mẫu hình");
       for (const p of c.chartPatterns) {
@@ -137,10 +134,8 @@ function composeDeterministicAnswer(
       }
     }
 
-    // Sentiment
     parts.push(`### Tâm lý thị trường: ${c.sentimentLabel} (${c.sentimentScore >= 0 ? "+" : ""}${c.sentimentScore.toFixed(2)})`);
 
-    // News
     if (c.headlines.length > 0) {
       parts.push("### Tin liên quan");
       for (const h of c.headlines) parts.push(`- ${h}`);
@@ -148,36 +143,6 @@ function composeDeterministicAnswer(
   }
   parts.push("\n_Phân tích từ dữ liệu giá thật (VNDirect/Yahoo), tin RSS thật, NLP sentiment, và mô hình tài chính. Không phải lời khuyên đầu tư._");
   return parts.join("\n");
-}
-
-async function callAnthropic(message: string, contextBlock: string): Promise<string | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5",
-        max_tokens: 1500,
-        system:
-          "Bạn là chuyên viên phân tích đầu tư chứng khoán Việt Nam. CHỈ sử dụng dữ liệu real-time được cung cấp trong context — bao gồm giá, chỉ báo kỹ thuật, phân tích cơ bản (EPS, ROE, DCF, Graham, DuPont), mẫu hình nến/giá, và sentiment. Tuyệt đối không bịa số liệu. Trả lời bằng tiếng Việt, có cấu trúc, kèm khuyến nghị rõ ràng. Luôn kết thúc bằng lưu ý đây không phải lời khuyên đầu tư.",
-        messages: [
-          { role: "user", content: `DỮ LIỆU REAL-TIME TỪ DATA ENGINE:\n${contextBlock}\n\nCÂU HỎI: ${message}` },
-        ],
-      }),
-    });
-    if (!res.ok) throw new Error(`Anthropic HTTP ${res.status}`);
-    const data = (await res.json()) as { content: Array<{ type: string; text?: string }> };
-    return data.content.find((b) => b.type === "text")?.text ?? null;
-  } catch (err) {
-    logger.warn("anthropic_failed_fallback_rule_engine", { error: String(err) });
-    return null;
-  }
 }
 
 export async function POST(req: NextRequest) {
@@ -211,9 +176,9 @@ export async function POST(req: NextRequest) {
     }
 
     const deterministic = composeDeterministicAnswer(message, contexts, market);
-    const llmAnswer = await callAnthropic(message, deterministic);
-    const answer = llmAnswer ?? deterministic;
-    const model = llmAnswer ? "claude-haiku-4-5" : "rule-engine";
+    const llmResult = await agentNarrative(message, deterministic);
+    const answer = llmResult?.text ?? deterministic;
+    const model = llmResult ? `${llmResult.provider}/${llmResult.model}` : "rule-engine";
     const latencyMs = Date.now() - started;
 
     const sessionId = req.cookies.get("vnstock_session")?.value ?? "";
@@ -223,8 +188,18 @@ export async function POST(req: NextRequest) {
       .catch((err) => logger.error("agent_log_failed", { error: String(err) }));
 
     return ok(
-      { answer, model, symbols: validated },
-      { latencyMs, source: "data-engine+fundamental+technical+sentiment", confidence: contexts[0]?.analysis.confidence ?? 0.9 },
+      {
+        answer,
+        model,
+        symbols: validated,
+        providersConfigured: listConfiguredProviders().map((p) => p.id),
+      },
+      {
+        latencyMs,
+        source: "data-engine+fundamental+technical+sentiment+llm",
+        confidence: contexts[0]?.analysis.confidence ?? 0.9,
+        llmProvider: llmResult?.provider ?? null,
+      },
     );
   } catch (err) {
     return handleError(err, "agent_chat");
