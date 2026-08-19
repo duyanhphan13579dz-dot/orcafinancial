@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
+import { cached } from "@/lib/connectors/core";
 import { getHistory } from "@/lib/market";
 import { detectCandlestickPatterns, detectChartPatterns } from "@/lib/technical-patterns";
 
@@ -13,7 +14,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
   if (!/^[A-Z0-9]{1,15}$/.test(symbol)) return fail("Invalid symbol", 400);
 
   const timeframe = req.nextUrl.searchParams.get("timeframe") ?? "D";
-  const tf = ({"1d": "D", "1h": "60", "15m": "15"} as Record<string, string>)[timeframe] ?? "D";
+  const tf = ({ "1d": "D", "1h": "60", "15m": "15" } as Record<string, string>)[timeframe] ?? "D";
 
   try {
     const to = Math.floor(Date.now() / 1000);
@@ -21,8 +22,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
     const { bars, source, confidence } = await getHistory(symbol, to - span, to, tf as "D" | "60" | "15" | "1");
     if (bars.length < 20) return fail(`Insufficient data for pattern detection (${bars.length} bars)`, 422);
 
-    const candlestick = detectCandlestickPatterns(bars);
-    const chart = detectChartPatterns(bars);
+    // Pattern detection is pure over `bars`. getHistory() caches bars for
+    // 20-60s depending on timeframe; cache the (heavier) pattern-detection
+    // output on the same key/TTL so it isn't redone per viewer per poll.
+    const ttl = tf === "D" ? 60_000 : 20_000;
+    const { candlestick, chart } = await cached(`technical:${symbol}:${tf}`, ttl, async () => ({
+      candlestick: detectCandlestickPatterns(bars),
+      chart: detectChartPatterns(bars),
+    }));
 
     // Only return patterns from the last 20 bars for candlestick, all for chart
     const recentCandlestick = candlestick.filter((p) => p.barIndex >= bars.length - 20);
