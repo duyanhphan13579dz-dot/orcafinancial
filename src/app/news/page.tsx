@@ -87,9 +87,9 @@ export default function NewsPage() {
       )}
 
       <div className="flex items-center justify-center gap-3 text-sm">
-        <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded border border-slate-700 px-3 py-1 disabled:opacity-40 hover:bg-slate-800">← Trước</button>
+        <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded border border-slate-700 px-3 py-1 disabled:opacity-40 hover:bg-slate-800 touch-min">← Trước</button>
         <span className="text-slate-500">Trang {page} / {totalPages}</span>
-        <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="rounded border border-slate-700 px-3 py-1 disabled:opacity-40 hover:bg-slate-800">Sau →</button>
+        <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="rounded border border-slate-700 px-3 py-1 disabled:opacity-40 hover:bg-slate-800 touch-min">Sau →</button>
       </div>
     </div>
     </ProtectedPage>
