@@ -77,26 +77,50 @@ export default function LoginForm() {
     setLoading(true);
 
     try {
-      await api("/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-        body: JSON.stringify({
-          email,
-          password,
-        }),
-      });
+     const response = await fetch(
+  "/api/v1/auth/login",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type":
+        "application/json",
+    },
+    credentials: "include",
+    body: JSON.stringify({
+      email,
+      password,
+    }),
+  },
+);
 
-      /*
-       * Pull the new session into AuthProvider
-       * BEFORE navigating.
-       */
-      await refreshUser();
+const json =
+  await response.json();
 
-      router.push("/");
-      router.refresh();
+if (!response.ok) {
+  throw new Error(
+    json.error ??
+      "Đăng nhập thất bại",
+  );
+}
+
+/*
+ * Password is correct, but 2FA may
+ * still be required.
+ */
+if (
+  json.data?.requiresTwoFactor
+) {
+  router.push("/auth/2fa");
+  return;
+}
+
+/*
+ * No 2FA → normal login.
+ */
+await refreshUser();
+
+router.push("/");
+router.refresh();
     } catch (err) {
       setError(
         err instanceof Error
