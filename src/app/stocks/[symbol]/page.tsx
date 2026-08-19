@@ -8,36 +8,15 @@ import {
   useState,
 } from "react";
 
-import {
-  CandleChart,
-  type Bar,
-} from "@/components/candle-chart";
+import dynamic from "next/dynamic";
 
-import {
-  FinancialStatements,
-} from "@/components/financial-statements";
+import type { Bar } from "@/components/candle-chart";
 
-import {
-  CompanyProfile,
-} from "@/components/company-profile";
+import type { HealthDetail } from "@/components/financial-health-detail";
 
 import {
   SectionTitle,
 } from "@/components/period-pill";
-
-import {
-  EPSTrendChart,
-  HealthGauge,
-  IndustryCompareBars,
-  MarginsTrendChart,
-  RevenueProfitChart,
-  ROEvsIndustryChart,
-} from "@/components/fundamental-charts";
-
-import {
-  HealthDetailCard,
-  type HealthDetail,
-} from "@/components/financial-health-detail";
 
 import {
   api,
@@ -52,6 +31,75 @@ import {
 import {
   ProtectedPage,
 } from "@/components/ProtectedPage";
+
+/* ============================================================
+ * CODE-SPLIT: heavy per-tab components
+ *
+ * These are only needed once the user opens the tab that uses
+ * them. Loading them via next/dynamic (ssr:false) keeps them out
+ * of the initial JS bundle for this page, so the shell (nav,
+ * quote header, tab bar) hydrates faster — the chart/FA libraries
+ * (lightweight-charts, recharts) stream in as separate chunks only
+ * when actually needed.
+ * ============================================================ */
+
+const ChartSkeleton = () => (
+  <div className="h-[380px] w-full animate-pulse rounded-lg bg-slate-800/40" />
+);
+
+const PanelSkeleton = () => (
+  <div className="h-64 w-full animate-pulse rounded-lg bg-slate-800/40" />
+);
+
+const CandleChart = dynamic(
+  () => import("@/components/candle-chart").then((m) => m.CandleChart),
+  { ssr: false, loading: ChartSkeleton },
+);
+
+const FinancialStatements = dynamic(
+  () => import("@/components/financial-statements").then((m) => m.FinancialStatements),
+  { ssr: false, loading: PanelSkeleton },
+);
+
+const CompanyProfile = dynamic(
+  () => import("@/components/company-profile").then((m) => m.CompanyProfile),
+  { ssr: false, loading: PanelSkeleton },
+);
+
+const HealthDetailCard = dynamic(
+  () => import("@/components/financial-health-detail").then((m) => m.HealthDetailCard),
+  { ssr: false },
+);
+
+const RevenueProfitChart = dynamic(
+  () => import("@/components/fundamental-charts").then((m) => m.RevenueProfitChart),
+  { ssr: false },
+);
+
+const HealthGauge = dynamic(
+  () => import("@/components/fundamental-charts").then((m) => m.HealthGauge),
+  { ssr: false },
+);
+
+const ROEvsIndustryChart = dynamic(
+  () => import("@/components/fundamental-charts").then((m) => m.ROEvsIndustryChart),
+  { ssr: false },
+);
+
+const MarginsTrendChart = dynamic(
+  () => import("@/components/fundamental-charts").then((m) => m.MarginsTrendChart),
+  { ssr: false },
+);
+
+const EPSTrendChart = dynamic(
+  () => import("@/components/fundamental-charts").then((m) => m.EPSTrendChart),
+  { ssr: false },
+);
+
+const IndustryCompareBars = dynamic(
+  () => import("@/components/fundamental-charts").then((m) => m.IndustryCompareBars),
+  { ssr: false },
+);
 
 /* ============================================================
  * TYPES
