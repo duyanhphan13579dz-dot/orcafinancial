@@ -76,7 +76,7 @@ export default function ScreenerPage() {
             <button
               key={m.id}
               onClick={() => setMethod(m.id)}
-              className={`font-display rounded-md border px-4 py-2 text-sm font-bold transition-all ${
+              className={`font-display rounded-md border px-4 py-2 text-sm font-bold transition-all touch-min ${
                 method === m.id
                   ? "border-[#00d4ff] bg-[#00d4ff]/15 text-[#00d4ff] shadow-[0_0_20px_-6px_rgba(0,212,255,0.6)]"
                   : "border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-500"
@@ -92,7 +92,7 @@ export default function ScreenerPage() {
       <div className="panel p-5 relative scanlines overflow-hidden bg-gradient-to-br from-[#0a1d33] via-[#0A2540] to-[#0a1d33]">
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-5 items-center">
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
               <div>
                 <div className="font-mono text-[10px] tracking-[0.25em] text-slate-400 uppercase">Min score threshold</div>
                 <div className="flex items-baseline gap-3 mt-1">
@@ -100,12 +100,12 @@ export default function ScreenerPage() {
                   <span className="font-mono text-xs text-slate-500">/ 100</span>
                 </div>
               </div>
-              <div className="flex gap-1.5">
+              <div className="flex gap-1.5 flex-wrap">
                 {PRESETS.map((p) => (
                   <button
                     key={p.value}
                     onClick={() => setMinScore(p.value)}
-                    className={`font-mono rounded border px-2.5 py-1 text-[10px] tracking-wider transition-all ${
+                    className={`font-mono rounded border px-2.5 py-1 text-[10px] tracking-wider transition-all touch-min ${
                       minScore === p.value
                         ? "border-[#00d4ff] bg-[#00d4ff]/15 text-[#00d4ff]"
                         : "border-slate-700 text-slate-400 hover:border-slate-500"
