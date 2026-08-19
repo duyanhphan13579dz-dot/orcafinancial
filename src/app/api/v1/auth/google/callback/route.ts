@@ -1,25 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
+
 import { db } from "@/db";
-import {
-  refreshTokens,
-  users,
-} from "@/db/schema";
+import { refreshTokens, users } from "@/db/schema";
+
 import {
   generateAccessToken,
   generateRefreshToken,
   getRefreshTokenExpiresAt,
   generateTwoFactorChallenge,
 } from "@/lib/auth/service";
+
 import {
   getAuthedUser,
   recordAudit,
 } from "@/lib/auth/guard";
+
 import {
   exchangeGoogleCode,
   verifyGoogleIdToken,
   verifyGoogleOAuthState,
 } from "@/lib/auth/google";
+
 import { upsertSession } from "@/lib/settings/service";
 
 export const dynamic = "force-dynamic";
@@ -36,22 +38,13 @@ function redirectWithError(
   path: string,
   message: string,
 ): NextResponse {
-  const url = new URL(
-    path,
-    getAppUrl(req),
-  );
+  const url = new URL(path, getAppUrl(req));
 
-  url.searchParams.set(
-    "error",
-    message,
-  );
+  url.searchParams.set("error", message);
 
-  const response =
-    NextResponse.redirect(url);
+  const response = NextResponse.redirect(url);
 
-  response.cookies.delete(
-    "orca_google_oauth_state",
-  );
+  response.cookies.delete("orca_google_oauth_state");
 
   return response;
 }
@@ -60,77 +53,65 @@ function redirectSuccess(
   req: NextRequest,
   path: string,
 ): NextResponse {
-  const response =
-    NextResponse.redirect(
-      new URL(path, getAppUrl(req)),
-    );
-
-  response.cookies.delete(
-    "orca_google_oauth_state",
+  const response = NextResponse.redirect(
+    new URL(path, getAppUrl(req)),
   );
+
+  response.cookies.delete("orca_google_oauth_state");
 
   return response;
 }
 
 /**
  * Create Orca session after successful Google authentication.
+ *
+ * IMPORTANT:
+ * This function is called ONLY after all required
+ * authentication checks have completed, including 2FA.
  */
 async function createSession(
   req: NextRequest,
   user: typeof users.$inferSelect,
 ): Promise<NextResponse> {
-  const accessToken =
-    await generateAccessToken({
-      userId: user.id,
-      email: user.email,
-      provider: user.provider,
-    });
+  const accessToken = await generateAccessToken({
+    userId: user.id,
+    email: user.email,
+    provider: user.provider,
+  });
 
-  const refreshToken =
-    generateRefreshToken();
+  const refreshToken = generateRefreshToken();
 
-  const expiresAt =
-    getRefreshTokenExpiresAt();
+  const expiresAt = getRefreshTokenExpiresAt();
 
-  await db
-    .insert(refreshTokens)
-    .values({
-      token: refreshToken,
-      userId: user.id,
-      expiresAt,
-    });
+  await db.insert(refreshTokens).values({
+    token: refreshToken,
+    userId: user.id,
+    expiresAt,
+  });
 
   await upsertSession({
     userId: user.id,
     token: refreshToken,
-    userAgent:
-      req.headers.get("user-agent"),
+    userAgent: req.headers.get("user-agent"),
     ipAddress:
       req.headers
         .get("x-forwarded-for")
         ?.split(",")[0]
-        ?.trim() ??
-      null,
+        ?.trim() ?? null,
     expiresAt,
   });
 
-  const response =
-    NextResponse.redirect(
-      new URL("/", getAppUrl(req)),
-    );
-
-  response.cookies.set(
-    "refreshToken",
-    refreshToken,
-    {
-      httpOnly: true,
-      secure:
-        process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60,
-      path: "/",
-    },
+  const response = NextResponse.redirect(
+    new URL("/", getAppUrl(req)),
   );
+
+  response.cookies.set("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 7 * 24 * 60 * 60,
+    path: "/",
+  });
 
   return response;
 }
@@ -138,23 +119,12 @@ async function createSession(
 /**
  * GET /api/v1/auth/google/callback
  */
-export async function GET(
-  req: NextRequest,
-) {
-  const code =
-    req.nextUrl.searchParams.get(
-      "code",
-    );
+export async function GET(req: NextRequest) {
+  const code = req.nextUrl.searchParams.get("code");
 
-  const state =
-    req.nextUrl.searchParams.get(
-      "state",
-    );
+  const state = req.nextUrl.searchParams.get("state");
 
-  const googleError =
-    req.nextUrl.searchParams.get(
-      "error",
-    );
+  const googleError = req.nextUrl.searchParams.get("error");
 
   if (googleError) {
     return redirectWithError(
@@ -172,23 +142,20 @@ export async function GET(
     );
   }
 
-  const storedState =
-    req.cookies.get(
-      "orca_google_oauth_state",
-    )?.value;
+  const storedState = req.cookies.get(
+    "orca_google_oauth_state",
+  )?.value;
 
   /*
    * State must match both:
+   *
    * 1. the signed JWT;
    * 2. the httpOnly browser cookie.
    *
    * This prevents a forged OAuth callback from
    * attaching a Google identity to another account.
    */
-  if (
-    !storedState ||
-    storedState !== state
-  ) {
+  if (!storedState || storedState !== state) {
     return redirectWithError(
       req,
       "/auth/login",
@@ -196,10 +163,7 @@ export async function GET(
     );
   }
 
-  const oauthState =
-    await verifyGoogleOAuthState(
-      state,
-    );
+  const oauthState = await verifyGoogleOAuthState(state);
 
   if (!oauthState) {
     return redirectWithError(
@@ -213,16 +177,12 @@ export async function GET(
     const redirectUri =
       `${getAppUrl(req)}/api/v1/auth/google/callback`;
 
-    const { idToken } =
-      await exchangeGoogleCode(
-        code,
-        redirectUri,
-      );
+    const { idToken } = await exchangeGoogleCode(
+      code,
+      redirectUri,
+    );
 
-    const google =
-      await verifyGoogleIdToken(
-        idToken,
-      );
+    const google = await verifyGoogleIdToken(idToken);
 
     /*
      * ─────────────────────────────
@@ -230,8 +190,7 @@ export async function GET(
      * ─────────────────────────────
      */
     if (oauthState.mode === "link") {
-      const currentUserId =
-        oauthState.userId;
+      const currentUserId = oauthState.userId;
 
       if (!currentUserId) {
         return redirectWithError(
@@ -241,8 +200,7 @@ export async function GET(
         );
       }
 
-      const currentUser =
-        await getAuthedUser(req);
+      const currentUser = await getAuthedUser(req);
 
       if (
         !currentUser ||
@@ -255,20 +213,13 @@ export async function GET(
         );
       }
 
-      const existingRows =
-        await db
-          .select()
-          .from(users)
-          .where(
-            eq(
-              users.email,
-              google.email,
-            ),
-          )
-          .limit(1);
+      const existingRows = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, google.email))
+        .limit(1);
 
-      const existing =
-        existingRows[0];
+      const existing = existingRows[0];
 
       /*
        * If the Google email already belongs to
@@ -287,36 +238,27 @@ export async function GET(
       }
 
       /*
-       * If the current account already uses Google,
-       * simply refresh Google profile information.
-       *
-       * passwordHash is intentionally preserved,
-       * so a local account can continue using
-       * email/password after linking Google.
+       * Keep passwordHash intact so a local account
+       * can continue using email/password after
+       * linking Google.
        */
-      const updated =
-        await db
-          .update(users)
-          .set({
-            provider: "google",
-            name:
-              currentUser.name ||
-              google.name ||
-              null,
-            avatarUrl:
-              google.picture ||
-              currentUser.avatarUrl ||
-              null,
-            emailVerified: true,
-            updatedAt: new Date(),
-          })
-          .where(
-            eq(
-              users.id,
-              currentUserId,
-            ),
-          )
-          .returning();
+      const updated = await db
+        .update(users)
+        .set({
+          provider: "google",
+          name:
+            currentUser.name ||
+            google.name ||
+            null,
+          avatarUrl:
+            google.picture ||
+            currentUser.avatarUrl ||
+            null,
+          emailVerified: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, currentUserId))
+        .returning();
 
       if (!updated.length) {
         return redirectWithError(
@@ -348,68 +290,57 @@ export async function GET(
      * ─────────────────────────────
      */
 
-    const existingRows =
-      await db
-        .select()
-        .from(users)
-        .where(
-          eq(
-            users.email,
-            google.email,
-          ),
-        )
-        .limit(1);
+    const existingRows = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, google.email))
+      .limit(1);
 
-    let user =
-      existingRows[0];
+    let user = existingRows[0];
 
+    /*
+     * Create a new Orca account if the Google
+     * email does not exist yet.
+     */
     if (!user) {
-      const inserted =
-        await db
-          .insert(users)
-          .values({
-            email: google.email,
-            passwordHash: null,
-            name: google.name,
-            avatarUrl: google.picture,
-            provider: "google",
-            emailVerified: true,
-          })
-          .returning();
+      const inserted = await db
+        .insert(users)
+        .values({
+          email: google.email,
+          passwordHash: null,
+          name: google.name,
+          avatarUrl: google.picture,
+          provider: "google",
+          emailVerified: true,
+        })
+        .returning();
 
       user = inserted[0];
     } else {
       /*
        * Existing account:
        *
-       * - keep passwordHash if present;
+       * - preserve passwordHash;
        * - mark Google as available;
-       * - refresh Google profile information only
-       *   where useful.
+       * - refresh profile information only where useful.
        */
-      const updated =
-        await db
-          .update(users)
-          .set({
-            provider: "google",
-            emailVerified: true,
-            name:
-              user.name ||
-              google.name ||
-              null,
-            avatarUrl:
-              user.avatarUrl ||
-              google.picture ||
-              null,
-            updatedAt: new Date(),
-          })
-          .where(
-            eq(
-              users.id,
-              user.id,
-            ),
-          )
-          .returning();
+      const updated = await db
+        .update(users)
+        .set({
+          provider: "google",
+          emailVerified: true,
+          name:
+            user.name ||
+            google.name ||
+            null,
+          avatarUrl:
+            user.avatarUrl ||
+            google.picture ||
+            null,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, user.id))
+        .returning();
 
       if (updated.length) {
         user = updated[0];
@@ -417,80 +348,86 @@ export async function GET(
     }
 
     /*
- * ─────────────────────────────
- * 2FA ENFORCEMENT
- * ─────────────────────────────
- *
- * IMPORTANT:
- * If 2FA is enabled, do NOT create
- * refreshToken/session yet.
- */
+     * ─────────────────────────────
+     * 2FA ENFORCEMENT
+     * ─────────────────────────────
+     *
+     * IMPORTANT:
+     *
+     * If 2FA is enabled:
+     *
+     * - DO NOT create access token
+     * - DO NOT create refresh token
+     * - DO NOT create session
+     *
+     * The user must complete TOTP verification first.
+     */
+    if (user.twoFactorEnabled) {
+      const challenge =
+        await generateTwoFactorChallenge({
+          userId: user.id,
+          provider: user.provider,
+          purpose: "2fa_login",
+        });
 
-if (user.twoFactorEnabled) {
-  const challenge =
-    await generateTwoFactorChallenge({
-      userId: user.id,
-      provider: user.provider,
-    });
+      recordAudit(
+        req,
+        user.id,
+        "2fa_login_challenge_created",
+        {
+          provider: "google",
+        },
+      );
 
-  recordAudit(
-    req,
-    user.id,
-    "2fa_login_challenge_created",
-    {
-      provider: "google",
-    },
-  );
+      const response = NextResponse.redirect(
+        new URL(
+          "/auth/2fa",
+          getAppUrl(req),
+        ),
+      );
 
-  const response =
-    NextResponse.redirect(
-      new URL(
-        "/auth/2fa",
-        getAppUrl(req),
-      ),
-    );
+      response.cookies.set(
+        "orca_2fa_challenge",
+        challenge,
+        {
+          httpOnly: true,
+          secure:
+            process.env.NODE_ENV === "production",
+          sameSite: "lax",
+          maxAge: 5 * 60,
+          path: "/",
+        },
+      );
 
-  response.cookies.set(
-    "orca_2fa_challenge",
-    challenge,
-    {
-      httpOnly: true,
-      secure:
-        process.env.NODE_ENV ===
-        "production",
-      sameSite: "lax",
-      maxAge: 5 * 60,
-      path: "/",
-    },
-  );
+      /*
+       * OAuth state is no longer needed after
+       * Google identity has been verified.
+       */
+      response.cookies.delete(
+        "orca_google_oauth_state",
+      );
 
-  response.cookies.delete(
-    "orca_google_oauth_state",
-  );
+      return response;
+    }
 
-  return response;
-}
-
-recordAudit(
-  req,
-  user.id,
-  "login",
-  {
-    provider: "google",
-    googleEmail: google.email,
-    googleSubject: google.sub,
-  },
-);
-
-return createSession(
-  req,
-  user,
-);
-
-    return createSession(
+    /*
+     * No 2FA:
+     *
+     * Authentication is complete, so we can
+     * create the real Orca session.
+     */
+    recordAudit(
       req,
-      user,
+      user.id,
+      "login",
+      {
+        provider: "google",
+        googleEmail: google.email,
+        googleSubject: google.sub,
+      },
     );
+
+    return createSession(req, user);
   } catch (error) {
     console.error(
       "[google-callback]",
