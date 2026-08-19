@@ -9,6 +9,7 @@ import {
   generateAccessToken,
   generateRefreshToken,
   getRefreshTokenExpiresAt,
+  generateTwoFactorChallenge,
 } from "@/lib/auth/service";
 import {
   getAuthedUser,
@@ -415,16 +416,76 @@ export async function GET(
       }
     }
 
-    recordAudit(
-      req,
-      user.id,
-      "login",
-      {
-        provider: "google",
-        googleEmail: google.email,
-        googleSubject: google.sub,
-      },
+    /*
+ * ─────────────────────────────
+ * 2FA ENFORCEMENT
+ * ─────────────────────────────
+ *
+ * IMPORTANT:
+ * If 2FA is enabled, do NOT create
+ * refreshToken/session yet.
+ */
+
+if (user.twoFactorEnabled) {
+  const challenge =
+    await generateTwoFactorChallenge({
+      userId: user.id,
+      provider: user.provider,
+    });
+
+  recordAudit(
+    req,
+    user.id,
+    "2fa_login_challenge_created",
+    {
+      provider: "google",
+    },
+  );
+
+  const response =
+    NextResponse.redirect(
+      new URL(
+        "/auth/2fa",
+        getAppUrl(req),
+      ),
     );
+
+  response.cookies.set(
+    "orca_2fa_challenge",
+    challenge,
+    {
+      httpOnly: true,
+      secure:
+        process.env.NODE_ENV ===
+        "production",
+      sameSite: "lax",
+      maxAge: 5 * 60,
+      path: "/",
+    },
+  );
+
+  response.cookies.delete(
+    "orca_google_oauth_state",
+  );
+
+  return response;
+}
+
+recordAudit(
+  req,
+  user.id,
+  "login",
+  {
+    provider: "google",
+    googleEmail: google.email,
+    googleSubject: google.sub,
+  },
+);
+
+return createSession(
+  req,
+  user,
+);
 
     return createSession(
       req,
