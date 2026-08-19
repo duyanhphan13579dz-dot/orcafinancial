@@ -8,6 +8,7 @@ const NAV = [
   { href: "/", label: "Tổng quan", icon: "📊" },
   { href: "/heatmap", label: "Heatmap", icon: "🟩" },
   { href: "/commodities", label: "Hàng hóa", icon: "📦" },
+  { href: "/crypto", label: "Crypto", icon: "🪙" },
   { href: "/reports", label: "Báo cáo", icon: "📰" },
   { href: "/screener", label: "Bộ lọc", icon: "🔍" },
   { href: "/news", label: "Tin tức", icon: "📰" },
