@@ -37,8 +37,13 @@ function getGoogleClientSecret(): string {
 
 function getStateSecret(): Uint8Array {
   const secret =
-    process.env.JWT_SECRET?.trim() ||
-    "change-this-secret-in-production-min-32-chars!!";
+    process.env.JWT_SECRET?.trim();
+
+  if (!secret) {
+    throw new Error(
+      "JWT_SECRET chưa được cấu hình",
+    );
+  }
 
   if (secret.length < 32) {
     throw new Error(
@@ -46,7 +51,9 @@ function getStateSecret(): Uint8Array {
     );
   }
 
-  return new TextEncoder().encode(secret);
+  return new TextEncoder().encode(
+    secret,
+  );
 }
 
 export type GoogleOAuthMode = "login" | "link";
