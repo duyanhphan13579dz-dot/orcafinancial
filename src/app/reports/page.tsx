@@ -504,18 +504,18 @@ export default function ReportsPage() {
           className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col p-3 md:p-6"
           onClick={() => setPreview(null)}
         >
-          <div className="no-print flex items-center justify-between gap-3 mb-3" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-3">
-              <div className="font-mono text-[10px] tracking-[0.3em] uppercase text-[#00d4ff]">Preview</div>
-              <div className="font-display text-lg font-bold text-white">
+          <div className="no-print flex flex-wrap items-center justify-between gap-3 mb-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="font-mono text-[10px] tracking-[0.3em] uppercase text-[#00d4ff] shrink-0">Preview</div>
+              <div className="font-display text-lg font-bold text-white truncate">
                 {preview.type === "morning" ? "Morning Brief" : "Market Summary"} · <span className="tabular-nums">{preview.date}</span>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button onClick={doPrint} className="btn-orca text-xs">In / Lưu PDF</button>
-              <button onClick={doDownloadHtml} className="btn-orca-outline text-xs">Tải HTML</button>
-              <button onClick={doOpenTab} className="btn-orca-outline text-xs">Mở tab mới</button>
-              <button onClick={() => setPreview(null)} className="btn-orca-ghost">Đóng ✕</button>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={doPrint} className="btn-orca text-xs touch-min">In / Lưu PDF</button>
+              <button onClick={doDownloadHtml} className="btn-orca-outline text-xs touch-min">Tải HTML</button>
+              <button onClick={doOpenTab} className="btn-orca-outline text-xs touch-min hidden sm:inline-flex">Mở tab mới</button>
+              <button onClick={() => setPreview(null)} className="btn-orca-ghost touch-min" aria-label="Đóng">Đóng ✕</button>
             </div>
           </div>
           <div className="flex-1 rounded-lg overflow-hidden bg-white shadow-[0_30px_80px_-20px_rgba(0,212,255,0.3)] border border-[#1a3558]" onClick={(e) => e.stopPropagation()}>
