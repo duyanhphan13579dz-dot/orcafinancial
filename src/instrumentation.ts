@@ -1,18 +1,9 @@
 /**
  * Next.js instrumentation hook — runs once per server process on boot.
- * Use this for side-effects that must start before any request is served
- * (background dispatchers, schedulers, warming caches, DB readiness wait).
- *
- * See: https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
  */
 export async function register() {
-  // Only run on the server runtime (not edge).
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
-  // ─── Database: wait for readiness (bounded retries), then start self-ping ───
-  // This does NOT block server startup indefinitely — it retries up to
-  // DATABASE_STARTUP_RETRIES times (default 10, 2s apart) then lets the app
-  // boot anyway in a "degraded" state. /api/health reflects the real status.
   try {
     const { waitForDatabaseReady, startDbSelfPing } = await import("@/db");
     void waitForDatabaseReady().then((ready) => {
@@ -44,18 +35,24 @@ export async function register() {
     console.error("[instrumentation] report scheduler failed to start:", err);
   }
 
-  // ─── Commodities Scheduler ───
-  // Runs daily at 8:00 AM Vietnam time to fetch commodities data
   try {
     const { startCommoditiesScheduler } = await import("@/lib/commodities/scheduler");
     startCommoditiesScheduler();
   } catch (err) {
     console.error("[instrumentation] commodities scheduler failed to start:", err);
   }
+
   try {
     const { startCryptoScheduler } = await import("@/lib/crypto/scheduler");
     startCryptoScheduler();
   } catch (err) {
     console.error("[instrumentation] crypto scheduler failed to start:", err);
+  }
+
+  try {
+    const { startForexScheduler } = await import("@/lib/forex/scheduler");
+    startForexScheduler();
+  } catch (err) {
+    console.error("[instrumentation] forex scheduler failed to start:", err);
   }
 }

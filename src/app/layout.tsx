@@ -43,6 +43,7 @@ const NAV = [
   { href: "/heatmap", label: "Heatmap" },
   { href: "/commodities", label: "Hàng hóa" },
   { href: "/crypto", label: "Crypto" },
+  { href: "/forex", label: "Forex" },
   { href: "/reports", label: "Báo cáo" },
   { href: "/screener", label: "Bộ lọc" },
   { href: "/news", label: "Tin tức" },
@@ -75,7 +76,6 @@ export default function RootLayout({
       </head>
 
       <body className="antialiased min-h-screen pb-20 md:pb-0">
-        {/* Film-grain overlay */}
         <div
           aria-hidden
           className="pointer-events-none fixed inset-0 z-[1] opacity-[0.035] mix-blend-overlay"
@@ -87,15 +87,11 @@ export default function RootLayout({
 
         <AuthProvider>
           <AppearanceLoader />
-
-          {/* Mobile header + mobile search */}
           <MobileHeader />
 
-          {/* Desktop / Tablet header */}
           <header className="hidden md:block sticky top-0 z-40 border-b border-[#1a3558] bg-[#0A2540]/95 backdrop-blur">
             <div className="mx-auto max-w-7xl px-4 py-3">
               <div className="flex items-center gap-4">
-                {/* Logo */}
                 <Link
                   href="/"
                   className="flex items-center gap-3 shrink-0 group"
@@ -118,7 +114,6 @@ export default function RootLayout({
                   </div>
                 </Link>
 
-                {/* Desktop navigation */}
                 <nav className="hidden lg:flex items-center gap-5 text-sm text-slate-400 font-display">
                   {NAV.map((n) => (
                     <Link
@@ -131,20 +126,10 @@ export default function RootLayout({
                   ))}
                 </nav>
 
-                {/* Search + user */}
                 <div className="ml-auto flex items-center gap-3 flex-1 justify-end min-w-0">
-                  {/*
-                    SearchBar is now available from md breakpoint
-                    instead of xl breakpoint.
-
-                    - Tablet: visible
-                    - Desktop: visible
-                    - Mobile: rendered by MobileHeader
-                  */}
                   <div className="block w-full max-w-xs min-w-0">
                     <SearchBar />
                   </div>
-
                   <div className="shrink-0">
                     <UserMenu />
                   </div>
@@ -178,7 +163,6 @@ export default function RootLayout({
             </div>
           </footer>
 
-          {/* Mobile bottom navigation */}
           <MobileBottomNav />
         </AuthProvider>
       </body>
