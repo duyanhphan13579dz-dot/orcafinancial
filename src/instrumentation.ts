@@ -6,7 +6,7 @@ export async function register() {
 
   try {
     const { waitForDatabaseReady, startDbSelfPing } = await import("@/db");
-    void waitForDatabaseReady().then((ready) => {
+    void waitForDatabaseReady().then(async (ready) => {
       console.log(
         JSON.stringify({
           ts: new Date().toISOString(),
@@ -15,6 +15,17 @@ export async function register() {
           msg: ready ? "database_ready_on_boot" : "database_not_ready_booting_degraded",
         }),
       );
+      if (ready) {
+        try {
+          const { ensureAuthTables } = await import("@/db/ensure-auth-tables");
+          await ensureAuthTables();
+        } catch (err) {
+          console.error(
+            "[instrumentation] ensureAuthTables failed:",
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
     });
     startDbSelfPing();
   } catch (err) {
