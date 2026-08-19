@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CandleChart, type Bar } from "@/components/candle-chart";
-import { changeColor, fmtNum, fmtPct, usePoll } from "@/lib/client";
+import { api, changeColor, fmtNum, fmtPct, usePoll } from "@/lib/client";
 
 interface Detail {
   pair: {
@@ -39,19 +39,54 @@ interface Analysis {
   disclaimer: string;
 }
 
+interface Bundle {
+  pair: Detail["pair"];
+  price: Detail["price"];
+  bars: Bar[];
+  timeframe: string;
+  source: string;
+  analysis: Analysis | null;
+}
+
 const TFS = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
 export default function ForexDetail() {
   const symbol = String(useParams().symbol).toUpperCase();
   const [tf, setTf] = useState("1h");
-  const detail = usePoll<Detail>(`/forex/${symbol}`, 60000);
-  const live = usePoll<Detail>(`/forex/${symbol}/price`, 5000);
-  const chart = usePoll<{ bars: Bar[] }>(`/forex/${symbol}/ohlcv?timeframe=${tf}&limit=300`, 15000);
-  const analysis = usePoll<Analysis>(`/forex/${symbol}/analysis?timeframe=${tf}`, 60000);
+  const [bundle, setBundle] = useState<Bundle | null>(null);
+  const [bundleLoading, setBundleLoading] = useState(true);
+  const [bundleError, setBundleError] = useState<string | null>(null);
 
-  const d = detail.data;
-  const p = live.data?.price ?? d?.price;
-  const a = analysis.data;
+  // One round-trip for first paint (pair + chart + analysis)
+  useEffect(() => {
+    let cancelled = false;
+    setBundleLoading(true);
+    setBundleError(null);
+    api<Bundle>(`/forex/${symbol}/bundle?timeframe=${tf}&limit=300`)
+      .then((env) => {
+        if (!cancelled) {
+          setBundle(env.data);
+          setBundleLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setBundleError(err instanceof Error ? err.message : String(err));
+          setBundleLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, tf]);
+
+  // Live price only (lightweight poll)
+  const live = usePoll<Detail>(`/forex/${symbol}/price`, 5000);
+
+  const pair = bundle?.pair;
+  const p = live.data?.price ?? bundle?.price;
+  const bars = bundle?.bars;
+  const a = bundle?.analysis;
   const style =
     a?.recommendation === "BUY"
       ? "border-emerald-600 bg-emerald-500/10 text-emerald-300"
@@ -71,11 +106,11 @@ export default function ForexDetail() {
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-black text-white">{d?.pair.name ?? symbol}</h1>
+            <h1 className="text-2xl font-black text-white">{pair?.name ?? symbol}</h1>
             <span className="h-2 w-2 rounded-full bg-emerald-400 live-dot" />
           </div>
           <div className="text-[10px] text-slate-500">
-            {p?.source ?? "Yahoo Finance"} · Asia/Ho_Chi_Minh
+            {p?.source ?? bundle?.source ?? "multi-source"} · Asia/Ho_Chi_Minh
           </div>
         </div>
         <div className="sm:ml-auto">
@@ -91,14 +126,22 @@ export default function ForexDetail() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div className="panel p-3 xl:col-span-2">
           <div className="flex flex-wrap justify-between gap-2 mb-2">
-            <h2 className="font-semibold text-white">Biểu đồ {symbol}</h2>
+            <h2 className="font-semibold text-white">
+              Biểu đồ {symbol}
+              {bundle?.source ? (
+                <span className="ml-2 text-[10px] font-normal text-slate-500">{bundle.source}</span>
+              ) : null}
+            </h2>
             <div className="flex gap-1 overflow-x-auto">
               {TFS.map((x) => (
                 <button
                   key={x}
                   onClick={() => setTf(x)}
-                  className={`min-h-9 rounded px-3 text-xs ${
-                    tf === x ? "bg-[#00d4ff] text-[#0A2540]" : "bg-slate-800 text-slate-400"
+                  disabled={tf === x || bundleLoading}
+                  className={`min-h-9 px-3 rounded text-xs ${
+                    tf === x
+                      ? "bg-[#00d4ff] text-[#0A2540]"
+                      : "bg-slate-800 text-slate-400 hover:bg-slate-700"
                   }`}
                 >
                   {x}
@@ -106,19 +149,27 @@ export default function ForexDetail() {
               ))}
             </div>
           </div>
-          {chart.data ? (
-            <CandleChart bars={chart.data.bars} height={400} />
+          {bundleLoading && !bars?.length ? (
+            <div className="h-[360px] flex items-center justify-center text-slate-500 text-sm">
+              Đang tải chart…
+            </div>
+          ) : bundleError && !bars?.length ? (
+            <div className="h-[360px] flex items-center justify-center text-rose-400 text-sm">
+              {bundleError}
+            </div>
+          ) : bars && bars.length > 0 ? (
+            <CandleChart bars={bars} height={360} />
           ) : (
-            <div className="h-96 flex items-center justify-center text-slate-500">
-              Đang tải Yahoo OHLCV...
+            <div className="h-[360px] flex items-center justify-center text-slate-500 text-sm">
+              Không có dữ liệu OHLCV
             </div>
           )}
         </div>
 
-        <div className={`panel border p-4 ${style}`}>
-          <div className="text-[10px] tracking-[.25em] uppercase opacity-70">Tín hiệu kỹ thuật</div>
-          <div className="text-4xl font-black mt-2">{a?.recommendation ?? "—"}</div>
-          <div className="text-sm">Confidence {a ? `${Math.round(a.confidence * 100)}%` : "—"}</div>
+        <div className={`panel p-4 border ${style}`}>
+          <div className="text-xs opacity-70">Khuyến nghị · {tf}</div>
+          <div className="text-3xl font-black mt-1">{a?.recommendation ?? "…"}</div>
+          <div className="text-sm mt-1">Confidence: {a ? `${Math.round(a.confidence * 100)}%` : "—"}</div>
           <div className="mt-4 grid grid-cols-2 gap-y-2 text-xs">
             <span className="opacity-60">Entry</span>
             <span className="text-right font-mono">{fmtNum(a?.entryPrice, 5)}</span>
