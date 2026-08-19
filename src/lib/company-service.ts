@@ -9,7 +9,7 @@ import { eq, desc, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { companies, companyProfiles, companySwot, companyValueChains, financialStatements } from "@/db/schema";
 import { generateValueChain, type ValueChain } from "@/lib/value-chain";
-import { safeDbQuery, type Ohlcv } from "@/lib/connectors/core";
+import { cached, safeDbQuery, type Ohlcv } from "@/lib/connectors/core";
 import {
   generateCompanyProfile,
   generateSwot,
@@ -123,6 +123,32 @@ export async function getStatements(
   }>;
   fields: string[];
 }> {
+  // Financial statements update at most once per quarter. Cache the DB
+  // round-trip for 10 minutes so repeated tab switches / polls for the same
+  // symbol+type+period don't re-hit Postgres every time.
+  return cached(`statements:${symbol}:${type}:${period}:${limit}`, 10 * 60_000, async () =>
+    getStatementsUncached(symbol, type, period, limit),
+  );
+}
+
+async function getStatementsUncached(
+  symbol: string,
+  type: StatementType,
+  period: "quarterly" | "yearly",
+  limit: number,
+): Promise<{
+  symbol: string;
+  type: StatementType;
+  periods: Array<{
+    period: string;
+    fiscalYear: number;
+    displayPeriod: string;
+    displayPeriodVi: string;
+    shortTag: string;
+    data: Record<string, number>;
+  }>;
+  fields: string[];
+}> {
   const quarters = await ensureQuarterlyFinancials(symbol, period === "yearly" ? Math.min(limit * 4, 4) : limit);
   const periods = quarters.map((q) => {
     const raw = type === "income" ? q.income : type === "balance" ? q.balance : q.cashflow;
@@ -151,6 +177,12 @@ export async function getStatements(
 
 /** Get or generate company profile. */
 export async function getProfile(symbol: string): Promise<CompanyProfile> {
+  // Profile fields (sector, employees, market cap snapshot...) change rarely.
+  // Cache the read for 10 minutes to avoid 2 Postgres round-trips per request.
+  return cached(`profile:${symbol}`, 10 * 60_000, async () => getProfileUncached(symbol));
+}
+
+async function getProfileUncached(symbol: string): Promise<CompanyProfile> {
   const existing = await db.select().from(companyProfiles).where(eq(companyProfiles.symbol, symbol)).limit(1);
   if (existing.length > 0) {
     const row = existing[0];
