@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
+import { ensureAuthTables } from "@/db/ensure-auth-tables";
 import { refreshTokens, users } from "@/db/schema";
 
 import {
@@ -39,36 +40,22 @@ function redirectWithError(
   message: string,
 ): NextResponse {
   const url = new URL(path, getAppUrl(req));
-
   url.searchParams.set("error", message);
-
   const response = NextResponse.redirect(url);
-
   response.cookies.delete("orca_google_oauth_state");
-
   return response;
 }
 
-function redirectSuccess(
-  req: NextRequest,
-  path: string,
-): NextResponse {
-  const response = NextResponse.redirect(
-    new URL(path, getAppUrl(req)),
-  );
-
-  response.cookies.delete("orca_google_oauth_state");
-
-  return response;
+/** Never leak raw SQL / stack traces to the browser. */
+function publicAuthError(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  if (/Failed query|relation .* does not exist|ECONNREFUSED|ECONNRESET|timeout|password authentication|SSL/i.test(msg)) {
+    return "Không kết nối được cơ sở dữ liệu. Vui lòng thử lại sau vài giây.";
+  }
+  if (msg.length > 180) return "Đăng nhập Google thất bại. Vui lòng thử lại.";
+  return msg || "Đăng nhập Google thất bại";
 }
 
-/**
- * Create Orca session after successful Google authentication.
- *
- * IMPORTANT:
- * This function is called ONLY after all required
- * authentication checks have completed, including 2FA.
- */
 async function createSession(
   req: NextRequest,
   user: typeof users.$inferSelect,
@@ -80,7 +67,6 @@ async function createSession(
   });
 
   const refreshToken = generateRefreshToken();
-
   const expiresAt = getRefreshTokenExpiresAt();
 
   await db.insert(refreshTokens).values({
@@ -94,16 +80,11 @@ async function createSession(
     token: refreshToken,
     userAgent: req.headers.get("user-agent"),
     ipAddress:
-      req.headers
-        .get("x-forwarded-for")
-        ?.split(",")[0]
-        ?.trim() ?? null,
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     expiresAt,
   });
 
-  const response = NextResponse.redirect(
-    new URL("/", getAppUrl(req)),
-  );
+  const response = NextResponse.redirect(new URL("/", getAppUrl(req)));
 
   response.cookies.set("refreshToken", refreshToken, {
     httpOnly: true,
@@ -121,40 +102,19 @@ async function createSession(
  */
 export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
-
   const state = req.nextUrl.searchParams.get("state");
-
   const googleError = req.nextUrl.searchParams.get("error");
 
   if (googleError) {
-    return redirectWithError(
-      req,
-      "/auth/login",
-      `Google OAuth: ${googleError}`,
-    );
+    return redirectWithError(req, "/auth/login", `Google OAuth: ${googleError}`);
   }
 
   if (!code || !state) {
-    return redirectWithError(
-      req,
-      "/auth/login",
-      "Google OAuth callback không hợp lệ",
-    );
+    return redirectWithError(req, "/auth/login", "Google OAuth callback không hợp lệ");
   }
 
-  const storedState = req.cookies.get(
-    "orca_google_oauth_state",
-  )?.value;
+  const storedState = req.cookies.get("orca_google_oauth_state")?.value;
 
-  /*
-   * State must match both:
-   *
-   * 1. the signed JWT;
-   * 2. the httpOnly browser cookie.
-   *
-   * This prevents a forged OAuth callback from
-   * attaching a Google identity to another account.
-   */
   if (!storedState || storedState !== state) {
     return redirectWithError(
       req,
@@ -166,29 +126,18 @@ export async function GET(req: NextRequest) {
   const oauthState = await verifyGoogleOAuthState(state);
 
   if (!oauthState) {
-    return redirectWithError(
-      req,
-      "/auth/login",
-      "Google OAuth state không hợp lệ",
-    );
+    return redirectWithError(req, "/auth/login", "Google OAuth state không hợp lệ");
   }
 
   try {
-    const redirectUri =
-      `${getAppUrl(req)}/api/v1/auth/google/callback`;
+    // Ensure auth schema exists before any user query (cold start / missed migration).
+    await ensureAuthTables();
 
-    const { idToken } = await exchangeGoogleCode(
-      code,
-      redirectUri,
-    );
+    const redirectUri = `${getAppUrl(req)}/api/v1/auth/google/callback`;
 
+    const { idToken } = await exchangeGoogleCode(code, redirectUri);
     const google = await verifyGoogleIdToken(idToken);
 
-    /*
-     * ─────────────────────────────
-     * LINK EXISTING ORCA ACCOUNT
-     * ─────────────────────────────
-     */
     if (oauthState.mode === "link") {
       const currentUserId = oauthState.userId;
 
@@ -202,10 +151,7 @@ export async function GET(req: NextRequest) {
 
       const currentUser = await getAuthedUser(req);
 
-      if (
-        !currentUser ||
-        currentUser.id !== currentUserId
-      ) {
+      if (!currentUser || currentUser.id !== currentUserId) {
         return redirectWithError(
           req,
           "/auth/login",
@@ -221,15 +167,7 @@ export async function GET(req: NextRequest) {
 
       const existing = existingRows[0];
 
-      /*
-       * If the Google email already belongs to
-       * another Orca account, never merge accounts
-       * automatically.
-       */
-      if (
-        existing &&
-        existing.id !== currentUserId
-      ) {
+      if (existing && existing.id !== currentUserId) {
         return redirectWithError(
           req,
           "/settings?tab=account",
@@ -237,23 +175,12 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      /*
-       * Keep passwordHash intact so a local account
-       * can continue using email/password after
-       * linking Google.
-       */
       const updated = await db
         .update(users)
         .set({
           provider: "google",
-          name:
-            currentUser.name ||
-            google.name ||
-            null,
-          avatarUrl:
-            google.picture ||
-            currentUser.avatarUrl ||
-            null,
+          name: currentUser.name || google.name || null,
+          avatarUrl: google.picture || currentUser.avatarUrl || null,
           emailVerified: true,
           updatedAt: new Date(),
         })
@@ -268,27 +195,15 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      recordAudit(
-        req,
-        currentUserId,
-        "link_google",
-        {
-          googleEmail: google.email,
-          googleSubject: google.sub,
-        },
-      );
+      recordAudit(req, currentUserId, "link_google", {
+        googleEmail: google.email,
+        googleSubject: google.sub,
+      });
 
-      return redirectSuccess(
-        req,
-        "/settings?tab=account&google=linked",
+      return NextResponse.redirect(
+        new URL("/settings?tab=account&google=linked", getAppUrl(req)),
       );
     }
-
-    /*
-     * ─────────────────────────────
-     * GOOGLE LOGIN
-     * ─────────────────────────────
-     */
 
     const existingRows = await db
       .select()
@@ -298,10 +213,6 @@ export async function GET(req: NextRequest) {
 
     let user = existingRows[0];
 
-    /*
-     * Create a new Orca account if the Google
-     * email does not exist yet.
-     */
     if (!user) {
       const inserted = await db
         .insert(users)
@@ -317,26 +228,13 @@ export async function GET(req: NextRequest) {
 
       user = inserted[0];
     } else {
-      /*
-       * Existing account:
-       *
-       * - preserve passwordHash;
-       * - mark Google as available;
-       * - refresh profile information only where useful.
-       */
       const updated = await db
         .update(users)
         .set({
           provider: "google",
           emailVerified: true,
-          name:
-            user.name ||
-            google.name ||
-            null,
-          avatarUrl:
-            user.avatarUrl ||
-            google.picture ||
-            null,
+          name: user.name || google.name || null,
+          avatarUrl: user.avatarUrl || google.picture || null,
           updatedAt: new Date(),
         })
         .where(eq(users.id, user.id))
@@ -347,99 +245,43 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    /*
-     * ─────────────────────────────
-     * 2FA ENFORCEMENT
-     * ─────────────────────────────
-     *
-     * IMPORTANT:
-     *
-     * If 2FA is enabled:
-     *
-     * - DO NOT create access token
-     * - DO NOT create refresh token
-     * - DO NOT create session
-     *
-     * The user must complete TOTP verification first.
-     */
     if (user.twoFactorEnabled) {
-      const challenge =
-        await generateTwoFactorChallenge({
-          userId: user.id,
-          provider: user.provider,
-          purpose: "2fa_login",
-        });
+      const challenge = await generateTwoFactorChallenge({
+        userId: user.id,
+        provider: user.provider,
+        purpose: "2fa_login",
+      });
 
-      recordAudit(
-        req,
-        user.id,
-        "2fa_login_challenge_created",
-        {
-          provider: "google",
-        },
-      );
+      recordAudit(req, user.id, "2fa_login_challenge_created", {
+        provider: "google",
+      });
 
       const response = NextResponse.redirect(
-        new URL(
-          "/auth/2fa",
-          getAppUrl(req),
-        ),
+        new URL("/auth/2fa", getAppUrl(req)),
       );
 
-      response.cookies.set(
-        "orca_2fa_challenge",
-        challenge,
-        {
-          httpOnly: true,
-          secure:
-            process.env.NODE_ENV === "production",
-          sameSite: "lax",
-          maxAge: 5 * 60,
-          path: "/",
-        },
-      );
+      response.cookies.set("orca_2fa_challenge", challenge, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 5 * 60,
+        path: "/",
+      });
 
-      /*
-       * OAuth state is no longer needed after
-       * Google identity has been verified.
-       */
-      response.cookies.delete(
-        "orca_google_oauth_state",
-      );
+      response.cookies.delete("orca_google_oauth_state");
 
       return response;
     }
 
-    /*
-     * No 2FA:
-     *
-     * Authentication is complete, so we can
-     * create the real Orca session.
-     */
-    recordAudit(
-      req,
-      user.id,
-      "login",
-      {
-        provider: "google",
-        googleEmail: google.email,
-        googleSubject: google.sub,
-      },
-    );
+    recordAudit(req, user.id, "login", {
+      provider: "google",
+      googleEmail: google.email,
+      googleSubject: google.sub,
+    });
 
     return createSession(req, user);
   } catch (error) {
-    console.error(
-      "[google-callback]",
-      error,
-    );
-
-    return redirectWithError(
-      req,
-      "/auth/login",
-      error instanceof Error
-        ? error.message
-        : "Đăng nhập Google thất bại",
-    );
+    console.error("[google-callback]", error);
+    return redirectWithError(req, "/auth/login", publicAuthError(error));
   }
 }
