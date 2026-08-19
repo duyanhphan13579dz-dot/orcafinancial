@@ -1,8 +1,14 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, fail, ok } from "@/lib/api";
 import { db } from "@/db";
+import { ensureAuthTables } from "@/db/ensure-auth-tables";
 import { users, refreshTokens } from "@/db/schema";
-import { hashPassword, generateAccessToken, generateRefreshToken, getRefreshTokenExpiresAt } from "@/lib/auth/service";
+import {
+  hashPassword,
+  generateAccessToken,
+  generateRefreshToken,
+  getRefreshTokenExpiresAt,
+} from "@/lib/auth/service";
 import { eq } from "drizzle-orm";
 import { upsertSession } from "@/lib/settings/service";
 import { recordAudit } from "@/lib/auth/guard";
@@ -18,6 +24,8 @@ export async function POST(req: NextRequest) {
   if (limited) return limited;
 
   try {
+    await ensureAuthTables();
+
     const body = await req.json();
     const { email, password, name } = body;
 
@@ -29,30 +37,38 @@ export async function POST(req: NextRequest) {
       return fail("Mật khẩu phải có ít nhất 6 ký tự", 400);
     }
 
-    // Check if user exists
-    const existing = await db.select().from(users).where(eq(users.email, email.toLowerCase())).limit(1);
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    const existing = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, normalizedEmail))
+      .limit(1);
+
     if (existing.length > 0) {
       return fail("Email đã được đăng ký", 409);
     }
 
-    // Hash password
     const passwordHash = await hashPassword(password);
 
-    // Create user
     const result = await db
       .insert(users)
       .values({
-        email: email.toLowerCase(),
+        email: normalizedEmail,
         passwordHash,
         name: name || null,
         provider: "local",
         emailVerified: false,
       })
-      .returning({ id: users.id, email: users.email, name: users.name, provider: users.provider });
+      .returning({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        provider: users.provider,
+      });
 
     const user = result[0];
 
-    // Generate tokens
     const accessToken = await generateAccessToken({
       userId: user.id,
       email: user.email,
@@ -61,7 +77,6 @@ export async function POST(req: NextRequest) {
     const refreshToken = generateRefreshToken();
     const expiresAt = getRefreshTokenExpiresAt();
 
-    // Save refresh token
     await db.insert(refreshTokens).values({
       token: refreshToken,
       userId: user.id,
@@ -72,12 +87,13 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       token: refreshToken,
       userAgent: req.headers.get("user-agent"),
-      ipAddress: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      ipAddress:
+        req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
       expiresAt,
     });
+
     recordAudit(req, user.id, "register", { provider: "local" });
 
-    // Set cookies
     const response = ok({
       user: { id: user.id, email: user.email, name: user.name },
       accessToken,
@@ -87,12 +103,16 @@ export async function POST(req: NextRequest) {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60, // 7 days
+      maxAge: 7 * 24 * 60 * 60,
       path: "/",
     });
 
     return response;
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Đăng ký thất bại", 500);
+    const msg = err instanceof Error ? err.message : "Đăng ký thất bại";
+    if (/Failed query|relation .* does not exist|ECONNREFUSED|ECONNRESET/i.test(msg)) {
+      return fail("Không kết nối được cơ sở dữ liệu. Vui lòng thử lại sau.", 503);
+    }
+    return fail(msg, 500);
   }
 }
