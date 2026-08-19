@@ -10,6 +10,7 @@
 },
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0",
+    "@upstash/redis": "^1.35.5",
     "@types/bcryptjs": "^2.4.6",
     "bcryptjs": "^3.0.3",
     "dotenv": "17.3.1",
