@@ -1,4 +1,4 @@
-import { desc, eq, ilike, or, sql } from "drizzle-orm";
+import { desc, eq, ilike, or, sql, and } from "drizzle-orm";
 import { db } from "@/db";
 import { exchangeRates } from "@/lib/commodities/schema";
 import {
@@ -18,6 +18,7 @@ import {
 import { analyzeCrypto } from "./analysis";
 import { scoreCryptoSentimentHybrid } from "./sentiment-hybrid";
 import { forProvider } from "@/lib/logger";
+import type { Ohlcv } from "@/lib/connectors/core";
 
 const log = forProvider("crypto-service");
 
@@ -54,11 +55,26 @@ interface CacheEntry<T> {
   timestamp: number;
 }
 
-const OHLCV_CACHE_TTL = 30_000;
+/** Soft TTL — serve from DB immediately; hard TTL forces network refresh. */
+const OHLCV_SOFT_TTL: Record<string, number> = {
+  "1m": 15_000,
+  "5m": 30_000,
+  "15m": 60_000,
+  "1h": 120_000,
+  "4h": 300_000,
+  "1d": 900_000,
+};
+const OHLCV_HARD_TTL: Record<string, number> = {
+  "1m": 60_000,
+  "5m": 120_000,
+  "15m": 300_000,
+  "1h": 600_000,
+  "4h": 1_800_000,
+  "1d": 3_600_000,
+};
+
 const PROFILE_CACHE_TTL = 30 * 60_000;
 const SENTIMENT_CACHE_TTL = 15 * 60_000;
-
-const ohlcvCache = new Map<string, CacheEntry<any[]>>();
 
 const profileCache = new Map<
   string,
@@ -402,18 +418,88 @@ export async function enrichCryptoProfile(symbol: string) {
   return result;
 }
 
+interface DbOhlcv {
+  bars: Ohlcv[];
+  source: string;
+  newestMs: number;
+}
+
+async function readCryptoOhlcvFromDb(
+  coinId: string,
+  timeframe: string,
+  limit: number,
+): Promise<DbOhlcv | null> {
+  const rows = await db
+    .select()
+    .from(cryptoOhlcv)
+    .where(and(eq(cryptoOhlcv.coinId, coinId), eq(cryptoOhlcv.timeframe, timeframe)))
+    .orderBy(desc(cryptoOhlcv.time))
+    .limit(limit);
+
+  if (rows.length < Math.min(15, limit)) return null;
+  const newest = rows[0]?.time;
+  if (!newest) return null;
+
+  const bars: Ohlcv[] = rows
+    .map((r) => ({
+      time: Math.floor(new Date(r.time).getTime() / 1000),
+      open: r.open,
+      high: r.high,
+      low: r.low,
+      close: r.close,
+      volume: r.volume ?? 0,
+    }))
+    .reverse();
+
+  return {
+    bars,
+    source: rows[0]?.source ?? "db-cache",
+    newestMs: new Date(newest).getTime(),
+  };
+}
+
+async function persistCryptoBars(
+  coinId: string,
+  timeframe: string,
+  bars: Ohlcv[],
+  source: string,
+) {
+  const chunk = 50;
+  for (let i = 0; i < bars.length; i += chunk) {
+    await Promise.all(
+      bars.slice(i, i + chunk).map((b) =>
+        db
+          .insert(cryptoOhlcv)
+          .values({
+            coinId,
+            timeframe,
+            time: new Date(b.time * 1000),
+            open: b.open,
+            high: b.high,
+            low: b.low,
+            close: b.close,
+            volume: b.volume,
+            source,
+          })
+          .onConflictDoUpdate({
+            target: [cryptoOhlcv.coinId, cryptoOhlcv.timeframe, cryptoOhlcv.time],
+            set: {
+              open: b.open,
+              high: b.high,
+              low: b.low,
+              close: b.close,
+              volume: b.volume,
+              source,
+            },
+          }),
+      ),
+    );
+  }
+}
+
 export async function syncCryptoOhlcv(symbol: string, timeframe = "1h", limit = 200) {
   const normalized = normalizeSymbol(symbol);
   const safeLimit = normalizeLimit(limit, 20, 1000);
-  const cacheKey = `${normalized}:${timeframe}:${safeLimit}`;
-  const cached = ohlcvCache.get(cacheKey);
-
-  if (cached && cacheIsFresh(cached, OHLCV_CACHE_TTL)) {
-    const found = await getCryptoCoin(normalized);
-    if (found?.coin) {
-      return { coin: found.coin, bars: cached.value, source: BINANCE_SOURCE };
-    }
-  }
 
   let found = await getCryptoCoin(normalized);
   if (!found) {
@@ -424,9 +510,53 @@ export async function syncCryptoOhlcv(symbol: string, timeframe = "1h", limit = 
     throw new Error(`${normalized} has no Binance USDT pair`);
   }
 
+  const soft = OHLCV_SOFT_TTL[timeframe] ?? 120_000;
+  const hard = OHLCV_HARD_TTL[timeframe] ?? 600_000;
+  const cached = await readCryptoOhlcvFromDb(found.coin.id, timeframe, safeLimit);
+  const age = cached ? Date.now() - cached.newestMs : Infinity;
+
+  if (cached && age <= soft) {
+    log.info("ohlcv_db_fresh", {
+      symbol: normalized,
+      timeframe,
+      bars: cached.bars.length,
+      ageMs: age,
+    });
+    return {
+      coin: found.coin,
+      bars: cached.bars,
+      source: cached.source,
+      stale: false,
+    };
+  }
+
+  if (cached && age <= hard) {
+    log.info("ohlcv_swr", {
+      symbol: normalized,
+      timeframe,
+      bars: cached.bars.length,
+      ageMs: age,
+    });
+    void fetchBinanceKlines(found.coin.binanceSymbol, timeframe, safeLimit)
+      .then((bars) =>
+        persistCryptoBars(found!.coin.id, timeframe, bars, BINANCE_SOURCE),
+      )
+      .catch((e) =>
+        log.warn("ohlcv_bg_refresh_failed", { symbol: normalized, error: String(e) }),
+      );
+    return {
+      coin: found.coin,
+      bars: cached.bars,
+      source: `${cached.source}+swr`,
+      stale: true,
+    };
+  }
+
   const bars = await fetchBinanceKlines(found.coin.binanceSymbol, timeframe, safeLimit);
-  ohlcvCache.set(cacheKey, { value: bars, timestamp: Date.now() });
-  return { coin: found.coin, bars, source: BINANCE_SOURCE };
+  void persistCryptoBars(found.coin.id, timeframe, bars, BINANCE_SOURCE).catch((e) =>
+    log.warn("ohlcv_persist_failed", { symbol: normalized, error: String(e) }),
+  );
+  return { coin: found.coin, bars, source: BINANCE_SOURCE, stale: false };
 }
 
 export async function getCryptoOhlcv(symbol: string, timeframe: string, limit: number) {
@@ -568,6 +698,34 @@ export async function runCryptoAnalysis(symbol: string, timeframe = "1h") {
     sentiment: Number(sentiment.score),
     ...result,
     disclaimer: "Chỉ là tín hiệu định lượng tham khảo, không phải lời khuyên đầu tư.",
+  };
+}
+
+/** One-shot payload for first paint: coin + live price + chart + analysis + sentiment. */
+export async function getCryptoDetailBundle(
+  symbol: string,
+  timeframe = "1h",
+  limit = 200,
+) {
+  const sym = normalizeSymbol(symbol);
+  const [detail, ohlcv, analysis, sentiment] = await Promise.all([
+    (async () => {
+      await ensureCryptoFresh(12_000);
+      return getCryptoCoin(sym);
+    })(),
+    syncCryptoOhlcv(sym, timeframe, limit),
+    runCryptoAnalysis(sym, timeframe).catch(() => null),
+    getLatestCryptoSentiment(sym).catch(() => null),
+  ]);
+  if (!detail) throw new Error("Coin not found");
+  return {
+    coin: detail.coin,
+    price: detail.price,
+    bars: ohlcv.bars,
+    timeframe,
+    source: ohlcv.source,
+    analysis,
+    sentiment,
   };
 }
 
