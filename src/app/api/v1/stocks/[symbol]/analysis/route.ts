@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { analyze } from "@/lib/analysis";
+import { cached } from "@/lib/connectors/core";
 import { getHistory } from "@/lib/market";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
     const to = Math.floor(Date.now() / 1000);
     const { bars, source, confidence } = await getHistory(symbol, to - 86400 * 400, to, "D");
     if (bars.length < 30) return fail(`Insufficient history for ${symbol} (${bars.length} bars)`, 422);
-    const result = analyze(symbol, bars);
+
+    // analyze() is pure over `bars`; getHistory() already caches bars for 60s (daily TF),
+    // so caching the computed result on the same key/TTL avoids redoing the same
+    // math for every concurrent viewer of the same symbol within that window.
+    const result = await cached(`analysis:${symbol}:D`, 60_000, async () => analyze(symbol, bars));
+
     return ok(result, { source, confidence, barsUsed: bars.length });
   } catch (err) {
     return handleError(err, `analysis:${symbol}`);
