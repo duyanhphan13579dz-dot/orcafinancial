@@ -1,6 +1,11 @@
-import { SignJWT, createRemoteJWKSet, jwtVerify } from "jose";
+import {
+  SignJWT,
+  createRemoteJWKSet,
+  jwtVerify,
+} from "jose";
 
 const GOOGLE_ISSUER = "https://accounts.google.com";
+
 const GOOGLE_JWKS_URL = new URL(
   "https://www.googleapis.com/oauth2/v3/certs",
 );
@@ -9,17 +14,22 @@ function getGoogleClientId(): string {
   const value = process.env.GOOGLE_CLIENT_ID?.trim();
 
   if (!value) {
-    throw new Error("GOOGLE_CLIENT_ID chưa được cấu hình");
+    throw new Error(
+      "GOOGLE_CLIENT_ID chưa được cấu hình",
+    );
   }
 
   return value;
 }
 
 function getGoogleClientSecret(): string {
-  const value = process.env.GOOGLE_CLIENT_SECRET?.trim();
+  const value =
+    process.env.GOOGLE_CLIENT_SECRET?.trim();
 
   if (!value) {
-    throw new Error("GOOGLE_CLIENT_SECRET chưa được cấu hình");
+    throw new Error(
+      "GOOGLE_CLIENT_SECRET chưa được cấu hình",
+    );
   }
 
   return value;
@@ -31,7 +41,9 @@ function getStateSecret(): Uint8Array {
     "change-this-secret-in-production-min-32-chars!!";
 
   if (secret.length < 32) {
-    throw new Error("JWT_SECRET phải có ít nhất 32 ký tự");
+    throw new Error(
+      "JWT_SECRET phải có ít nhất 32 ký tự",
+    );
   }
 
   return new TextEncoder().encode(secret);
@@ -62,8 +74,18 @@ export interface GoogleProfile {
 export async function createGoogleOAuthState(
   payload: GoogleOAuthState,
 ): Promise<string> {
-  return new SignJWT(payload as Record<string, unknown>)
-    .setProtectedHeader({ alg: "HS256" })
+  const jwtPayload = {
+    mode: payload.mode,
+    ...(payload.userId
+      ? { userId: payload.userId }
+      : {}),
+    nonce: payload.nonce,
+  };
+
+  return new SignJWT(jwtPayload)
+    .setProtectedHeader({
+      alg: "HS256",
+    })
     .setIssuedAt()
     .setExpirationTime("10m")
     .sign(getStateSecret());
@@ -171,10 +193,15 @@ export async function exchangeGoogleCode(
   );
 
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
+    const text = await response
+      .text()
+      .catch(() => "");
 
     throw new Error(
-      `Google token exchange thất bại: ${text.slice(0, 500)}`,
+      `Google token exchange thất bại: ${text.slice(
+        0,
+        500,
+      )}`,
     );
   }
 
@@ -193,7 +220,9 @@ export async function exchangeGoogleCode(
   };
 }
 
-const googleJwks = createRemoteJWKSet(GOOGLE_JWKS_URL);
+const googleJwks = createRemoteJWKSet(
+  GOOGLE_JWKS_URL,
+);
 
 /**
  * Verify Google's ID token using Google's public JWKS.
@@ -263,6 +292,7 @@ export async function verifyGoogleIdToken(
  */
 export function createOAuthNonce(): string {
   const bytes = new Uint8Array(32);
+
   crypto.getRandomValues(bytes);
 
   return Array.from(
