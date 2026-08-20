@@ -41,14 +41,18 @@ export async function GET(
 
     const history = await getCommodityHistory(symbol.toUpperCase(), from, to, sourceParam);
 
-    return ok({
-      symbol: symbol.toUpperCase(),
-      from: fromStr,
-      to: toStr,
-      source: sourceParam ?? "all",
-      history,
-      count: history.length,
-    });
+    return ok(
+      {
+        symbol: symbol.toUpperCase(),
+        from: fromStr,
+        to: toStr,
+        source: sourceParam ?? "all",
+        history,
+        count: history.length,
+      },
+      {},
+      { cacheSeconds: 300 },
+    );
   } catch (err) {
     return handleError(err, `commodity_history:${symbol}`);
   }
