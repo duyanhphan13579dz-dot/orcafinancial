@@ -26,6 +26,7 @@ export async function GET(req: NextRequest, c: { params: Promise<{ symbol: strin
         disclaimer: a.disclaimer,
       },
       { source: a.source, timezone: "Asia/Ho_Chi_Minh" },
+      { cacheSeconds: 20 },
     );
   } catch (e) {
     return handleError(e, `forex_recommendation:${symbol}`);
