@@ -17,7 +17,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
     const qs = await ensureQuarterlyFinancials(symbol, 4);
     const health = evaluateHealthDetail(symbol, qs);
     const chart = buildFundamentalChart(symbol, qs, health);
-    return ok(chart, { source: "fundamental-chart-service", quarters: qs.length });
+    return ok(chart, { source: "fundamental-chart-service", quarters: qs.length }, { cacheSeconds: 300 });
   } catch (err) {
     return handleError(err, `fundamental-chart:${symbol}`);
   }
