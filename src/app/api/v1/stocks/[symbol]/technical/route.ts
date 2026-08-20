@@ -44,6 +44,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
         barsAnalyzed: bars.length,
       },
       { source, confidence },
+      { cacheSeconds: 30 },
     );
   } catch (err) {
     return handleError(err, `technical:${symbol}`);
