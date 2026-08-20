@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const limit = Math.min(30, Number(url.searchParams.get("limit") ?? "14"));
     const reports = await listRecentReports(limit);
-    return ok({ reports }, { source: "db" });
+    return ok({ reports }, { source: "db" }, { cacheSeconds: 30 });
   } catch (err) {
     return handleError(err, "list-reports");
   }
