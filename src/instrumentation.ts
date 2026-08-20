@@ -25,6 +25,15 @@ export async function register() {
             err instanceof Error ? err.message : err,
           );
         }
+        try {
+          const { ensureMarketTables } = await import("@/db/ensure-market-tables");
+          await ensureMarketTables();
+        } catch (err) {
+          console.error(
+            "[instrumentation] ensureMarketTables failed:",
+            err instanceof Error ? err.message : err,
+          );
+        }
       }
     });
     startDbSelfPing();
