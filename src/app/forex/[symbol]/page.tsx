@@ -3,8 +3,18 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { CandleChart, type Bar } from "@/components/candle-chart";
+import dynamic from "next/dynamic";
+import type { Bar } from "@/components/candle-chart";
 import { api, changeColor, fmtNum, fmtPct, usePoll } from "@/lib/client";
+
+const ChartSkeleton = () => (
+  <div className="h-[380px] w-full animate-pulse rounded-lg bg-slate-800/40" />
+);
+
+const CandleChart = dynamic(
+  () => import("@/components/candle-chart").then((m) => m.CandleChart),
+  { ssr: false, loading: ChartSkeleton },
+);
 
 interface Detail {
   pair: {
