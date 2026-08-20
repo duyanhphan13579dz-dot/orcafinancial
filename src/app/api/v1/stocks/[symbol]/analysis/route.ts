@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
     // math for every concurrent viewer of the same symbol within that window.
     const result = await cached(`analysis:${symbol}:D`, 60_000, async () => analyze(symbol, bars));
 
-    return ok(result, { source, confidence, barsUsed: bars.length });
+    return ok(result, { source, confidence, barsUsed: bars.length }, { cacheSeconds: 30 });
   } catch (err) {
     return handleError(err, `analysis:${symbol}`);
   }
