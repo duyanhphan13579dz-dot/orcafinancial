@@ -15,7 +15,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
   try {
     const qs = await ensureQuarterlyFinancials(symbol, 2);
     const detail = evaluateHealthDetail(symbol, qs);
-    return ok(detail, { source: "financial-health-detail-service", quartersUsed: qs.length });
+    return ok(detail, { source: "financial-health-detail-service", quartersUsed: qs.length }, { cacheSeconds: 300 });
   } catch (err) {
     return handleError(err, `financial-health-detail:${symbol}`);
   }
