@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -7,25 +8,14 @@ import {
   useMemo,
   useState,
 } from "react";
-import dynamic from "next/dynamic";
 
 import type { Bar } from "@/components/candle-chart";
 
-const ChartSkeleton = () => (
-  <div className="h-[380px] w-full animate-pulse rounded-lg bg-slate-800/40" />
-);
-
-const CandleChart = dynamic(
-  () => import("@/components/candle-chart").then((m) => m.CandleChart),
-  { ssr: false, loading: ChartSkeleton },
-);
-
 import {
+  api,
   changeColor,
   fmtNum,
   fmtPct,
-  fmtVol,
-  usePoll,
 } from "@/lib/client";
 
 import {
@@ -33,9 +23,20 @@ import {
   type BinanceKline,
 } from "@/lib/crypto/binance-websocket";
 
-/* -------------------------------------------------------------------------- */
-/*                                   TYPES                                    */
-/* -------------------------------------------------------------------------- */
+const ChartSkeleton = () => (
+  <div className="h-[380px] w-full animate-pulse rounded-lg bg-slate-800/40" />
+);
+
+const CandleChart = dynamic(
+  () =>
+    import("@/components/candle-chart").then(
+      (module) => module.CandleChart,
+    ),
+  {
+    ssr: false,
+    loading: ChartSkeleton,
+  },
+);
 
 interface Detail {
   coin: {
@@ -82,7 +83,7 @@ interface Analysis {
 
   indicators: Record<
     string,
-    any
+    unknown
   >;
 
   candlestickPatterns: Array<{
@@ -102,7 +103,6 @@ interface Analysis {
 
 interface SentimentData {
   score: number;
-
   label: string;
 
   articles?: Array<{
@@ -113,11 +113,23 @@ interface SentimentData {
   }>;
 }
 
-/* -------------------------------------------------------------------------- */
-/*                              CONSTANTS                                     */
-/* -------------------------------------------------------------------------- */
+interface Bundle {
+  coin: Detail["coin"];
 
-const TFS = [
+  price: Detail["price"];
+
+  bars: Bar[];
+
+  timeframe: string;
+
+  source: string;
+
+  analysis: Analysis | null;
+
+  sentiment: SentimentData | null;
+}
+
+const TIMEFRAMES = [
   "1m",
   "5m",
   "15m",
@@ -126,10 +138,6 @@ const TFS = [
   "1d",
 ];
 
-/* -------------------------------------------------------------------------- */
-/*                              COMPONENT                                     */
-/* -------------------------------------------------------------------------- */
-
 export default function CryptoDetail() {
   const params = useParams();
 
@@ -137,204 +145,149 @@ export default function CryptoDetail() {
     params.symbol ?? "",
   ).toUpperCase();
 
-  /* ------------------------------------------------------------------------ */
-  /* TIMEFRAME                                                                */
-  /* ------------------------------------------------------------------------ */
-
-  const [tf, setTf] =
+  const [timeframe, setTimeframe] =
     useState("1h");
 
-  /* ------------------------------------------------------------------------ */
-  /* WEBSOCKET STATUS                                                         */
-  /* ------------------------------------------------------------------------ */
+  const [bundle, setBundle] =
+    useState<Bundle | null>(null);
 
-  const [
-    wsStatus,
-    setWsStatus,
-  ] = useState<
-    | "connecting"
-    | "connected"
-    | "reconnecting"
-    | "disconnected"
-    | "error"
-  >("connecting");
+  const [loading, setLoading] =
+    useState(true);
 
-  /* ------------------------------------------------------------------------ */
-  /* WEBSOCKET PRICE                                                          */
-  /* ------------------------------------------------------------------------ */
+  const [error, setError] =
+    useState<string | null>(null);
 
-  const [
-    wsPrice,
-    setWsPrice,
-  ] = useState<
-    number | null
-  >(null);
+  const [wsStatus, setWsStatus] =
+    useState<
+      | "connecting"
+      | "connected"
+      | "reconnecting"
+      | "disconnected"
+      | "error"
+    >("connecting");
 
-  /* ------------------------------------------------------------------------ */
-  /* WEBSOCKET CANDLE                                                         */
-  /* ------------------------------------------------------------------------ */
+  const [wsPrice, setWsPrice] =
+    useState<number | null>(null);
 
-  const [
-    wsKline,
-    setWsKline,
-  ] = useState<
-    BinanceKline | null
-  >(null);
-
-  /* ------------------------------------------------------------------------ */
-  /* DETAIL                                                                   */
-  /* ------------------------------------------------------------------------ */
+  const [wsKline, setWsKline] =
+    useState<BinanceKline | null>(
+      null,
+    );
 
   /*
-   * Profile / metadata thay đổi rất ít.
+   * ============================================================
+   * ONE REQUEST FIRST PAINT
+   * ============================================================
    *
-   * Poll 5 phút để đảm bảo dữ liệu vẫn được refresh
-   * nhưng không tạo tải lớn cho API.
+   * Bundle trả về:
+   *
+   * - coin
+   * - price
+   * - OHLCV
+   * - analysis
+   * - sentiment
+   *
+   * Không còn 5 request riêng khi mở trang.
    */
-  const detail =
-    usePoll<Detail>(
-      `/crypto/${symbol}`,
-      5 * 60_000,
-    );
-
-  /* ------------------------------------------------------------------------ */
-  /* REST PRICE FALLBACK                                                      */
-  /* ------------------------------------------------------------------------ */
-
-  /*
-   * Binance WebSocket là nguồn giá realtime chính.
-   *
-   * Khi WS connected:
-   *   REST = fallback mỗi 5 phút.
-   *
-   * Khi WS mất:
-   *   REST = fallback nhanh mỗi 15 giây.
-   */
-  const realtime =
-    usePoll<{
-      price: Detail["price"];
-    }>(
-      `/crypto/${symbol}/price`,
-      wsStatus ===
-        "connected"
-        ? 5 * 60_000
-        : 15_000,
-    );
-
-  /* ------------------------------------------------------------------------ */
-  /* REST OHLCV                                                               */
-  /* ------------------------------------------------------------------------ */
-
-  /*
-   * Binance WebSocket cập nhật candle hiện tại.
-   *
-   * REST chỉ dùng để:
-   *
-   * 1. lấy lịch sử ban đầu
-   * 2. backup khi WS mất
-   * 3. đồng bộ lại chart định kỳ
-   */
-  const ohlcv =
-    usePoll<{
-      bars: Bar[];
-    }>(
-      `/crypto/${symbol}/ohlcv?timeframe=${tf}&limit=200`,
-      wsStatus ===
-        "connected"
-        ? 10 * 60_000
-        : 30_000,
-    );
-
-  /* ------------------------------------------------------------------------ */
-  /* ANALYSIS                                                                 */
-  /* ------------------------------------------------------------------------ */
-
-  /*
-   * Analysis không cần realtime từng giây.
-   *
-   * 10 phút là hợp lý để giảm tải server.
-   */
-  const analysis =
-    usePoll<Analysis>(
-      `/crypto/${symbol}/analysis?timeframe=${tf}`,
-      10 * 60_000,
-    );
-
-  /* ------------------------------------------------------------------------ */
-  /* SENTIMENT                                                                */
-  /* ------------------------------------------------------------------------ */
-
-  const sentiment =
-    usePoll<SentimentData>(
-      `/crypto/${symbol}/sentiment`,
-      15 * 60_000,
-    );
-
-  /* ------------------------------------------------------------------------ */
-  /* BINANCE WEBSOCKET                                                         */
-  /* ------------------------------------------------------------------------ */
-
   useEffect(() => {
     if (!symbol) {
       return;
     }
 
+    let cancelled = false;
+
+    setLoading(true);
+    setError(null);
+
     /*
-     * Reset realtime state khi:
-     *
-     * BTC -> ETH
-     *
-     * hoặc:
-     *
-     * 1h -> 4h
+     * Xóa realtime candle cũ trước khi
+     * load timeframe mới.
      */
+    setWsKline(null);
+
+    const path =
+      `/crypto/${encodeURIComponent(
+        symbol,
+      )}/bundle?timeframe=${encodeURIComponent(
+        timeframe,
+      )}&limit=200`;
+
+    void api<Bundle>(path)
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+
+        setBundle(response.data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) {
+          return;
+        }
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : String(err),
+        );
+
+        setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    symbol,
+    timeframe,
+  ]);
+
+  /*
+   * ============================================================
+   * BINANCE REALTIME
+   * ============================================================
+   *
+   * Bundle dùng cho initial paint.
+   *
+   * WebSocket dùng cho:
+   *
+   * - price
+   * - current candle
+   *
+   * Vì vậy không cần polling OHLCV.
+   */
+  useEffect(() => {
+    if (!symbol) {
+      return;
+    }
+
+    const binanceSymbol =
+      bundle?.coin
+        ?.binanceSymbol ||
+      `${symbol}USDT`;
+
     setWsPrice(null);
     setWsKline(null);
     setWsStatus("connecting");
 
-    /*
-     * Ưu tiên symbol Binance được backend cung cấp.
-     *
-     * Nếu backend chưa có thì:
-     *
-     * BTC -> BTCUSDT
-     * ETH -> ETHUSDT
-     */
-    const binanceSymbol =
-      detail.data?.coin
-        ?.binanceSymbol ||
-      `${symbol}USDT`;
-
     const connection =
       createBinanceWebSocket({
-        symbol:
-          binanceSymbol,
+        symbol: binanceSymbol,
+        timeframe,
 
-        timeframe:
-          tf,
-
-        onTicker: (
-          ticker,
-        ) => {
+        onTicker: (ticker) => {
           setWsPrice(
             ticker.price,
           );
         },
 
-        onKline: (
-          kline,
-        ) => {
-          setWsKline(
-            kline,
-          );
+        onKline: (kline) => {
+          setWsKline(kline);
         },
 
-        onStatus: (
-          status,
-        ) => {
-          setWsStatus(
-            status,
-          );
+        onStatus: (status) => {
+          setWsStatus(status);
         },
       });
 
@@ -343,244 +296,138 @@ export default function CryptoDetail() {
     };
   }, [
     symbol,
-    tf,
-    detail.data?.coin
-      ?.binanceSymbol,
+    timeframe,
+    bundle?.coin?.binanceSymbol,
   ]);
 
-  /* ------------------------------------------------------------------------ */
-  /* COIN                                                                      */
-  /* ------------------------------------------------------------------------ */
+  /*
+   * ============================================================
+   * PRICE
+   * ============================================================
+   */
+  const price = useMemo(() => {
+    const rest =
+      bundle?.price;
 
-  const coin =
-    detail.data?.coin;
+    if (
+      wsPrice === null ||
+      wsPrice === undefined
+    ) {
+      return rest;
+    }
 
-  /* ------------------------------------------------------------------------ */
-  /* REST PRICE                                                               */
-  /* ------------------------------------------------------------------------ */
+    return {
+      ...(rest ?? {
+        price: wsPrice,
+        priceVnd: null,
+        volume24h: null,
+        marketCap: null,
+        change24h: null,
+        source:
+          "Binance WebSocket",
+        timestamp:
+          new Date().toISOString(),
+      }),
 
-  const restPrice =
-    realtime.data?.price ??
-    detail.data?.price;
+      price: wsPrice,
 
-  /* ------------------------------------------------------------------------ */
-  /* MERGED PRICE                                                             */
-  /* ------------------------------------------------------------------------ */
+      source:
+        "Binance WebSocket",
+
+      timestamp:
+        new Date().toISOString(),
+    };
+  }, [
+    bundle?.price,
+    wsPrice,
+  ]);
 
   /*
-   * WS price được ưu tiên.
-   *
-   * Những dữ liệu Binance WS không cung cấp cho UI:
-   *
-   * - marketCap
-   * - priceVnd
-   *
-   * vẫn lấy từ REST.
+   * ============================================================
+   * CHART
+   * ============================================================
    */
-  const price =
-    wsPrice != null
-      ? {
-          ...(restPrice ?? {
-            price:
-              wsPrice,
+  const chartBars = useMemo(() => {
+    const historical =
+      bundle?.bars ?? [];
 
-            priceVnd:
-              null,
+    if (
+      historical.length === 0 ||
+      !wsKline
+    ) {
+      return historical;
+    }
 
-            volume24h:
-              null,
+    const realtimeBar: Bar = {
+      time: Math.floor(
+        wsKline.startTime / 1000,
+      ),
 
-            marketCap:
-              null,
-
-            change24h:
-              null,
-
-            source:
-              "Binance WebSocket",
-
-            timestamp:
-              new Date().toISOString(),
-          }),
-
-          price:
-            wsPrice,
-
-          source:
-            "Binance WebSocket",
-
-          timestamp:
-            new Date().toISOString(),
-        }
-      : restPrice;
-
-  /* ------------------------------------------------------------------------ */
-  /* CHART DATA                                                               */
-  /* ------------------------------------------------------------------------ */
-
-  /*
-   * Ghép:
-   *
-   * REST historical candles
-   *
-   * +
-   *
-   * Binance realtime candle.
-   */
-  const chartBars =
-    useMemo(() => {
-      const historicalBars =
-        ohlcv.data?.bars ?? [];
-
-      /*
-       * Chưa có REST hoặc WS candle.
-       */
-      if (
-        !wsKline ||
-        historicalBars.length ===
-          0
-      ) {
-        return historicalBars;
-      }
-
-      const realtimeBar: Bar =
-        {
-          /*
-           * lightweight-charts:
-           * timestamp tính bằng giây.
-           */
-          time: Math.floor(
-            wsKline.startTime /
-              1000,
-          ),
-
-          open:
-            wsKline.open,
-
-          high:
-            wsKline.high,
-
-          low:
-            wsKline.low,
-
-          close:
-            wsKline.close,
-
-          volume:
-            wsKline.volume,
-        };
-
-      const last =
-        historicalBars[
-          historicalBars.length -
-            1
-        ];
-
-      /*
-       * ------------------------------------------------------
-       * Candle hiện tại trùng candle cuối REST.
-       *
-       * Chỉ replace candle cuối.
-       * ------------------------------------------------------
-       */
-      if (
-        last &&
-        last.time ===
-          realtimeBar.time
-      ) {
-        return [
-          ...historicalBars.slice(
-            0,
-            -1,
-          ),
-          realtimeBar,
-        ];
-      }
-
-      /*
-       * ------------------------------------------------------
-       * Binance đã sang candle mới.
-       *
-       * Append candle mới.
-       * ------------------------------------------------------
-       */
-      if (
-        last &&
-        realtimeBar.time >
-          last.time
-      ) {
-        return [
-          ...historicalBars,
-          realtimeBar,
-        ];
-      }
-
-      /*
-       * ------------------------------------------------------
-       * WS candle cũ hơn REST.
-       *
-       * Không sử dụng.
-       * ------------------------------------------------------
-       */
-      return historicalBars;
-    }, [
-      ohlcv.data?.bars,
-      wsKline,
-    ]);
-
-  /* ------------------------------------------------------------------------ */
-  /* ANALYSIS                                                                 */
-  /* ------------------------------------------------------------------------ */
-
-  const a =
-    analysis.data;
-
-  const recoStyle =
-    a?.recommendation ===
-    "LONG"
-      ? "border-emerald-600 bg-emerald-500/10 text-emerald-300"
-      : a?.recommendation ===
-          "SHORT"
-        ? "border-rose-600 bg-rose-500/10 text-rose-300"
-        : "border-amber-600 bg-amber-500/10 text-amber-300";
-
-  /* ------------------------------------------------------------------------ */
-  /* TIMEFRAME CHANGE                                                         */
-  /* ------------------------------------------------------------------------ */
-
-  const handleTimeframeChange =
-    (
-      nextTf: string,
-    ) => {
-      if (
-        nextTf === tf
-      ) {
-        return;
-      }
-
-      /*
-       * Xóa candle WS cũ.
-       */
-      setWsKline(null);
-
-      /*
-       * Xóa price WS cũ.
-       *
-       * Sau đó REST fallback tạm thời
-       * cho đến khi WS mới connected.
-       */
-      setWsPrice(null);
-
-      setTf(nextTf);
+      open: wsKline.open,
+      high: wsKline.high,
+      low: wsKline.low,
+      close: wsKline.close,
+      volume: wsKline.volume,
     };
 
-  /* ------------------------------------------------------------------------ */
-  /* WEBSOCKET STATUS UI                                                      */
-  /* ------------------------------------------------------------------------ */
+    const last =
+      historical[
+        historical.length - 1
+      ];
 
-  const websocketStatusText =
-    wsStatus ===
-    "connected"
+    /*
+     * Update current candle.
+     */
+    if (
+      last &&
+      last.time ===
+        realtimeBar.time
+    ) {
+      return [
+        ...historical.slice(
+          0,
+          -1,
+        ),
+        realtimeBar,
+      ];
+    }
+
+    /*
+     * New candle.
+     */
+    if (
+      last &&
+      realtimeBar.time >
+        last.time
+    ) {
+      return [
+        ...historical,
+        realtimeBar,
+      ];
+    }
+
+    return historical;
+  }, [
+    bundle?.bars,
+    wsKline,
+  ]);
+
+  const coin =
+    bundle?.coin;
+
+  const analysis =
+    bundle?.analysis;
+
+  const sentiment =
+    bundle?.sentiment;
+
+  /*
+   * ============================================================
+   * UI STATUS
+   * ============================================================
+   */
+  const websocketText =
+    wsStatus === "connected"
       ? "BINANCE LIVE"
       : wsStatus ===
           "reconnecting"
@@ -590,66 +437,57 @@ export default function CryptoDetail() {
           ? "CONNECTING"
           : "REST FALLBACK";
 
-  const websocketStatusClass =
-    wsStatus ===
-    "connected"
-      ? "bg-emerald-400"
+  const websocketClass =
+    wsStatus === "connected"
+      ? "bg-emerald-400 live-dot"
       : wsStatus ===
           "reconnecting"
         ? "bg-amber-400"
         : "bg-slate-500";
 
-  /* ------------------------------------------------------------------------ */
-  /* RENDER                                                                   */
-  /* ------------------------------------------------------------------------ */
+  const recommendationClass =
+    analysis?.recommendation ===
+    "LONG"
+      ? "border-emerald-600 bg-emerald-500/10 text-emerald-300"
+      : analysis?.recommendation ===
+          "SHORT"
+        ? "border-rose-600 bg-rose-500/10 text-rose-300"
+        : "border-amber-600 bg-amber-500/10 text-amber-300";
 
+  /*
+   * ============================================================
+   * RENDER
+   * ============================================================
+   */
   return (
     <div className="space-y-5">
 
-      {/* ------------------------------------------------------------------ */}
-      {/* BACK                                                                */}
-      {/* ------------------------------------------------------------------ */}
+      <Link
+        href="/crypto"
+        className="text-xs text-[#00d4ff]"
+      >
+        ← Thị trường Crypto
+      </Link>
 
-      <div>
-        <Link
-          href="/crypto"
-          className="text-xs text-[#00d4ff]"
-        >
-          ← Thị trường Crypto
-        </Link>
-      </div>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* HEADER                                                              */}
-      {/* ------------------------------------------------------------------ */}
+      {/* HEADER */}
 
       <div className="panel p-4 flex flex-wrap items-center gap-4">
 
-        {/* Logo */}
-
         {coin?.logoUrl ? (
           <img
-            src={
-              coin.logoUrl
-            }
+            src={coin.logoUrl}
             alt=""
             className="h-12 w-12 rounded-full"
             loading="eager"
             decoding="async"
           />
         ) : (
-          <div className="h-12 w-12 rounded-full bg-[#00d4ff]/15 flex items-center justify-center font-bold">
-            {symbol.slice(
-              0,
-              2,
-            )}
+          <div className="h-12 w-12 rounded-full bg-[#00d4ff]/15 flex items-center justify-center font-bold text-[#00d4ff]">
+            {symbol.slice(0, 2)}
           </div>
         )}
 
-        {/* Coin information */}
-
         <div>
-
           <div className="flex items-center gap-2">
 
             <h1 className="text-2xl font-black text-white">
@@ -662,61 +500,32 @@ export default function CryptoDetail() {
             </span>
 
             <span
-              title={
-                websocketStatusText
-              }
-              className={`h-2 w-2 rounded-full ${websocketStatusClass} ${
-                wsStatus ===
-                "connected"
-                  ? "live-dot"
-                  : ""
-              }`}
+              title={websocketText}
+              className={`h-2 w-2 rounded-full ${websocketClass}`}
             />
 
           </div>
 
-          <div className="text-[10px] text-slate-500">
-            Nguồn giá:{" "}
+          <div className="text-[10px] text-slate-500 mt-1">
             {price?.source ??
-              "—"}{" "}
-            · GMT+7
+              bundle?.source ??
+              "Binance"}
+            {" · "}
+            {websocketText}
           </div>
-
-          <div
-            className={`text-[9px] mt-1 ${
-              wsStatus ===
-              "connected"
-                ? "text-emerald-500"
-                : wsStatus ===
-                    "reconnecting"
-                  ? "text-amber-500"
-                  : "text-slate-600"
-            }`}
-          >
-            Binance WebSocket:{" "}
-            {
-              websocketStatusText
-            }
-          </div>
-
         </div>
-
-        {/* Price */}
 
         <div className="sm:ml-auto">
 
-          <div className="text-3xl font-black text-white">
-
+          <div className="text-3xl font-black text-white font-mono">
             $
             {fmtNum(
               price?.price,
               price?.price &&
-                price.price <
-                  1
+                price.price < 1
                 ? 6
                 : 2,
             )}
-
           </div>
 
           <div
@@ -733,110 +542,105 @@ export default function CryptoDetail() {
 
       </div>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* CHART + SIGNAL                                                      */}
-      {/* ------------------------------------------------------------------ */}
+      {/* CHART */}
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <div className="panel p-3">
 
-        {/* ---------------------------------------------------------------- */}
-        {/* CANDLE CHART                                                      */}
-        {/* ---------------------------------------------------------------- */}
+        <div className="flex flex-wrap justify-between gap-2 mb-3">
 
-        <div className="panel p-3 xl:col-span-2">
+          <div>
+            <h2 className="font-semibold text-white">
+              Biểu đồ {symbol}
+            </h2>
 
-          <div className="flex flex-wrap justify-between gap-2 mb-2">
-
-            <div className="flex items-center gap-3">
-
-              <h2 className="font-semibold text-white">
-                Biểu đồ{" "}
-                {symbol}/USDT
-              </h2>
-
-              {wsStatus ===
-                "connected" && (
-                <span className="text-[9px] uppercase tracking-wider text-emerald-400">
-                  ● Live
-                </span>
-              )}
-
+            <div className="text-[10px] text-slate-500 mt-1">
+              {bundle?.source ??
+                "Binance"}
             </div>
-
-            {/* Timeframes */}
-
-            <div className="flex gap-1 overflow-x-auto">
-
-              {TFS.map(
-                (x) => (
-                  <button
-                    key={x}
-                    onClick={() =>
-                      handleTimeframeChange(
-                        x,
-                      )
-                    }
-                    disabled={
-                      tf === x
-                    }
-                    className={`min-h-9 px-3 rounded text-xs ${
-                      tf ===
-                      x
-                        ? "bg-[#00d4ff] text-[#0A2540]"
-                        : "bg-slate-800 text-slate-400 hover:bg-slate-700"
-                    }`}
-                  >
-                    {x}
-                  </button>
-                ),
-              )}
-
-            </div>
-
           </div>
 
-          {/* Chart */}
+          <div className="flex gap-1 overflow-x-auto">
 
-          {chartBars.length >
-          0 ? (
-            <CandleChart
-              bars={
-                chartBars
-              }
-              height={
-                400
-              }
-            />
-          ) : (
-            <div className="h-96 flex items-center justify-center text-slate-500">
-              Đang tải Binance klines...
-            </div>
-          )}
+            {TIMEFRAMES.map(
+              (value) => (
+                <button
+                  key={value}
+                  onClick={() => {
+                    if (
+                      value !==
+                      timeframe
+                    ) {
+                      setTimeframe(
+                        value,
+                      );
+                    }
+                  }}
+                  disabled={
+                    loading &&
+                    value ===
+                      timeframe
+                  }
+                  className={`min-h-9 rounded px-3 text-xs ${
+                    timeframe ===
+                    value
+                      ? "bg-[#00d4ff] text-[#0A2540]"
+                      : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                  }`}
+                >
+                  {value}
+                </button>
+              ),
+            )}
+
+          </div>
 
         </div>
 
-        {/* ---------------------------------------------------------------- */}
-        {/* QUANT SIGNAL                                                      */}
-        {/* ---------------------------------------------------------------- */}
+        {loading &&
+        chartBars.length ===
+          0 ? (
+          <ChartSkeleton />
+        ) : error &&
+          chartBars.length ===
+            0 ? (
+          <div className="h-[380px] flex items-center justify-center text-rose-400 text-sm">
+            {error}
+          </div>
+        ) : chartBars.length >
+          0 ? (
+          <CandleChart
+            bars={chartBars}
+            height={380}
+          />
+        ) : (
+          <div className="h-[380px] flex items-center justify-center text-slate-500 text-sm">
+            Không có dữ liệu OHLCV
+          </div>
+        )}
+
+      </div>
+
+      {/* SUMMARY */}
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
 
         <div
-          className={`panel border p-4 ${recoStyle}`}
+          className={`panel border p-4 ${recommendationClass}`}
         >
-
-          <div className="text-[10px] tracking-[.25em] uppercase opacity-70">
-            Tín hiệu định lượng
+          <div className="text-xs opacity-70">
+            Khuyến nghị · {timeframe}
           </div>
 
-          <div className="text-4xl font-black mt-2">
-            {a?.recommendation ??
+          <div className="text-3xl font-black mt-1">
+            {analysis?.recommendation ??
               "—"}
           </div>
 
           <div className="text-sm mt-1">
-            Confidence{" "}
-            {a
+            Confidence:{" "}
+            {analysis
               ? `${Math.round(
-                  a.confidence *
+                  analysis.confidence *
                     100,
                 )}%`
               : "—"}
@@ -849,10 +653,9 @@ export default function CryptoDetail() {
             </span>
 
             <span className="text-right font-mono">
-              $
               {fmtNum(
-                a?.entryPrice,
-                4,
+                analysis?.entryPrice,
+                6,
               )}
             </span>
 
@@ -861,10 +664,9 @@ export default function CryptoDetail() {
             </span>
 
             <span className="text-right font-mono">
-              $
               {fmtNum(
-                a?.stopLoss,
-                4,
+                analysis?.stopLoss,
+                6,
               )}
             </span>
 
@@ -873,110 +675,94 @@ export default function CryptoDetail() {
             </span>
 
             <span className="text-right font-mono">
-              $
               {fmtNum(
-                a?.takeProfit,
-                4,
+                analysis?.takeProfit,
+                6,
               )}
             </span>
 
           </div>
 
-          <ul className="mt-4 text-xs space-y-1 opacity-90">
-
-            {a?.reasons
-              ?.slice(
-                0,
-                6,
-              )
+          <ul className="mt-4 text-xs space-y-1">
+            {(
+              analysis?.reasons ??
+              []
+            )
+              .slice(0, 6)
               .map(
-                (
-                  r,
-                  i,
-                ) => (
+                (reason, index) => (
                   <li
-                    key={i}
+                    key={index}
                   >
-                    • {r}
+                    • {reason}
                   </li>
                 ),
               )}
-
           </ul>
 
-          <div className="mt-4 text-[9px] opacity-60">
-            Không phải lời khuyên đầu tư.
+          <div className="text-[9px] opacity-60 mt-4">
+            {analysis?.disclaimer ??
+              "Chỉ là tín hiệu định lượng tham khảo, không phải lời khuyên đầu tư."}
           </div>
-
         </div>
 
-      </div>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* INDICATORS / SENTIMENT / MARKET                                    */}
-      {/* ------------------------------------------------------------------ */}
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-
-        {/* ---------------------------------------------------------------- */}
-        {/* TECHNICAL INDICATORS                                              */}
-        {/* ---------------------------------------------------------------- */}
+        {/* PRICE DATA */}
 
         <div className="panel p-4">
 
           <h2 className="font-semibold text-white mb-3">
-            Chỉ báo kỹ thuật
+            Thông tin thị trường
           </h2>
 
-          <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="grid grid-cols-2 gap-y-3 text-xs">
 
-            {a &&
-              Object.entries(
-                a.indicators,
-              )
-                .filter(
-                  ([, v]) =>
-                    typeof v ===
-                      "number" ||
-                    v === null,
-                )
-                .map(
-                  ([
-                    k,
-                    v,
-                  ]) => (
-                    <div
-                      key={k}
-                      className="rounded bg-slate-900/40 p-2"
-                    >
+            <span className="text-slate-500">
+              Giá
+            </span>
 
-                      <div className="text-slate-500">
-                        {k}
-                      </div>
+            <span className="text-right font-mono text-white">
+              {fmtNum(
+                price?.price,
+                6,
+              )}
+            </span>
 
-                      <div className="font-mono text-white mt-1">
+            <span className="text-slate-500">
+              Volume 24h
+            </span>
 
-                        {typeof v ===
-                        "number"
-                          ? fmtNum(
-                              v,
-                              4,
-                            )
-                          : "—"}
+            <span className="text-right font-mono text-white">
+              {fmtNum(
+                price?.volume24h,
+                0,
+              )}
+            </span>
 
-                      </div>
+            <span className="text-slate-500">
+              Market Cap
+            </span>
 
-                    </div>
-                  ),
-                )}
+            <span className="text-right font-mono text-white">
+              {fmtNum(
+                price?.marketCap,
+                0,
+              )}
+            </span>
+
+            <span className="text-slate-500">
+              Rank
+            </span>
+
+            <span className="text-right font-mono text-white">
+              {coin?.marketCapRank ??
+                "—"}
+            </span>
 
           </div>
 
         </div>
 
-        {/* ---------------------------------------------------------------- */}
-        {/* SENTIMENT                                                         */}
-        {/* ---------------------------------------------------------------- */}
+        {/* SENTIMENT */}
 
         <div className="panel p-4">
 
@@ -985,191 +771,144 @@ export default function CryptoDetail() {
           </h2>
 
           <div className="text-3xl font-black text-white">
-
-            {sentiment.data
-              ?.score !=
-            null
-              ? `${
-                  sentiment.data
-                    .score >
-                  0
-                    ? "+"
-                    : ""
-                }${sentiment.data.score.toFixed(
-                  2,
-                )}`
+            {sentiment
+              ? sentiment.label
               : "—"}
-
           </div>
 
-          <div className="text-sm text-slate-400">
-            {sentiment.data
-              ?.label ??
-              "Đang phân tích RSS..."}
+          <div className="text-sm text-slate-400 mt-1">
+            Score:{" "}
+            {sentiment
+              ? sentiment.score.toFixed(
+                  3,
+                )
+              : "—"}
           </div>
 
-          <div className="mt-3 space-y-2">
+          <div className="text-[10px] text-slate-600 mt-4">
+            Sentiment được cập nhật
+            nền, không block realtime
+            price.
+          </div>
 
-            {sentiment.data?.articles
-              ?.slice(
-                0,
-                4,
+        </div>
+
+      </div>
+
+      {/* INDICATORS */}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+        <div className="panel p-4">
+
+          <h2 className="font-semibold text-white mb-3">
+            Chỉ báo kỹ thuật
+          </h2>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+
+            {analysis &&
+              Object.entries(
+                analysis.indicators ??
+                  {},
               )
+                .filter(
+                  ([, value]) =>
+                    typeof value ===
+                      "number" ||
+                    value === null,
+                )
+                .map(
+                  ([
+                    key,
+                    value,
+                  ]) => (
+                    <div
+                      key={key}
+                      className="rounded bg-slate-900/40 p-2 text-xs"
+                    >
+                      <div className="text-slate-500">
+                        {key}
+                      </div>
+
+                      <div className="font-mono text-white mt-1">
+                        {typeof value ===
+                        "number"
+                          ? fmtNum(
+                              value,
+                              5,
+                            )
+                          : "—"}
+                      </div>
+                    </div>
+                  ),
+                )}
+
+          </div>
+
+        </div>
+
+        <div className="panel p-4">
+
+          <h2 className="font-semibold text-white mb-3">
+            Mẫu hình gần đây
+          </h2>
+
+          <div className="space-y-2 text-xs">
+
+            {[
+              ...(analysis
+                ?.chartPatterns ??
+                []),
+
+              ...(analysis
+                ?.candlestickPatterns ??
+                []),
+            ]
+              .slice(0, 8)
               .map(
                 (
-                  n,
-                  i,
+                  pattern,
+                  index,
                 ) => (
-                  <a
-                    key={i}
-                    href={
-                      n.link
-                    }
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block text-xs text-slate-400 hover:text-[#00d4ff] line-clamp-2"
+                  <div
+                    key={index}
+                    className="flex justify-between rounded bg-slate-900/30 p-2"
                   >
-                    {
-                      n.title
-                    }{" "}
-                    ·{" "}
-                    {
-                      n.source
-                    }
-                  </a>
+                    <span>
+                      {
+                        pattern.nameVi
+                      }
+                    </span>
+
+                    <span
+                      className={
+                        pattern.type ===
+                        "bullish"
+                          ? "text-emerald-400"
+                          : pattern.type ===
+                              "bearish"
+                            ? "text-rose-400"
+                            : "text-amber-400"
+                      }
+                    >
+                      {
+                        pattern.type
+                      }{" "}
+                      ·{" "}
+                      {Math.round(
+                        pattern.reliability *
+                          100,
+                      )}
+                      %
+                    </span>
+                  </div>
                 ),
               )}
 
           </div>
 
         </div>
-
-        {/* ---------------------------------------------------------------- */}
-        {/* MARKET INFORMATION                                                */}
-        {/* ---------------------------------------------------------------- */}
-
-        <div className="panel p-4">
-
-          <h2 className="font-semibold text-white mb-3">
-            Thông tin thị trường
-          </h2>
-
-          <dl className="grid grid-cols-2 gap-y-2 text-xs">
-
-            <dt className="text-slate-500">
-              Market cap
-            </dt>
-
-            <dd className="text-right">
-              $
-              {fmtVol(
-                price?.marketCap,
-              )}
-            </dd>
-
-            <dt className="text-slate-500">
-              Volume 24h
-            </dt>
-
-            <dd className="text-right">
-              $
-              {fmtVol(
-                price?.volume24h,
-              )}
-            </dd>
-
-            <dt className="text-slate-500">
-              Rank
-            </dt>
-
-            <dd className="text-right">
-              #
-              {coin?.marketCapRank ??
-                "—"}
-            </dd>
-
-            <dt className="text-slate-500">
-              Circulating
-            </dt>
-
-            <dd className="text-right">
-              {fmtVol(
-                coin?.circulatingSupply,
-              )}
-            </dd>
-
-            <dt className="text-slate-500">
-              Max supply
-            </dt>
-
-            <dd className="text-right">
-              {fmtVol(
-                coin?.maxSupply,
-              )}
-            </dd>
-
-          </dl>
-
-          {coin?.website && (
-            <a
-              href={
-                coin.website
-              }
-              target="_blank"
-              rel="noreferrer"
-              className="mt-3 block text-xs text-[#00d4ff]"
-            >
-              Website chính thức ↗
-            </a>
-          )}
-
-        </div>
-
-      </div>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* DESCRIPTION                                                        */}
-      {/* ------------------------------------------------------------------ */}
-
-      {coin?.description && (
-        <div className="panel p-4">
-
-          <h2 className="font-semibold text-white mb-2">
-            Giới thiệu
-          </h2>
-
-          <p className="text-sm text-slate-400 leading-relaxed line-clamp-6">
-            {
-              coin.description
-            }
-          </p>
-
-        </div>
-      )}
-
-      {/* ------------------------------------------------------------------ */}
-      {/* DATA STATUS                                                        */}
-      {/* ------------------------------------------------------------------ */}
-
-      <div className="text-[10px] text-slate-600 flex flex-wrap gap-x-4 gap-y-1">
-
-        <span>
-          Market data:{" "}
-          {price?.source ??
-            "—"}
-        </span>
-
-        <span>
-          Chart: Binance{" "}
-          {wsStatus ===
-          "connected"
-            ? "WebSocket"
-            : "REST fallback"}
-        </span>
-
-        <span>
-          Timeframe: {tf}
-        </span>
 
       </div>
 
