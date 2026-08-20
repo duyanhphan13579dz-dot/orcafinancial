@@ -14,7 +14,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
   const force = req.nextUrl.searchParams.get("refresh") === "1";
   try {
     const chain = await getValueChain(symbol, force);
-    return ok({ symbol, ...chain }, { source: `value-chain (${chain.modelVersion})`, cached: !force });
+    return ok({ symbol, ...chain }, { source: `value-chain (${chain.modelVersion})`, cached: !force }, { cacheSeconds: 300 });
   } catch (err) {
     return handleError(err, `value-chain:${symbol}`);
   }
