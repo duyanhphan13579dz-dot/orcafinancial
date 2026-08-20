@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
       const gen = await generateMorningBrief(d);
       html = gen.html;
     }
-    return ok({ date: dateKey, type: "morning", html }, { source: "orca-report-engine", cached: false });
+    return ok({ date: dateKey, type: "morning", html }, { source: "orca-report-engine", cached: false }, { cacheSeconds: 60 });
   } catch (err) {
     return handleError(err, "morning-report");
   }
