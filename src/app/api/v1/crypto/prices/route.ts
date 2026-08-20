@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, handleError, ok } from "@/lib/api";
+import { ensureMarketTables } from "@/db/ensure-market-tables";
 import { ensureCryptoFresh, latestCryptoPrices } from "@/lib/crypto/service";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +9,7 @@ export async function GET(req: NextRequest) {
   const limited = checkRateLimit(req, 180);
   if (limited) return limited;
   try {
+    await ensureMarketTables();
     const limit = Math.min(
       100,
       Math.max(1, Number(req.nextUrl.searchParams.get("limit") ?? 50)),
