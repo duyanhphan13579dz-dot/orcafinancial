@@ -23,12 +23,16 @@ export async function GET(req: NextRequest) {
     
     const impacts = await getStockCommodityImpacts(stockSymbol);
     
-    return ok({
-      stock: stockSymbol.toUpperCase(),
-      impacts,
-      count: impacts.length,
-      timestamp: new Date().toISOString(),
-    });
+    return ok(
+      {
+        stock: stockSymbol.toUpperCase(),
+        impacts,
+        count: impacts.length,
+        timestamp: new Date().toISOString(),
+      },
+      {},
+      { cacheSeconds: 60 },
+    );
   } catch (err) {
     return handleError(err, "commodity_stock_impact");
   }
