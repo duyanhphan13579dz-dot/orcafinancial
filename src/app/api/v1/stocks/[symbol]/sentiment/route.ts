@@ -14,12 +14,16 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
 
   try {
     const result = await getNewsSentiment(symbol);
-    return ok(result, {
-      source:
-        result.source === "hybrid" || result.source === "llm"
-          ? `rss+nlp+llm(${result.model ?? "multi"})`
-          : "vnexpress+cafef+vietstock (NLP rule-engine)",
-    });
+    return ok(
+      result,
+      {
+        source:
+          result.source === "hybrid" || result.source === "llm"
+            ? `rss+nlp+llm(${result.model ?? "multi"})`
+            : "vnexpress+cafef+vietstock (NLP rule-engine)",
+      },
+      { cacheSeconds: 60 },
+    );
   } catch (err) {
     return handleError(err, `sentiment:${symbol}`);
   }
