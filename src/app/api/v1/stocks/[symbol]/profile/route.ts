@@ -18,7 +18,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
         return null as null | Awaited<ReturnType<typeof getSwot>>;
       }),
     ]);
-    return ok({ profile, swot }, { source: "rule-based-profiler", confidence: 0.7 });
+    return ok({ profile, swot }, { source: "rule-based-profiler", confidence: 0.7 }, { cacheSeconds: 60 });
   } catch (err) {
     return handleError(err, `profile:${symbol}`);
   }
