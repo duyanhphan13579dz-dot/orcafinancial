@@ -45,7 +45,8 @@ export async function GET(
       },
       {
         timezone: "Asia/Ho_Chi_Minh",
-      }
+      },
+      { cacheSeconds: 5 },
     );
   } catch (err) {
     return handleError(
