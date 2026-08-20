@@ -7,11 +7,18 @@ import {
   useMemo,
   useState,
 } from "react";
+import dynamic from "next/dynamic";
 
-import {
-  CandleChart,
-  type Bar,
-} from "@/components/candle-chart";
+import type { Bar } from "@/components/candle-chart";
+
+const ChartSkeleton = () => (
+  <div className="h-[380px] w-full animate-pulse rounded-lg bg-slate-800/40" />
+);
+
+const CandleChart = dynamic(
+  () => import("@/components/candle-chart").then((m) => m.CandleChart),
+  { ssr: false, loading: ChartSkeleton },
+);
 
 import {
   changeColor,
