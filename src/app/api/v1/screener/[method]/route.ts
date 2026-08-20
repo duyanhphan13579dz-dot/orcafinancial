@@ -48,12 +48,34 @@ export async function GET(req: NextRequest) {
   try {
     const universe = await getUniverseData();
     const rsRatings = calculateRSRating(universe);
+
+    // CANSLIM needs quarterly financials per symbol. This used to be a
+    // `for (...) await ensureQuarterlyFinancials(...)` loop — one DB/upstream
+    // round-trip at a time, so total latency scaled linearly with universe
+    // size (~27 symbols sequentially). Fetch them all concurrently instead;
+    // order is preserved via the returned array index, and a failed lookup
+    // degrades to an empty financials array exactly as before.
+    const financialsBySymbol =
+      method === "canslim"
+        ? new Map(
+            (
+              await Promise.all(
+                universe.map((item) =>
+                  ensureQuarterlyFinancials(item.symbol, 5)
+                    .catch(() => [])
+                    .then((financials) => [item.symbol, financials] as const),
+                ),
+              )
+            ),
+          )
+        : null;
+
     const results: Array<ReturnType<typeof screenCANSLIM> | ReturnType<typeof screenMinervini> | ReturnType<typeof screenWyckoff> | ReturnType<typeof screenElliott>> = [];
 
     for (const item of universe) {
       const rs = rsRatings.get(item.symbol) || 0;
       if (method === "canslim") {
-        const financials = await ensureQuarterlyFinancials(item.symbol, 5).catch(() => []);
+        const financials = financialsBySymbol!.get(item.symbol) ?? [];
         results.push(screenCANSLIM(item.symbol, item.bars, financials, rs));
       } else if (method === "minervini") {
         results.push(screenMinervini(item.symbol, item.bars, rs));
