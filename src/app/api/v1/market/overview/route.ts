@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   if (limited) return limited;
   try {
     const overview = await getMarketOverview();
-    return ok(overview, { source: "vndirect-dchart+coingecko", confidence: 0.95 });
+    return ok(overview, { source: "vndirect-dchart+coingecko", confidence: 0.95 }, { cacheSeconds: 3 });
   } catch (err) {
     return handleError(err, "market_overview");
   }
