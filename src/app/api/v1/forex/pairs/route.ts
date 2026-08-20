@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
       category: q.get("category") ?? undefined,
       search: q.get("q") ?? undefined,
     });
-    return ok({ pairs, count: pairs.length }, { source: "yahoo-finance", timezone: "Asia/Ho_Chi_Minh" });
+    return ok({ pairs, count: pairs.length }, { source: "yahoo-finance", timezone: "Asia/Ho_Chi_Minh" }, { cacheSeconds: 60 });
   } catch (e) {
     return handleError(e, "forex_pairs");
   }
