@@ -17,7 +17,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
     const { bars, source, confidence } = await getHistory(symbol, to - 86400 * 1100, to, "D");
     if (bars.length < 60) return fail(`Insufficient history for ${symbol} (${bars.length} bars, need ≥60)`, 422);
     const report = generateFundamentalReport(symbol, bars);
-    return ok(report, { source, confidence, barsUsed: bars.length });
+    return ok(report, { source, confidence, barsUsed: bars.length }, { cacheSeconds: 300 });
   } catch (err) {
     return handleError(err, `fundamental:${symbol}`);
   }
