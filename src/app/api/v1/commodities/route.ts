@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, handleError, ok } from "@/lib/api";
+import { ensureMarketTables } from "@/db/ensure-market-tables";
 import { getLatestCommodityPrices } from "@/lib/commodities/service";
 
 export const dynamic = "force-dynamic";
@@ -12,6 +13,8 @@ export async function GET(req: NextRequest) {
   if (limited) return limited;
 
   try {
+    await ensureMarketTables();
+
     const url = new URL(req.url);
     const group = url.searchParams.get("group") || undefined;
 
