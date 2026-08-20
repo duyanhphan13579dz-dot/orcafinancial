@@ -26,9 +26,17 @@ export function checkRateLimit(req: NextRequest, limit = 240): NextResponse | nu
   return null;
 }
 
+/** Hide internal DB/SQL details from API consumers. */
+function publicMessage(raw: string): string {
+  if (/Failed query|relation .* does not exist|does not exist|ECONNREFUSED|ECONNRESET|timeout|password authentication|SSL|syntax error/i.test(raw)) {
+    return "Dữ liệu tạm thời không khả dụng. Hệ thống đang đồng bộ — thử lại sau vài giây.";
+  }
+  if (raw.length > 200) return "Dữ liệu tạm thời không khả dụng.";
+  return raw;
+}
+
 export function handleError(err: unknown, context: string) {
   const message = err instanceof Error ? err.message : String(err);
   logger.error("api_error", { context, error: message });
-  // Never fabricate data: surface the real failure.
-  return fail(`Upstream data unavailable: ${message}`, 502, { context });
+  return fail(`Upstream data unavailable: ${publicMessage(message)}`, 502, { context });
 }
