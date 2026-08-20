@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
     return ok(
       { stocks, news: newsResult?.items ?? [] },
       { latencyMs: Date.now() - started, source: "vndirect-dchart+db" },
+      { cacheSeconds: 15 },
     );
   } catch (err) {
     return handleError(err, "search");
