@@ -28,7 +28,11 @@ const LABELS: Record<string, string> = {
 };
 
 export default function ForexPage() {
-  const feed = usePoll<{ prices: Row[]; freshness: Record<string, unknown> }>("/forex/prices", 5000);
+  // Client SWR shows last snapshot instantly; 12s poll is enough for FX list.
+  const feed = usePoll<{ prices: Row[]; freshness: Record<string, unknown> }>(
+    "/forex/prices",
+    12_000,
+  );
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
 
@@ -53,7 +57,7 @@ export default function ForexPage() {
           </div>
           <h1 className="text-3xl font-black text-white mt-1">Forex, Vàng, Dầu & DXY</h1>
           <p className="text-sm text-slate-400 mt-1">
-            26 cặp/chỉ số · Yahoo Finance real-time 5 giây · GMT+7
+            26 cặp/chỉ số · Yahoo Finance · GMT+7
           </p>
         </div>
         <span className="inline-flex items-center gap-2 text-xs text-emerald-300">
@@ -86,7 +90,7 @@ export default function ForexPage() {
         </div>
       </div>
 
-      {feed.error && (
+      {feed.error && !feed.data && (
         <div className="panel border-rose-800 p-4 text-rose-300 text-sm">{feed.error}</div>
       )}
       {feed.loading && !feed.data && (
@@ -98,6 +102,7 @@ export default function ForexPage() {
           <Link
             key={r.symbol}
             href={`/forex/${r.symbol}`}
+            prefetch
             className="panel p-4 hover:border-[#00d4ff]/50 transition active:scale-[.99]"
           >
             <div className="flex justify-between">
