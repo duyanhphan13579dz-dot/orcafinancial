@@ -9,7 +9,15 @@ export async function GET(req: NextRequest) {
   if (l) return l;
   try {
     const freshness = await ensureForexFresh(5000);
-    return ok({ prices: await latestForexPrices(), freshness }, { timezone: "Asia/Ho_Chi_Minh" });
+    const response = ok(
+      { prices: await latestForexPrices(), freshness },
+      { timezone: "Asia/Ho_Chi_Minh" },
+    );
+    response.headers.set(
+      "Cache-Control",
+      "public, s-maxage=5, stale-while-revalidate=20",
+    );
+    return response;
   } catch (e) {
     return handleError(e, "forex_prices");
   }
