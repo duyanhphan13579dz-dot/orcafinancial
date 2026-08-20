@@ -12,7 +12,7 @@ export async function GET(req: NextRequest, c: { params: Promise<{ symbol: strin
     const freshness = await ensureForexFresh(5000);
     const d = await getForexPair(symbol);
     if (!d?.price) return fail("Price unavailable", 404);
-    return ok({ ...d, freshness }, { timezone: "Asia/Ho_Chi_Minh" });
+    return ok({ ...d, freshness }, { timezone: "Asia/Ho_Chi_Minh" }, { cacheSeconds: 5 });
   } catch (e) {
     return handleError(e, `forex_price:${symbol}`);
   }
