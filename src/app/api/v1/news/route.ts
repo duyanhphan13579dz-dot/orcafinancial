@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
       limit: Number(sp.get("limit") ?? "20") || 20,
       symbol: sp.get("symbol")?.toUpperCase() || undefined,
     });
-    return ok(result, { source: "vnexpress+cafef+vietstock (RSS)", confidence: 1 });
+    return ok(result, { source: "vnexpress+cafef+vietstock (RSS)", confidence: 1 }, { cacheSeconds: 20 });
   } catch (err) {
     return handleError(err, "news");
   }
