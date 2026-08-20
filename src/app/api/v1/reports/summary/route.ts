@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
       const gen = await generateMarketSummary(d);
       html = gen.html;
     }
-    return ok({ date: dateKey, type: "summary", html }, { source: "orca-report-engine" });
+    return ok({ date: dateKey, type: "summary", html }, { source: "orca-report-engine" }, { cacheSeconds: 60 });
   } catch (err) {
     return handleError(err, "summary-report");
   }
