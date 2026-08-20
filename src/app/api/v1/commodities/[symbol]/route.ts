@@ -37,13 +37,17 @@ export async function GET(
     // Get stock impacts
     const stockImpacts = await getCommodityStockImpacts(upperSymbol);
     
-    return ok({
-      commodity: {
-        ...commodity,
-        stockImpacts,
+    return ok(
+      {
+        commodity: {
+          ...commodity,
+          stockImpacts,
+        },
+        timestamp: new Date().toISOString(),
       },
-      timestamp: new Date().toISOString(),
-    });
+      {},
+      { cacheSeconds: 10 },
+    );
   } catch (err) {
     return handleError(err, `commodity_detail:${symbol}`);
   }
