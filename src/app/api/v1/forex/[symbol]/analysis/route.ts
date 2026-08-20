@@ -12,7 +12,7 @@ export async function GET(req: NextRequest, c: { params: Promise<{ symbol: strin
   const tf = req.nextUrl.searchParams.get("timeframe") ?? "1h";
   if (!V.has(tf)) return fail("Invalid timeframe", 400);
   try {
-    return ok(await runForexAnalysis(symbol.toUpperCase(), tf), { timezone: "Asia/Ho_Chi_Minh" });
+    return ok(await runForexAnalysis(symbol.toUpperCase(), tf), { timezone: "Asia/Ho_Chi_Minh" }, { cacheSeconds: 20 });
   } catch (e) {
     return handleError(e, `forex_analysis:${symbol}`);
   }
