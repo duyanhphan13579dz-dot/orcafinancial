@@ -22,6 +22,7 @@ export async function GET(
             ? String(data.source)
             : "coindesk+cointelegraph-rss",
       },
+      { cacheSeconds: 60 },
     );
   } catch (err) {
     return handleError(err, `crypto_sentiment:${symbol}`);
