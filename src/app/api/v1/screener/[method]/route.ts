@@ -99,6 +99,7 @@ export async function GET(req: NextRequest) {
         results: passed,
       },
       { source: `screener/${method}`, minScore, passed: passed.length, total },
+      { cacheSeconds: 60 },
     );
   } catch (err) {
     return handleError(err, `screener:${method}`);
