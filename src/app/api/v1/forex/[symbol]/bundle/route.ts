@@ -18,7 +18,7 @@ export async function GET(req: NextRequest, c: { params: Promise<{ symbol: strin
   const limit = Math.min(1000, Math.max(20, Number(req.nextUrl.searchParams.get("limit") ?? 300)));
   try {
     const data = await getForexDetailBundle(symbol.toUpperCase(), tf, limit);
-    return ok(data, { timezone: "Asia/Ho_Chi_Minh", source: data.source });
+    return ok(data, { timezone: "Asia/Ho_Chi_Minh", source: data.source }, { cacheSeconds: 10 });
   } catch (e) {
     return handleError(e, `forex_bundle:${symbol}`);
   }
