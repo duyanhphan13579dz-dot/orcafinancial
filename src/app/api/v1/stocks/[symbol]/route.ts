@@ -16,6 +16,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
     return ok(
       { quote, company },
       { source: quote.source, confidence: quote.confidence },
+      { cacheSeconds: 5 },
     );
   } catch (err) {
     return handleError(err, `stock:${symbol}`);
