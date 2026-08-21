@@ -4,7 +4,16 @@ import { Pool, type PoolClient } from "pg";
 const databaseUrl = process.env.DATABASE_URL;
 
 /* ═══════════════════════════════════════════════════════════════════════
- * Supabase-aware connection helpers.
+ * Supabase / managed Postgres connection helpers.
+ *
+ * Root cause of DEGRADED + SELF_SIGNED_CERT_IN_CHAIN:
+ * node-postgres verifies TLS by default. Supabase (and many managed
+ * Postgres providers) present a cert chain that Node's default CA store
+ * does not fully trust → OpenSSL error SELF_SIGNED_CERT_IN_CHAIN.
+ *
+ * Fix: always pass ssl: { rejectUnauthorized: false } when SSL is needed,
+ * and strip conflicting sslmode=verify* from the URL so libpq-style flags
+ * cannot re-enable verification.
  * ═══════════════════════════════════════════════════════════════════════ */
 
 function isSupabaseHost(url: string | undefined): boolean {
@@ -17,18 +26,31 @@ function isPgBouncerUrl(url: string | undefined): boolean {
   return /pgbouncer=true/i.test(url) || /:6543\b/.test(url) || /pooler\.supabase\.com/i.test(url);
 }
 
+function isLocalHost(url: string | undefined): boolean {
+  if (!url) return true;
+  return /localhost|127\.0\.0\.1|::1/i.test(url);
+}
+
+/** SSL required for any remote / managed DB (not local Postgres). */
 function requiresSsl(url: string | undefined): boolean {
   if (!url) return false;
   if (/sslmode=disable/i.test(url)) return false;
-  if (/sslmode=require|sslmode=verify/i.test(url)) return true;
-  return isSupabaseHost(url);
+  if (isLocalHost(url) && !/sslmode=require|sslmode=verify|sslmode=no-verify/i.test(url)) {
+    return false;
+  }
+  if (/sslmode=require|sslmode=verify|sslmode=no-verify/i.test(url)) return true;
+  if (isSupabaseHost(url)) return true;
+  // Production remote DB → SSL on by default
+  if (process.env.NODE_ENV === "production" && !isLocalHost(url)) return true;
+  return false;
 }
 
 /**
- * Normalize DATABASE_URL for serverless + Supabase:
- * - Pooler host (:6543 / pooler.supabase.com) → force pgbouncer=true
- *   (disables prepared statements that break transaction-mode pooling)
- * - Ensure sslmode=require when talking to Supabase if not set
+ * Normalize DATABASE_URL:
+ * - Pooler → pgbouncer=true
+ * - Force sslmode=no-verify (encrypt, do NOT verify CA) to avoid
+ *   SELF_SIGNED_CERT_IN_CHAIN when paired with rejectUnauthorized:false
+ * - connect_timeout=30 for serverless cold starts
  */
 function normalizeConnectionString(raw: string): string {
   try {
@@ -36,10 +58,10 @@ function normalizeConnectionString(raw: string): string {
     if (isPgBouncerUrl(raw) && !u.searchParams.has("pgbouncer")) {
       u.searchParams.set("pgbouncer", "true");
     }
-    if (isSupabaseHost(raw) && !u.searchParams.has("sslmode")) {
-      u.searchParams.set("sslmode", "require");
+    if (requiresSsl(raw) || isSupabaseHost(raw)) {
+      // no-verify = TLS on, skip CA check (same intent as rejectUnauthorized:false)
+      u.searchParams.set("sslmode", "no-verify");
     }
-    // Prefer IPv4-friendly connect path when available (avoids some Vercel→Supabase stalls)
     if (!u.searchParams.has("connect_timeout")) {
       u.searchParams.set("connect_timeout", "30");
     }
@@ -59,7 +81,6 @@ function envInt(key: string, fallback: number): number {
 const DEFAULT_POOL_MAX = isPgBouncerUrl(databaseUrl) ? 5 : 20;
 const POOL_MAX = envInt("DATABASE_POOL_MAX", DEFAULT_POOL_MAX);
 const POOL_IDLE_TIMEOUT_MS = envInt("DATABASE_POOL_IDLE_TIMEOUT_MS", 30_000);
-// Vercel cold start + Supabase pooler can exceed 10s under load — default 30s
 const POOL_CONNECT_TIMEOUT_MS = envInt("DATABASE_POOL_TIMEOUT_MS", 30_000);
 const STARTUP_RETRY_MAX = envInt("DATABASE_STARTUP_RETRIES", 10);
 const STARTUP_RETRY_DELAY_MS = envInt("DATABASE_STARTUP_RETRY_DELAY_MS", 2_000);
@@ -116,22 +137,31 @@ function buildConnectionString(): string {
 
 function createPool(): Pool {
   const connectionString = buildConnectionString();
+  const useSsl = requiresSsl(connectionString) || isSupabaseHost(connectionString);
+
+  // CRITICAL: rejectUnauthorized:false prevents SELF_SIGNED_CERT_IN_CHAIN
+  // for Supabase / Neon / Railway intermediate certs.
   const p = new Pool({
     connectionString,
     max: POOL_MAX,
     idleTimeoutMillis: POOL_IDLE_TIMEOUT_MS,
     connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS,
     keepAlive: true,
-    ssl: requiresSsl(connectionString) ? { rejectUnauthorized: false } : undefined,
+    ssl: useSsl
+      ? {
+          rejectUnauthorized: false,
+        }
+      : undefined,
   });
-  if (isSupabaseHost(connectionString)) {
-    log("info", "supabase_connection_detected", {
-      mode: isPgBouncerUrl(connectionString) ? "pgbouncer-pooled" : "direct",
-      poolMax: POOL_MAX,
-      connectTimeoutMs: POOL_CONNECT_TIMEOUT_MS,
-      ssl: true,
-    });
-  }
+
+  log("info", "pool_created", {
+    supabase: isSupabaseHost(connectionString),
+    mode: isPgBouncerUrl(connectionString) ? "pgbouncer-pooled" : "direct",
+    poolMax: POOL_MAX,
+    connectTimeoutMs: POOL_CONNECT_TIMEOUT_MS,
+    ssl: useSsl,
+    rejectUnauthorized: useSsl ? false : null,
+  });
 
   p.on("error", (err: Error & { code?: string }) => {
     health.consecutiveFailures += 1;
@@ -225,7 +255,10 @@ export async function pingDb(opts: { attempts?: number; timeoutMs?: number } = {
       health.lastLatencyMs = latencyMs;
       return { ok: true, latencyMs, attempts: i };
     } catch (err) {
-      lastError = err instanceof Error ? `${(err as { code?: string }).code ?? err.name}: ${err.message}` : String(err);
+      lastError =
+        err instanceof Error
+          ? `${(err as { code?: string }).code ?? err.name}: ${err.message}`
+          : String(err);
       if (i < attempts) await new Promise((r) => setTimeout(r, 400 * i));
     }
   }
@@ -235,7 +268,11 @@ export async function pingDb(opts: { attempts?: number; timeoutMs?: number } = {
   health.lastCheckAt = new Date().toISOString();
   if (!health.firstFailureAt) health.firstFailureAt = health.lastCheckAt;
   health.status = health.consecutiveFailures >= 3 ? "down" : "degraded";
-  log("warn", "ping_failed_after_retries", { attempts, error: health.lastError, consecutiveFailures: health.consecutiveFailures });
+  log("warn", "ping_failed_after_retries", {
+    attempts,
+    error: health.lastError,
+    consecutiveFailures: health.consecutiveFailures,
+  });
   maybeEscalate();
   return { ok: false, latencyMs: Date.now() - started, error: health.lastError, attempts };
 }
@@ -243,7 +280,9 @@ export async function pingDb(opts: { attempts?: number; timeoutMs?: number } = {
 export function getDbHealth(): DbHealthState & { downForMs: number | null } {
   return {
     ...health,
-    downForMs: health.firstFailureAt ? Date.now() - new Date(health.firstFailureAt).getTime() : null,
+    downForMs: health.firstFailureAt
+      ? Date.now() - new Date(health.firstFailureAt).getTime()
+      : null,
   };
 }
 
@@ -299,12 +338,26 @@ export async function safeDbQuery<T>(
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
-      const transient = /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|connection terminated|Connection terminated|timeout|P1001|P1002/i.test(msg);
+      const transient =
+        /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|connection terminated|Connection terminated|timeout|SELF_SIGNED|CERT|P1001|P1002/i.test(
+          msg,
+        );
       if (!transient || i === attempts - 1) {
-        log("error", "query_failed", { label, attempt: i + 1, attempts, transient, error: msg });
+        log("error", "query_failed", {
+          label,
+          attempt: i + 1,
+          attempts,
+          transient,
+          error: msg,
+        });
         throw err;
       }
-      log("warn", "query_transient_retry", { label, attempt: i + 1, attempts, error: msg });
+      log("warn", "query_transient_retry", {
+        label,
+        attempt: i + 1,
+        attempts,
+        error: msg,
+      });
       await new Promise((r) => setTimeout(r, baseMs * Math.pow(2, i)));
     }
   }
