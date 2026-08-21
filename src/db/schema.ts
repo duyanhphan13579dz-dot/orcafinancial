@@ -249,6 +249,10 @@ export {
   forexAnalysis,
 } from "@/lib/forex/schema";
 
+export { personalFinanceProfiles } from "@/lib/personal-finance/schema";
+
+export { corporateFinanceStatements } from "@/lib/corporate-finance/schema";
+
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: varchar("email", { length: 255 }).notNull().unique(),
