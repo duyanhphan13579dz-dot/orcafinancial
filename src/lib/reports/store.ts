@@ -3,7 +3,8 @@ import { db } from "@/db";
 import { reports } from "@/db/schema";
 import { ensureReportsTable } from "@/db/ensure-reports-table";
 import { logger } from "@/lib/logger";
-import type { ReportType } from "./generator";
+
+export type ReportType = "morning" | "summary";
 
 interface MemRow {
   type: ReportType;
@@ -64,7 +65,6 @@ export async function persistReport(
       date: dateKey,
       error: err instanceof Error ? err.message : String(err),
     });
-    // Still usable via memory for this process / response payload
     return { id: null, persisted: false };
   }
 }
