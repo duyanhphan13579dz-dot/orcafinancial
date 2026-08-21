@@ -10,7 +10,8 @@ import { FOREX_BY_SYMBOL } from "@/lib/forex/data";
 
 export const dynamic = "force-dynamic";
 
-const MEMORY_TTL_MS = 5_000;
+const MEMORY_TTL_MS = 12_000;
+const MEMORY_HARD_TTL_MS = 45_000;
 
 interface ForexPricesPayload {
   prices: unknown[];
@@ -25,16 +26,15 @@ interface MemoryCacheEntry {
 let memoryCache: MemoryCacheEntry | null = null;
 let refreshPromise: Promise<ForexPricesPayload> | null = null;
 
-function getCachedPayload(): ForexPricesPayload | null {
+function getCachedPayload(allowStale = false): ForexPricesPayload | null {
   if (!memoryCache) return null;
-  if (Date.now() - memoryCache.createdAt >= MEMORY_TTL_MS) {
-    memoryCache = null;
-    return null;
-  }
-  return memoryCache.payload;
+  const age = Date.now() - memoryCache.createdAt;
+  if (age < MEMORY_TTL_MS) return memoryCache.payload;
+  if (allowStale && age < MEMORY_HARD_TTL_MS) return memoryCache.payload;
+  if (age >= MEMORY_HARD_TTL_MS) memoryCache = null;
+  return null;
 }
 
-/** Live Yahoo quotes shaped like DB rows — works with zero DB. */
 async function liveYahooPrices(): Promise<ForexPricesPayload> {
   const snapshot = await fetchForexSnapshot();
   const prices = snapshot.quotes.map((q) => {
@@ -64,36 +64,54 @@ async function liveYahooPrices(): Promise<ForexPricesPayload> {
   };
 }
 
+async function loadFromDb(): Promise<ForexPricesPayload | null> {
+  try {
+    await ensureMarketTables().catch(() => undefined);
+    // Non-blocking: kick refresh if stale, never wait for full Yahoo multi-pair sync here
+    void ensureForexFresh(15_000).catch(() => undefined);
+    const prices = await latestForexPrices();
+    if (!prices?.length) return null;
+    return {
+      prices,
+      freshness: { refreshed: false, source: "db-cache" },
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function loadForexPrices(): Promise<ForexPricesPayload> {
-  const cached = getCachedPayload();
-  if (cached) return cached;
+  const fresh = getCachedPayload(false);
+  if (fresh) return fresh;
+
+  const stale = getCachedPayload(true);
 
   if (!refreshPromise) {
     refreshPromise = (async () => {
-      try {
-        await ensureMarketTables().catch(() => undefined);
-        const freshness = await ensureForexFresh(5_000);
-        const prices = await latestForexPrices();
-        // Empty DB after ensure → still prefer live Yahoo so UI is not blank
-        if (!prices?.length) {
-          return liveYahooPrices();
-        }
-        return { prices, freshness };
-      } catch (err) {
-        console.warn(
-          "[forex_prices] DB path failed, using Yahoo live",
-          err instanceof Error ? err.message : err,
-        );
-        return liveYahooPrices();
-      }
+      const fromDb = await loadFromDb();
+      if (fromDb) return fromDb;
+      const live = await liveYahooPrices();
+      // Warm DB in background after live response path
+      void ensureForexFresh(0).catch(() => undefined);
+      return live;
     })()
       .then((payload) => {
         memoryCache = { payload, createdAt: Date.now() };
         return payload;
       })
+      .catch(async (err) => {
+        console.warn("[forex_prices] refresh failed", err);
+        if (stale) return stale;
+        return liveYahooPrices();
+      })
       .finally(() => {
         refreshPromise = null;
       });
+  }
+
+  if (stale) {
+    void refreshPromise;
+    return stale;
   }
 
   return refreshPromise;
@@ -108,11 +126,11 @@ export async function GET(req: NextRequest) {
     const response = ok(payload, { timezone: "Asia/Ho_Chi_Minh" });
     response.headers.set(
       "Cache-Control",
-      "public, s-maxage=5, stale-while-revalidate=30",
+      "public, s-maxage=10, stale-while-revalidate=45",
     );
     response.headers.set(
       "Vercel-CDN-Cache-Control",
-      "public, s-maxage=5, stale-while-revalidate=30",
+      "public, s-maxage=10, stale-while-revalidate=45",
     );
     return response;
   } catch (err) {
