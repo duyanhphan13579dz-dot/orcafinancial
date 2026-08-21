@@ -3,27 +3,62 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ProtectedPage } from "@/components/ProtectedPage";
 
-const VN_OFFSET_MIN = 7 * 60;
-function vnNow(): Date {
-  const d = new Date();
-  const utcMs = d.getTime() + d.getTimezoneOffset() * 60_000;
-  return new Date(utcMs + VN_OFFSET_MIN * 60_000);
-}
+/** Reliable VN wall-clock via IANA timezone (always GMT+7, no DST). */
+const VN_TZ = "Asia/Ho_Chi_Minh";
+
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
-function vnKey(d: Date) {
-  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+
+function vnParts(d: Date = new Date()) {
+  const fmt = new Intl.DateTimeFormat("en-GB", {
+    timeZone: VN_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    weekday: "short",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(
+    fmt.formatToParts(d).filter((p) => p.type !== "literal").map((p) => [p.type, p.value]),
+  ) as Record<string, string>;
+  const y = Number(parts.year);
+  const m = Number(parts.month);
+  const day = Number(parts.day);
+  const hh = Number(parts.hour === "24" ? "0" : parts.hour);
+  const mm = Number(parts.minute);
+  const ss = Number(parts.second);
+  // en-GB weekday: Mon/Tue/... — map to 0=Sun..6=Sat
+  const wdMap: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+  const weekday = wdMap[parts.weekday] ?? new Date(Date.UTC(y, m - 1, day)).getUTCDay();
+  return { y, m, d: day, hh, mm, ss, weekday };
 }
-function vnWeekday(d: Date) {
-  return d.getUTCDay();
+
+function vnKey(d: Date = new Date()) {
+  const p = vnParts(d);
+  return `${p.y}-${pad2(p.m)}-${pad2(p.d)}`;
 }
+
 const VI_DAYS = ["Chủ nhật", "Thứ hai", "Thứ ba", "Thứ tư", "Thứ năm", "Thứ sáu", "Thứ bảy"];
-function viLong(d: Date) {
-  return `${VI_DAYS[vnWeekday(d)]}, ${pad2(d.getUTCDate())}/${pad2(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
+function viLong(d: Date = new Date()) {
+  const p = vnParts(d);
+  return `${VI_DAYS[p.weekday]}, ${pad2(p.d)}/${pad2(p.m)}/${p.y}`;
 }
+
 function minutesToTarget(d: Date, hh: number, mm: number): number {
-  const nowMin = d.getUTCHours() * 60 + d.getUTCMinutes();
+  const p = vnParts(d);
+  const nowMin = p.hh * 60 + p.mm;
   const tgtMin = hh * 60 + mm;
   return tgtMin - nowMin;
 }
@@ -95,8 +130,22 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(h / 24)} ngày trước`;
 }
 
+function fmtCreatedAtVn(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat("vi-VN", {
+      timeZone: VN_TZ,
+      hour: "2-digit",
+      minute: "2-digit",
+      day: "2-digit",
+      month: "2-digit",
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
+}
+
 export default function ReportsPage() {
-  const [now, setNow] = useState<Date>(() => vnNow());
+  const [tick, setTick] = useState(0);
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
   const [reports, setReports] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,9 +156,12 @@ export default function ReportsPage() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
-    const id = setInterval(() => setNow(vnNow()), 1000);
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
   }, []);
+
+  const now = useMemo(() => new Date(), [tick]);
+  const clock = useMemo(() => vnParts(now), [now]);
 
   const refresh = async () => {
     try {
@@ -134,7 +186,7 @@ export default function ReportsPage() {
   }, []);
 
   const todayKey = vnKey(now);
-  const isWeekday = vnWeekday(now) >= 1 && vnWeekday(now) <= 5;
+  const isWeekday = clock.weekday >= 1 && clock.weekday <= 5;
   const morningToday = reports.find((r) => r.type === "morning" && r.date === todayKey);
   const summaryToday = reports.find((r) => r.type === "summary" && r.date === todayKey);
 
@@ -185,7 +237,7 @@ export default function ReportsPage() {
       void doTrigger(j.type, true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [now, morningToday, summaryToday, isWeekday]);
+  }, [tick, morningToday, summaryToday, isWeekday]);
 
   const openPreview = async (r: ReportRow) => {
     try {
@@ -255,10 +307,7 @@ export default function ReportsPage() {
           ? "error"
           : "idle";
     const countdownLabel = exists
-      ? `phát hành lúc ${new Date(todayRow.createdAt).toLocaleTimeString("vi-VN", {
-          hour: "2-digit",
-          minute: "2-digit",
-        })}`
+      ? `phát hành lúc ${fmtCreatedAtVn(todayRow.createdAt)}`
       : pastTarget
         ? `trễ ${fmtCountdown(-minsTo)} · chờ scheduler hoặc trigger`
         : `còn ${fmtCountdown(minsTo)} tới ${pad2(target.hh)}:${pad2(target.mm)}`;
@@ -400,8 +449,8 @@ export default function ReportsPage() {
         <div>
           <div className="text-[9px] tracking-[0.25em] uppercase text-slate-500">VN local</div>
           <div className="text-white mt-0.5 tabular-nums">
-            {pad2(scheduler.vnNow.hh)}:{pad2(scheduler.vnNow.mm)} ·{" "}
-            {scheduler.vnNow.isWeekday ? "ngày giao dịch" : "cuối tuần"}
+            {pad2(clock.hh)}:{pad2(clock.mm)} ·{" "}
+            {isWeekday ? "ngày giao dịch" : "cuối tuần"}
           </div>
         </div>
       </div>
@@ -434,13 +483,13 @@ export default function ReportsPage() {
             </div>
             <div className="text-right">
               <div className="font-mono text-[10px] tracking-[0.25em] uppercase text-slate-500">
-                VN local time
+                VN local time · GMT+7
               </div>
               <div className="font-display text-4xl md:text-5xl font-extrabold text-white tabular-nums leading-none mt-1">
-                {pad2(now.getUTCHours())}
+                {pad2(clock.hh)}
                 <span className="text-[#00d4ff]">:</span>
-                {pad2(now.getUTCMinutes())}
-                <span className="text-slate-500 text-2xl">:{pad2(now.getUTCSeconds())}</span>
+                {pad2(clock.mm)}
+                <span className="text-slate-500 text-2xl">:{pad2(clock.ss)}</span>
               </div>
               <div className="font-mono text-[11px] text-slate-400 mt-1">{viLong(now)} · ICT</div>
               <div
@@ -542,12 +591,7 @@ export default function ReportsPage() {
                           )}
                         </div>
                         <span className="font-mono text-[10px] text-slate-500">
-                          {new Date(r.createdAt).toLocaleString("vi-VN", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            day: "2-digit",
-                            month: "2-digit",
-                          })}
+                          {fmtCreatedAtVn(r.createdAt)}
                         </span>
                       </div>
                       <div className="text-[11px] text-slate-400 mt-1 line-clamp-1">{r.title}</div>
