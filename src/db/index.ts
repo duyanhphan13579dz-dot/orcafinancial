@@ -31,7 +31,6 @@ function isLocalHost(url: string | undefined): boolean {
   return /localhost|127\.0\.0\.1|::1/i.test(url);
 }
 
-/** SSL required for any remote / managed DB (not local Postgres). */
 function requiresSsl(url: string | undefined): boolean {
   if (!url) return false;
   if (/sslmode=disable/i.test(url)) return false;
@@ -40,18 +39,41 @@ function requiresSsl(url: string | undefined): boolean {
   }
   if (/sslmode=require|sslmode=verify|sslmode=no-verify/i.test(url)) return true;
   if (isSupabaseHost(url)) return true;
-  // Production remote DB → SSL on by default
   if (process.env.NODE_ENV === "production" && !isLocalHost(url)) return true;
   return false;
 }
 
-/**
- * Normalize DATABASE_URL:
- * - Pooler → pgbouncer=true
- * - Force sslmode=no-verify (encrypt, do NOT verify CA) to avoid
- *   SELF_SIGNED_CERT_IN_CHAIN when paired with rejectUnauthorized:false
- * - connect_timeout=30 for serverless cold starts
- */
+/** Safe host:port (no password) for logs / health. */
+export function getDatabaseEndpointHint(): {
+  configured: boolean;
+  host: string | null;
+  port: string | null;
+  pooler: boolean;
+  supabase: boolean;
+} {
+  if (!databaseUrl) {
+    return { configured: false, host: null, port: null, pooler: false, supabase: false };
+  }
+  try {
+    const u = new URL(databaseUrl);
+    return {
+      configured: true,
+      host: u.hostname || null,
+      port: u.port || null,
+      pooler: isPgBouncerUrl(databaseUrl),
+      supabase: isSupabaseHost(databaseUrl),
+    };
+  } catch {
+    return {
+      configured: true,
+      host: "(unparseable)",
+      port: null,
+      pooler: isPgBouncerUrl(databaseUrl),
+      supabase: isSupabaseHost(databaseUrl),
+    };
+  }
+}
+
 function normalizeConnectionString(raw: string): string {
   try {
     const u = new URL(raw);
@@ -59,11 +81,11 @@ function normalizeConnectionString(raw: string): string {
       u.searchParams.set("pgbouncer", "true");
     }
     if (requiresSsl(raw) || isSupabaseHost(raw)) {
-      // no-verify = TLS on, skip CA check (same intent as rejectUnauthorized:false)
       u.searchParams.set("sslmode", "no-verify");
     }
+    // Prefer short connect timeout for serverless login UX (overridable via URL)
     if (!u.searchParams.has("connect_timeout")) {
-      u.searchParams.set("connect_timeout", "30");
+      u.searchParams.set("connect_timeout", "10");
     }
     return u.toString();
   } catch {
@@ -78,13 +100,14 @@ function envInt(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-const DEFAULT_POOL_MAX = isPgBouncerUrl(databaseUrl) ? 5 : 20;
+// Serverless + PgBouncer: keep pool tiny to avoid exhausting Supabase pooler slots
+const DEFAULT_POOL_MAX = isPgBouncerUrl(databaseUrl) ? 3 : 10;
 const POOL_MAX = envInt("DATABASE_POOL_MAX", DEFAULT_POOL_MAX);
-const POOL_IDLE_TIMEOUT_MS = envInt("DATABASE_POOL_IDLE_TIMEOUT_MS", 30_000);
-const POOL_CONNECT_TIMEOUT_MS = envInt("DATABASE_POOL_TIMEOUT_MS", 30_000);
-const STARTUP_RETRY_MAX = envInt("DATABASE_STARTUP_RETRIES", 10);
-const STARTUP_RETRY_DELAY_MS = envInt("DATABASE_STARTUP_RETRY_DELAY_MS", 2_000);
-const SELF_PING_INTERVAL_MS = envInt("DATABASE_SELF_PING_INTERVAL_MS", 30_000);
+const POOL_IDLE_TIMEOUT_MS = envInt("DATABASE_POOL_IDLE_TIMEOUT_MS", 20_000);
+const POOL_CONNECT_TIMEOUT_MS = envInt("DATABASE_POOL_TIMEOUT_MS", 10_000);
+const STARTUP_RETRY_MAX = envInt("DATABASE_STARTUP_RETRIES", 5);
+const STARTUP_RETRY_DELAY_MS = envInt("DATABASE_STARTUP_RETRY_DELAY_MS", 1_500);
+const SELF_PING_INTERVAL_MS = envInt("DATABASE_SELF_PING_INTERVAL_MS", 45_000);
 const DEGRADED_ALERT_AFTER_MS = envInt("DATABASE_DOWN_ALERT_AFTER_MS", 2 * 60_000);
 
 type DbStatus = "unknown" | "up" | "degraded" | "down";
@@ -138,15 +161,15 @@ function buildConnectionString(): string {
 function createPool(): Pool {
   const connectionString = buildConnectionString();
   const useSsl = requiresSsl(connectionString) || isSupabaseHost(connectionString);
+  const hint = getDatabaseEndpointHint();
 
-  // CRITICAL: rejectUnauthorized:false prevents SELF_SIGNED_CERT_IN_CHAIN
-  // for Supabase / Neon / Railway intermediate certs.
   const p = new Pool({
     connectionString,
     max: POOL_MAX,
     idleTimeoutMillis: POOL_IDLE_TIMEOUT_MS,
     connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS,
     keepAlive: true,
+    allowExitOnIdle: true,
     ssl: useSsl
       ? {
           rejectUnauthorized: false,
@@ -155,13 +178,21 @@ function createPool(): Pool {
   });
 
   log("info", "pool_created", {
-    supabase: isSupabaseHost(connectionString),
-    mode: isPgBouncerUrl(connectionString) ? "pgbouncer-pooled" : "direct",
+    host: hint.host,
+    port: hint.port,
+    supabase: hint.supabase,
+    mode: hint.pooler ? "pgbouncer-pooled" : "direct",
     poolMax: POOL_MAX,
     connectTimeoutMs: POOL_CONNECT_TIMEOUT_MS,
     ssl: useSsl,
-    rejectUnauthorized: useSsl ? false : null,
+    hasDatabaseUrl: Boolean(databaseUrl),
   });
+
+  if (!databaseUrl) {
+    log("error", "DATABASE_URL_missing", {
+      hint: "Set DATABASE_URL on Vercel → Settings → Environment Variables (Production)",
+    });
+  }
 
   p.on("error", (err: Error & { code?: string }) => {
     health.consecutiveFailures += 1;
@@ -173,7 +204,6 @@ function createPool(): Pool {
       code: err.code,
       error: err.message,
       consecutiveFailures: health.consecutiveFailures,
-      stack: err.stack?.split("\n").slice(0, 5).join(" | "),
     });
     maybeEscalate();
   });
@@ -219,6 +249,7 @@ function maybeEscalate() {
     downForMs,
     consecutiveFailures: health.consecutiveFailures,
     lastError: health.lastError,
+    endpoint: getDatabaseEndpointHint(),
   });
 }
 
@@ -272,17 +303,22 @@ export async function pingDb(opts: { attempts?: number; timeoutMs?: number } = {
     attempts,
     error: health.lastError,
     consecutiveFailures: health.consecutiveFailures,
+    endpoint: getDatabaseEndpointHint(),
   });
   maybeEscalate();
   return { ok: false, latencyMs: Date.now() - started, error: health.lastError, attempts };
 }
 
-export function getDbHealth(): DbHealthState & { downForMs: number | null } {
+export function getDbHealth(): DbHealthState & {
+  downForMs: number | null;
+  endpoint: ReturnType<typeof getDatabaseEndpointHint>;
+} {
   return {
     ...health,
     downForMs: health.firstFailureAt
       ? Date.now() - new Date(health.firstFailureAt).getTime()
       : null,
+    endpoint: getDatabaseEndpointHint(),
   };
 }
 
@@ -309,6 +345,7 @@ export async function waitForDatabaseReady(): Promise<boolean> {
   log("error", "startup_db_unreachable_after_retries", {
     attempts: STARTUP_RETRY_MAX,
     lastError: health.lastError,
+    endpoint: getDatabaseEndpointHint(),
   });
   health.startupCompleted = true;
   health.status = "degraded";
@@ -339,7 +376,7 @@ export async function safeDbQuery<T>(
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
       const transient =
-        /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|connection terminated|Connection terminated|timeout|SELF_SIGNED|CERT|P1001|P1002/i.test(
+        /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|connection terminated|Connection terminated|timeout|SELF_SIGNED|CERT|P1001|P1002|password authentication|ENOTFOUND/i.test(
           msg,
         );
       if (!transient || i === attempts - 1) {
@@ -349,6 +386,7 @@ export async function safeDbQuery<T>(
           attempts,
           transient,
           error: msg,
+          endpoint: getDatabaseEndpointHint(),
         });
         throw err;
       }
