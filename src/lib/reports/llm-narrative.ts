@@ -1,126 +1,141 @@
 /**
- * LLM narrative for Morning Brief & Market Summary.
- *
- * Morning pipeline (as designed):
- * 1. Data Engine supplies news + VN/global indices
- * 2. LLM classifies news: vi mô / vĩ mô / trong nước / quốc tế / doanh nghiệp
- * 3. LLM scores impact of key news
- * 4. LLM assesses VN → world index moves impact
- * 5. Strategy conclusion for the opening session
+ * LLM narrative aligned to ORCA Morning Brief sample layout:
+ * 01 Vĩ mô · 02 Doanh nghiệp · 03 Thị trường · 04 Chiến lược · 05 Rủi ro
+ * + Cảnh báo rủi ro · Kết luận · Khuyến nghị chiến lược
  */
 import { chatWithFallback } from "@/lib/llm/router";
 import { forProvider } from "@/lib/logger";
 
 export type ReportLlmKind = "morning" | "summary";
 
-export type NewsCategory =
-  | "vi_mo"
-  | "vi_mo_macro"
-  | "trong_nuoc"
-  | "quoc_te"
-  | "doanh_nghiep";
-
-export type ImpactLevel = "thap" | "trung_binh" | "cao" | "rat_cao";
-
-export interface ClassifiedNewsItem {
+export interface NewsBullet {
   title: string;
-  category: NewsCategory;
-  impact: ImpactLevel;
-  /** Vì sao tin này quan trọng với phiên hôm nay */
-  rationale: string;
   source?: string;
+  time?: string;
 }
 
-export interface IndexImpactItem {
-  name: string;
-  changePct: number | null;
-  impact: ImpactLevel;
-  note: string;
-}
-
-export interface ReportLlmNarrative {
+export interface MorningBriefContent {
   headline: string;
   lede: string;
-  /** Classified + scored news (morning) */
-  classifiedNews: ClassifiedNewsItem[];
-  /** Legacy flat list still used by summary */
-  newsInsights: string[];
-  /** Assessment of VN + global index moves */
-  indexImpacts: IndexImpactItem[];
-  /** Multi-paragraph market commentary */
-  marketCommentary: string;
-  actionPoints: string[];
+  /** 01 · Điểm tin vĩ mô */
+  macroIntro: string;
+  macroNews: NewsBullet[];
+  macroCommoditiesNote: string;
+  /** 02 · Tin doanh nghiệp */
+  corporateIntro: string;
+  corporateNews: NewsBullet[];
+  corporateNote: string;
+  /** 03 · Tin thị trường */
+  marketIntro: string;
+  marketNews: NewsBullet[];
+  cryptoLine: string;
+  /** 04 · Chiến lược thận trọng */
+  strategyIntro: string;
+  strategyPoints: string[];
+  /** 05 · Rủi ro */
+  risks: string[];
+  riskWarning: string;
   conclusion: string;
   recommendation: string;
-  watchlist: string[];
   model?: string;
   provider?: string;
 }
 
-const MORNING_SYSTEM = `Bạn là chuyên gia phân tích đầu phiên của ORCA FINANCIAL (thị trường chứng khoán Việt Nam).
+/** Compatibility shape used by summary + older callers */
+export interface ReportLlmNarrative extends MorningBriefContent {
+  newsInsights: string[];
+  actionPoints: string[];
+  marketCommentary: string;
+  watchlist: string[];
+  classifiedNews: never[];
+  indexImpacts: never[];
+}
 
-QUY TRÌNH BẮT BUỘC (làm đúng thứ tự, dựa CHỈ trên JSON dữ liệu):
-1) Phân loại từng tin quan trọng vào đúng một nhóm:
-   - "vi_mo": vi mô ngành / dòng tiền / kỹ thuật hẹp
-   - "vi_mo_macro": vĩ mô (lãi suất, lạm phát, tỷ giá, chính sách tiền tệ/tài khóa)
-   - "trong_nuoc": sự kiện trong nước (chính sách VN, TTCK VN, pháp lý)
-   - "quoc_te": sự kiện quốc tế ảnh hưởng VN
-   - "doanh_nghiep": kết quả KD, M&A, lãnh đạo, sự cố doanh nghiệp
-2) Chấm mức độ ảnh hưởng của mỗi tin: "thap" | "trung_binh" | "cao" | "rat_cao" + rationale ngắn.
-3) Đánh giá ảnh hưởng của biến động chỉ số VN (VN-Index, HNX, UPCOM) và thế giới (nếu có trong dữ liệu) tới phiên mở cửa hôm nay.
-4) Kết luận chiến lược đầu ngày: tỷ trọng, ưu tiên ngành/mã, rủi ro cần tránh.
+const MORNING_SYSTEM = `Bạn là biên tập viên Morning Brief của ORCA FINANCIAL.
+Nhiệm vụ: viết BẢN TIN ĐẦU NGÀY theo ĐÚNG cấu trúc mẫu báo cáo chuyên nghiệp dưới đây, dựa CHỈ trên JSON Data Engine.
+
+CẤU TRÚC BẮT BUỘC (giọng tiếng Việt chuyên nghiệp, súc tích, không sáo rỗng):
+01 · ĐIỂM TIN VĨ MÔ — chọn tin vĩ mô / chính sách / quốc tế / tỷ giá / hàng hoá có khả năng chi phối tâm lý TTCK VN hôm nay.
+02 · TIN DOANH NGHIỆP — tin KQKD, nhân sự, sự kiện DN nổi bật 24h.
+03 · TIN THỊ TRƯỜNG — diễn biến phiên trước, dòng tiền, khối ngoại, tín hiệu mở cửa (dùng số liệu VN-Index nếu có).
+04 · CHIẾN LƯỢC THẬN TRỌNG — kỷ luật giao dịch, tỷ trọng, danh mục phòng thủ, hỗ trợ/kháng cự nếu có số.
+05 · RỦI RO CẦN CẢNH GIÁC — 3–5 rủi ro cụ thể + một đoạn CẢNH BÁO RỦI RO tổng hợp.
+Cuối: KẾT LUẬN & NHẬN ĐỊNH CHỐT + KHUYẾN NGHỊ CHIẾN LƯỢC ngắn, hành động được.
 
 QUY TẮC:
-- Không bịa số liệu; thiếu dữ liệu thì ghi "chưa có dữ liệu".
-- Ưu tiên tin impact cao/rất cao; bỏ tin nhiễu.
-- Giọng tiếng Việt chuyên nghiệp, súc tích.
-- Trả về JSON thuần (không markdown) theo schema:
+1. Không bịa giá/%/điểm; thiếu số liệu thì nói "chưa có dữ liệu".
+2. Mỗi bullet tin: giữ nguyên ý tiêu đề tin từ nguồn; ghi source nếu có.
+3. Bỏ tin nhiễu (giật gân không liên quan TTCK) — ưu tiên tin ảnh hưởng dòng tiền/tâm lý.
+4. headline mặc định gần với: "Điểm tin đầu ngày & chiến lược thận trọng".
+5. Trả JSON thuần (không markdown fence):
 {
   "headline": string,
   "lede": string,
-  "classifiedNews": [
-    { "title": string, "category": "vi_mo"|"vi_mo_macro"|"trong_nuoc"|"quoc_te"|"doanh_nghiep", "impact": "thap"|"trung_binh"|"cao"|"rat_cao", "rationale": string, "source": string }
-  ],
-  "indexImpacts": [
-    { "name": string, "changePct": number|null, "impact": "thap"|"trung_binh"|"cao"|"rat_cao", "note": string }
-  ],
-  "marketCommentary": string,
-  "actionPoints": string[],
+  "macroIntro": string,
+  "macroNews": [{ "title": string, "source": string, "time": string }],
+  "macroCommoditiesNote": string,
+  "corporateIntro": string,
+  "corporateNews": [{ "title": string, "source": string, "time": string }],
+  "corporateNote": string,
+  "marketIntro": string,
+  "marketNews": [{ "title": string, "source": string, "time": string }],
+  "cryptoLine": string,
+  "strategyIntro": string,
+  "strategyPoints": string[],
+  "risks": string[],
+  "riskWarning": string,
   "conclusion": string,
-  "recommendation": string,
-  "watchlist": string[]
+  "recommendation": string
 }`;
 
-const SUMMARY_SYSTEM = `Bạn là chuyên gia tổng kết cuối phiên của ORCA FINANCIAL.
-Dựa CHỈ trên JSON dữ liệu, viết nhận định chuyên sâu bằng tiếng Việt.
-Không bịa số liệu. Trả JSON thuần:
+const SUMMARY_SYSTEM = `Bạn là chuyên gia tổng kết cuối phiên ORCA FINANCIAL.
+Dựa CHỈ trên JSON, viết nhận định cuối phiên. Không bịa số liệu. JSON thuần:
 {
   "headline": string,
   "lede": string,
-  "newsInsights": string[],
-  "marketCommentary": string,
-  "actionPoints": string[],
+  "macroIntro": "",
+  "macroNews": [],
+  "macroCommoditiesNote": "",
+  "corporateIntro": "",
+  "corporateNews": [],
+  "corporateNote": "",
+  "marketIntro": string,
+  "marketNews": [{ "title": string, "source": string, "time": string }],
+  "cryptoLine": "",
+  "strategyIntro": string,
+  "strategyPoints": string[],
+  "risks": string[],
+  "riskWarning": string,
   "conclusion": string,
-  "recommendation": string,
-  "watchlist": string[],
-  "classifiedNews": [],
-  "indexImpacts": []
+  "recommendation": string
 }`;
 
-const CATEGORIES = new Set<string>([
-  "vi_mo",
-  "vi_mo_macro",
-  "trong_nuoc",
-  "quoc_te",
-  "doanh_nghiep",
-]);
-const IMPACTS = new Set<string>(["thap", "trung_binh", "cao", "rat_cao"]);
-
-function str(v: unknown, max = 800): string {
+function str(v: unknown, max = 1200): string {
   return typeof v === "string" ? v.trim().slice(0, max) : "";
 }
 
-function arrStr(v: unknown, maxItems = 12, maxLen = 360): string[] {
+function bullets(raw: unknown, max = 10): NewsBullet[] {
+  if (!Array.isArray(raw)) return [];
+  const out: NewsBullet[] = [];
+  for (const item of raw.slice(0, max)) {
+    if (typeof item === "string" && item.trim()) {
+      out.push({ title: item.trim().slice(0, 320) });
+      continue;
+    }
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const title = str(o.title, 320);
+    if (!title) continue;
+    out.push({
+      title,
+      source: str(o.source, 60) || undefined,
+      time: str(o.time, 20) || undefined,
+    });
+  }
+  return out;
+}
+
+function arrStr(v: unknown, maxItems = 10, maxLen = 400): string[] {
   if (!Array.isArray(v)) return [];
   return v
     .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
@@ -128,82 +143,58 @@ function arrStr(v: unknown, maxItems = 12, maxLen = 360): string[] {
     .map((x) => x.trim().slice(0, maxLen));
 }
 
-function parseClassified(raw: unknown): ClassifiedNewsItem[] {
-  if (!Array.isArray(raw)) return [];
-  const out: ClassifiedNewsItem[] = [];
-  for (const item of raw.slice(0, 16)) {
-    if (!item || typeof item !== "object") continue;
-    const o = item as Record<string, unknown>;
-    const title = str(o.title, 280);
-    if (!title) continue;
-    const category = CATEGORIES.has(String(o.category)) ? (o.category as NewsCategory) : "trong_nuoc";
-    const impact = IMPACTS.has(String(o.impact)) ? (o.impact as ImpactLevel) : "trung_binh";
-    out.push({
-      title,
-      category,
-      impact,
-      rationale: str(o.rationale, 280) || "—",
-      source: str(o.source, 80) || undefined,
-    });
-  }
-  return out;
-}
-
-function parseIndexImpacts(raw: unknown): IndexImpactItem[] {
-  if (!Array.isArray(raw)) return [];
-  const out: IndexImpactItem[] = [];
-  for (const item of raw.slice(0, 12)) {
-    if (!item || typeof item !== "object") continue;
-    const o = item as Record<string, unknown>;
-    const name = str(o.name, 80);
-    if (!name) continue;
-    const cp = o.changePct;
-    const changePct =
-      typeof cp === "number" && Number.isFinite(cp)
-        ? cp
-        : cp === null
-          ? null
-          : Number.isFinite(Number(cp))
-            ? Number(cp)
-            : null;
-    const impact = IMPACTS.has(String(o.impact)) ? (o.impact as ImpactLevel) : "trung_binh";
-    out.push({
-      name,
-      changePct,
-      impact,
-      note: str(o.note, 320) || "—",
-    });
-  }
-  return out;
-}
-
-function parseNarrative(raw: string): ReportLlmNarrative | null {
+function parseMorning(raw: string): ReportLlmNarrative | null {
   const match = raw.trim().match(/\{[\s\S]*\}/);
   if (!match) return null;
   try {
-    const obj = JSON.parse(match[0]) as Record<string, unknown>;
-    const headline = str(obj.headline, 180);
-    const marketCommentary = str(obj.marketCommentary, 3200);
-    if (!headline || !marketCommentary) return null;
+    const o = JSON.parse(match[0]) as Record<string, unknown>;
+    const headline = str(o.headline, 160) || "Điểm tin đầu ngày & chiến lược thận trọng";
+    const lede = str(o.lede, 500);
+    const conclusion = str(o.conclusion, 700);
+    const recommendation = str(o.recommendation, 500);
+    if (!lede && !conclusion) return null;
 
-    const classifiedNews = parseClassified(obj.classifiedNews);
-    const newsInsights =
-      arrStr(obj.newsInsights, 12, 360) ||
-      classifiedNews.map((n) => `[${n.impact}] ${n.title}: ${n.rationale}`);
+    const strategyPoints = arrStr(o.strategyPoints, 8, 420);
+    const risks = arrStr(o.risks, 6, 320);
+    const macroNews = bullets(o.macroNews, 8);
+    const corporateNews = bullets(o.corporateNews, 8);
+    const marketNews = bullets(o.marketNews, 8);
+
+    const marketCommentary =
+      str(o.marketIntro, 800) ||
+      str(o.macroIntro, 800) ||
+      conclusion;
 
     return {
       headline,
-      lede: str(obj.lede, 450) || marketCommentary.slice(0, 220),
-      classifiedNews,
-      newsInsights,
-      indexImpacts: parseIndexImpacts(obj.indexImpacts),
-      marketCommentary,
-      actionPoints: arrStr(obj.actionPoints, 10, 400),
-      conclusion: str(obj.conclusion, 600) || "Ưu tiên quan sát và bảo toàn vốn đầu phiên.",
+      lede:
+        lede ||
+        "Bản tin đầu ngày tổng hợp tin vĩ mô, doanh nghiệp và thị trường, kèm chiến lược thận trọng ưu tiên bảo toàn vốn.",
+      macroIntro: str(o.macroIntro, 900),
+      macroNews,
+      macroCommoditiesNote: str(o.macroCommoditiesNote, 500),
+      corporateIntro: str(o.corporateIntro, 500),
+      corporateNews,
+      corporateNote: str(o.corporateNote, 400),
+      marketIntro: str(o.marketIntro, 900),
+      marketNews,
+      cryptoLine: str(o.cryptoLine, 280),
+      strategyIntro: str(o.strategyIntro, 600),
+      strategyPoints,
+      risks,
+      riskWarning: str(o.riskWarning, 500),
+      conclusion:
+        conclusion ||
+        "Phiên hôm nay nghiêng về kịch bản giằng co; ưu tiên quan sát và chọn lọc.",
       recommendation:
-        str(obj.recommendation, 600) ||
-        "Giữ tỷ trọng vừa phải; chờ tín hiệu rõ sau 30–60 phút đầu phiên.",
-      watchlist: arrStr(obj.watchlist, 12, 40),
+        recommendation ||
+        "Giữ tỷ trọng 30–45%. Không mua đuổi, không dùng margin cao. Cắt lỗ −5% đến −7%.",
+      newsInsights: [...macroNews, ...corporateNews, ...marketNews].map((n) => n.title),
+      actionPoints: strategyPoints,
+      marketCommentary,
+      watchlist: [],
+      classifiedNews: [],
+      indexImpacts: [],
     };
   } catch {
     return null;
@@ -220,14 +211,8 @@ export async function generateReportNarrative(
   const system = kind === "morning" ? MORNING_SYSTEM : SUMMARY_SYSTEM;
   const task =
     kind === "morning"
-      ? [
-          "THỰC HIỆN ĐÚNG 4 BƯỚC:",
-          "(1) Phân loại tin: vi mô / vĩ mô / trong nước / quốc tế / doanh nghiệp",
-          "(2) Chấm impact từng tin quan trọng",
-          "(3) Đánh giá ảnh hưởng biến động chỉ số VN → thế giới tới phiên mở cửa",
-          "(4) Kết luận chiến lược đầu ngày (tỷ trọng, ưu tiên, rủi ro)",
-        ].join("\n")
-      : "Tổng kết cuối phiên: nhận định sâu, tin đáng chú ý, ba kịch bản phiên tới, khuyến nghị.";
+      ? "Viết Morning Brief đúng mẫu: 01 Vĩ mô → 02 Doanh nghiệp → 03 Thị trường → 04 Chiến lược → 05 Rủi ro → Kết luận → Khuyến nghị. Lọc tin nhiễu, ưu tiên tin ảnh hưởng TTCK VN."
+      : "Viết tổng kết cuối phiên: diễn biến, tin đáng chú ý, rủi ro, khuyến nghị phiên tới.";
 
   const user = [
     `LOẠI: ${kind}`,
@@ -246,16 +231,16 @@ export async function generateReportNarrative(
         { role: "user", content: user },
       ],
       {
-        maxTokens: kind === "morning" ? 2800 : 2200,
-        temperature: 0.3,
-        timeoutMs: 40_000,
+        maxTokens: kind === "morning" ? 3200 : 2200,
+        temperature: 0.28,
+        timeoutMs: 42_000,
       },
     );
     if (!llm) {
       log.warn("report_llm_unavailable", { kind });
       return null;
     }
-    const parsed = parseNarrative(llm.text);
+    const parsed = parseMorning(llm.text);
     if (!parsed) {
       log.warn("report_llm_parse_failed", { kind, snippet: llm.text.slice(0, 180) });
       return null;
@@ -267,8 +252,9 @@ export async function generateReportNarrative(
       provider: llm.provider,
       model: llm.model,
       latencyMs: llm.latencyMs,
-      classified: parsed.classifiedNews.length,
-      indexImpacts: parsed.indexImpacts.length,
+      macro: parsed.macroNews.length,
+      corporate: parsed.corporateNews.length,
+      market: parsed.marketNews.length,
     });
     return parsed;
   } catch (err) {
