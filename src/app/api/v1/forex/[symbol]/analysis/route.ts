@@ -1,18 +1,30 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { runForexAnalysis } from "@/lib/forex/service";
+import {
+  defaultTimeframe,
+  isValidTimeframe,
+} from "@/lib/forex/timeframes";
 
-const V = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest, c: { params: Promise<{ symbol: string }> }) {
+export async function GET(
+  req: NextRequest,
+  c: { params: Promise<{ symbol: string }> },
+) {
   const l = checkRateLimit(req, 60);
   if (l) return l;
   const { symbol } = await c.params;
-  const tf = req.nextUrl.searchParams.get("timeframe") ?? "1h";
-  if (!V.has(tf)) return fail("Invalid timeframe", 400);
+  const sym = symbol.toUpperCase();
+  const tf =
+    req.nextUrl.searchParams.get("timeframe") ?? defaultTimeframe(sym);
+  if (!isValidTimeframe(tf, sym)) {
+    return fail(`Invalid timeframe for ${sym}: ${tf}`, 400);
+  }
   try {
-    return ok(await runForexAnalysis(symbol.toUpperCase(), tf), { timezone: "Asia/Ho_Chi_Minh" }, { cacheSeconds: 20 });
+    return ok(await runForexAnalysis(sym, tf), {
+      timezone: "Asia/Ho_Chi_Minh",
+    });
   } catch (e) {
     return handleError(e, `forex_analysis:${symbol}`);
   }
