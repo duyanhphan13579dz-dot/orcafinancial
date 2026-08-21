@@ -34,6 +34,24 @@ export async function register() {
             err instanceof Error ? err.message : err,
           );
         }
+        try {
+          const { ensurePersonalFinanceTables } = await import("@/lib/personal-finance/ensure-tables");
+          await ensurePersonalFinanceTables();
+        } catch (err) {
+          console.error(
+            "[instrumentation] ensurePersonalFinanceTables failed:",
+            err instanceof Error ? err.message : err,
+          );
+        }
+        try {
+          const { ensureCorporateFinanceTables } = await import("@/lib/corporate-finance/ensure-tables");
+          await ensureCorporateFinanceTables();
+        } catch (err) {
+          console.error(
+            "[instrumentation] ensureCorporateFinanceTables failed:",
+            err instanceof Error ? err.message : err,
+          );
+        }
       }
     });
     startDbSelfPing();
