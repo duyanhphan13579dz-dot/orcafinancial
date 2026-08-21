@@ -10,4 +10,7 @@ export type {
 export { chatWithFallback, listConfiguredProviders } from "./router";
 export { scoreSentimentHybrid, agentNarrative } from "./sentiment-llm";
 export { AGENT_SYSTEM_PROMPT, SENTIMENT_SYSTEM_PROMPT } from "./prompts";
-export { smoothAgentAnswer } from "./format-answer";
+export {
+  smoothAgentAnswer,
+  buildAdvisorFallback,
+} from "./format-answer";
