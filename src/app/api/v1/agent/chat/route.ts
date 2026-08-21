@@ -11,6 +11,7 @@ import {
 } from "@/lib/fundamental";
 import {
   agentNarrative,
+  buildAdvisorFallback,
   listConfiguredProviders,
   smoothAgentAnswer,
 } from "@/lib/llm";
@@ -554,8 +555,12 @@ export async function POST(req: NextRequest) {
     );
 
     const answer = smoothAgentAnswer(
-      llmResult?.text ?? deterministic,
-    );
+  llmResult?.text ??
+    buildAdvisorFallback(
+      message,
+      deterministic,
+    ),
+);
 
     const model = llmResult
       ? `${llmResult.provider}/${llmResult.model}`
