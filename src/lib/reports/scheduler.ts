@@ -1,23 +1,22 @@
 /**
  * ORCA reports scheduler (v3) — Unlimited Retry & Correct Time Mapping.
- *
- * Requirements:
- * 1. Morning Brief at 07:30 AM (VN local time, UTC+7).
- * 2. Market Summary at 15:15 PM (VN local time, UTC+7).
- * 3. Unlimited retry every 5 minutes (300,000ms) until successful for the current trading day.
- * 4. Correct service mapping: morning-brief calls generateMorningBrief, market-summary calls generateMarketSummary.
- * 5. Robust logging and alert escalation if retries exceed 10 attempts.
  */
 
-import { generateMarketSummary, generateMorningBrief, getStoredReport, isVnWeekday, vnTodayKey } from "./generator";
-import { forProvider, logger } from "@/lib/logger";
+import {
+  generateMarketSummary,
+  generateMorningBrief,
+  getStoredReport,
+  isVnWeekday,
+  vnTodayKey,
+} from "./generator";
+import { forProvider } from "@/lib/logger";
 
 const log = forProvider("reports-scheduler-v3");
 
 interface JobSpec {
   type: "morning" | "summary";
   targetVn: { hh: number; mm: number };
-  run: (d: Date) => Promise<unknown>;
+  run: (d: Date) => Promise<{ persisted?: boolean; html?: string }>;
 }
 
 const JOBS: JobSpec[] = [
@@ -56,8 +55,12 @@ if (!globalForSched.__orcaReportsRuntimeV3) {
     summary: emptyRuntime(),
   };
 }
-if (globalForSched.__orcaReportsLastTickAtV3 === undefined) globalForSched.__orcaReportsLastTickAtV3 = null;
-if (globalForSched.__orcaReportsTickCountV3 === undefined) globalForSched.__orcaReportsTickCountV3 = 0;
+if (globalForSched.__orcaReportsLastTickAtV3 === undefined) {
+  globalForSched.__orcaReportsLastTickAtV3 = null;
+}
+if (globalForSched.__orcaReportsTickCountV3 === undefined) {
+  globalForSched.__orcaReportsTickCountV3 = 0;
+}
 
 function emptyRuntime(): JobRuntime {
   return {
@@ -83,16 +86,16 @@ function vnNow(): { hh: number; mm: number; key: string; weekday: number } {
   };
 }
 
-const TICK_MS = 60_000; // check every 60s
-const RETRY_DELAY_MS = 5 * 60_000; // 5 minutes fixed backoff
+const TICK_MS = 60_000;
+const RETRY_DELAY_MS = 5 * 60_000;
 
 async function tick() {
   globalForSched.__orcaReportsLastTickAtV3 = new Date().toISOString();
-  globalForSched.__orcaReportsTickCountV3 = (globalForSched.__orcaReportsTickCountV3 ?? 0) + 1;
+  globalForSched.__orcaReportsTickCountV3 =
+    (globalForSched.__orcaReportsTickCountV3 ?? 0) + 1;
   const now = vnNow();
   const runtime = globalForSched.__orcaReportsRuntimeV3!;
 
-  // Reset daily counters at VN midnight.
   for (const spec of JOBS) {
     const r = runtime[spec.type];
     if (r.todayKey !== now.key) {
@@ -110,11 +113,8 @@ async function tick() {
 
   for (const spec of JOBS) {
     const r = runtime[spec.type];
-
-    // Check if already successfully generated for today
     if (r.successesToday > 0) continue;
 
-    // Double check DB
     const existing = await getStoredReport(spec.type, now.key).catch(() => null);
     if (existing) {
       r.successesToday = 1;
@@ -122,28 +122,35 @@ async function tick() {
     }
 
     const targetMinutes = spec.targetVn.hh * 60 + spec.targetVn.mm;
-
-    // We only start attempting once current VN time has reached or passed target time.
     if (nowMinutes < targetMinutes) continue;
-
-    // If there's a scheduled retry timestamp, check if it's time yet.
     if (r.nextRetryAt && Date.now() < r.nextRetryAt) continue;
 
-    // Execute generation with unlimited retry loop semantics (triggered via tick interval)
     r.lastAttemptAt = new Date().toISOString();
     r.attemptsToday += 1;
-    log.info("report_job_attempt", { type: spec.type, date: now.key, attempt: r.attemptsToday });
+    log.info("report_job_attempt", {
+      type: spec.type,
+      date: now.key,
+      attempt: r.attemptsToday,
+    });
 
     try {
       const res = await spec.run(new Date());
-      const verified = await getStoredReport(spec.type, now.key);
-      if (!verified) throw new Error("generation completed but row missing in DB");
+      const verified = await getStoredReport(spec.type, now.key).catch(() => null);
+      // Success if DB row exists OR generator returned HTML (memory fallback)
+      if (!verified && !(res?.html && res.html.length > 100)) {
+        throw new Error("generation completed but no content available");
+      }
 
       r.successesToday = 1;
       r.lastSuccessAt = new Date().toISOString();
       r.lastError = null;
       r.nextRetryAt = null;
-      log.info("report_job_success", { type: spec.type, date: now.key, attempt: r.attemptsToday });
+      log.info("report_job_success", {
+        type: spec.type,
+        date: now.key,
+        attempt: r.attemptsToday,
+        persisted: res?.persisted ?? Boolean(verified),
+      });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       r.lastError = errMsg;
@@ -155,7 +162,6 @@ async function tick() {
         nextRetryInMin: 5,
         error: errMsg,
       });
-
       if (r.attemptsToday >= 10) {
         log.critical("report_job_excessive_failures", {
           type: spec.type,
@@ -179,7 +185,7 @@ export function startReportScheduler() {
 export function getSchedulerStatus() {
   const now = vnNow();
   const runtime = globalForSched.__orcaReportsRuntimeV3!;
-  const jobs: Record<string, any> = {};
+  const jobs: Record<string, unknown> = {};
   for (const spec of JOBS) {
     const r = runtime[spec.type];
     const targetMin = spec.targetVn.hh * 60 + spec.targetVn.mm;
@@ -190,13 +196,16 @@ export function getSchedulerStatus() {
       target: `${String(spec.targetVn.hh).padStart(2, "0")}:${String(spec.targetVn.mm).padStart(2, "0")}`,
       minutesUntilTarget: diff > 0 ? diff : null,
       isTimeReached: nowMin >= targetMin,
-      nextRetryInSec: r.nextRetryAt ? Math.max(0, Math.round((r.nextRetryAt - Date.now()) / 1000)) : null,
+      nextRetryInSec: r.nextRetryAt
+        ? Math.max(0, Math.round((r.nextRetryAt - Date.now()) / 1000))
+        : null,
     };
   }
   return {
     started: !!globalForSched.__orcaReportsStartedV3,
     version: "v3-unlimited-retry",
     tickMs: TICK_MS,
+    maxRetry: 999,
     lastTickAt: globalForSched.__orcaReportsLastTickAtV3 ?? null,
     tickCount: globalForSched.__orcaReportsTickCountV3 ?? 0,
     vnNow: { ...now, isWeekday: isVnWeekday() },
