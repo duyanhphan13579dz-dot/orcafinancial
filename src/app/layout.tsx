@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Inter, JetBrains_Mono } from "next/font/google";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -34,8 +34,15 @@ export const metadata: Metadata = {
   title: "ORCA FINANCIAL — Intelligent Investment Platform",
   description:
     "Nền tảng phân tích tài chính AI — dữ liệu thị trường thật (VNDirect, Yahoo, CoinGecko, RSS), phân tích kỹ thuật, fundamental, SWOT và AI Agent.",
-  viewport:
-    "width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  userScalable: true,
+  themeColor: "#0A2540",
+  viewportFit: "cover",
 };
 
 const NAV = [
@@ -61,21 +68,18 @@ export default function RootLayout({
   return (
     <html
       lang="vi"
-      className={`${display.variable} ${sans.variable} ${mono.variable}`}
+      className={`${display.variable} ${sans.variable} ${mono.variable} overflow-x-hidden`}
     >
       <head>
-        <meta name="theme-color" content="#0A2540" />
-        <meta
-          name="apple-mobile-web-app-capable"
-          content="yes"
-        />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta
           name="apple-mobile-web-app-status-bar-style"
           content="black-translucent"
         />
       </head>
 
-      <body className="antialiased min-h-screen pb-20 md:pb-0">
+      {/* pb-20 on <lg for bottom nav; overflow-x-hidden stops horizontal bleed */}
+      <body className="antialiased min-h-screen overflow-x-hidden pb-20 lg:pb-0">
         <div
           aria-hidden
           className="pointer-events-none fixed inset-0 z-[1] opacity-[0.035] mix-blend-overlay"
@@ -89,9 +93,10 @@ export default function RootLayout({
           <AppearanceLoader />
           <MobileHeader />
 
-          <header className="hidden md:block sticky top-0 z-40 border-b border-[#1a3558] bg-[#0A2540]/95 backdrop-blur">
+          {/* Desktop-only chrome (≥ lg / ~1024px) */}
+          <header className="hidden lg:block sticky top-0 z-40 border-b border-[#1a3558] bg-[#0A2540]/95 backdrop-blur">
             <div className="mx-auto max-w-7xl px-4 py-3">
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 min-w-0">
                 <Link
                   href="/"
                   className="flex items-center gap-3 shrink-0 group"
@@ -103,31 +108,28 @@ export default function RootLayout({
                   <div className="leading-tight">
                     <div className="font-display font-extrabold tracking-tight text-base text-white">
                       ORCA
-                      <span className="text-[#00d4ff]">
-                        FINANCIAL
-                      </span>
+                      <span className="text-[#00d4ff]">FINANCIAL</span>
                     </div>
-
                     <div className="font-mono text-[9px] tracking-[0.25em] text-[#7aa8d4] uppercase italic">
                       Intelligent Investment
                     </div>
                   </div>
                 </Link>
 
-                <nav className="hidden lg:flex items-center gap-5 text-sm text-slate-400 font-display">
+                <nav className="flex items-center gap-3 xl:gap-5 text-sm text-slate-400 font-display flex-wrap min-w-0">
                   {NAV.map((n) => (
                     <Link
                       key={n.href}
                       href={n.href}
-                      className="relative hover:text-[#00d4ff] transition-colors after:content-[''] after:absolute after:left-0 after:right-0 after:-bottom-1 after:h-px after:bg-[#00d4ff] after:scale-x-0 hover:after:scale-x-100 after:transition-transform after:origin-left"
+                      className="relative whitespace-nowrap hover:text-[#00d4ff] transition-colors after:content-[''] after:absolute after:left-0 after:right-0 after:-bottom-1 after:h-px after:bg-[#00d4ff] after:scale-x-0 hover:after:scale-x-100 after:transition-transform after:origin-left"
                     >
                       {n.label}
                     </Link>
                   ))}
                 </nav>
 
-                <div className="ml-auto flex items-center gap-3 flex-1 justify-end min-w-0">
-                  <div className="block w-full max-w-xs min-w-0">
+                <div className="ml-auto flex items-center gap-3 flex-1 justify-end min-w-0 max-w-md">
+                  <div className="block w-full min-w-0">
                     <SearchBar />
                   </div>
                   <div className="shrink-0">
@@ -138,11 +140,11 @@ export default function RootLayout({
             </div>
           </header>
 
-          <main className="mx-auto max-w-7xl px-4 py-4 md:py-6">
+          <main className="mx-auto max-w-7xl w-full min-w-0 px-3 sm:px-4 py-4 md:py-6 overflow-x-hidden">
             {children}
           </main>
 
-          <footer className="hidden md:block mx-auto max-w-7xl px-4 py-6 text-xs text-slate-500 border-t border-[#1a3558]/60">
+          <footer className="hidden lg:block mx-auto max-w-7xl px-4 py-6 text-xs text-slate-500 border-t border-[#1a3558]/60">
             <div className="flex flex-wrap justify-between items-center gap-3">
               <div className="font-display">
                 © 2026{" "}
@@ -155,10 +157,10 @@ export default function RootLayout({
                 </span>
               </div>
 
-              <div>
+              <div className="max-w-xl">
                 Dữ liệu thật từ VNDirect dchart, Yahoo Finance, CoinGecko và
                 RSS (VnExpress, CafeF, Vietstock) qua Data Engine với circuit
-                breaker &amp; fallback. Không phải lời khuyên đầu tư.
+                breaker & fallback. Không phải lời khuyên đầu tư.
               </div>
             </div>
           </footer>
