@@ -75,18 +75,18 @@ export default function ForexDetail() {
   const [bundleError, setBundleError] = useState<string | null>(null);
   const initialDone = useRef(false);
 
-  // Reset TF when navigating to a different symbol (e.g. EURUSD → DXY)
+  // Initial load + when symbol changes (EURUSD ↔ DXY)
   useEffect(() => {
-    setTf(defaultTimeframe(symbol));
+    const initialTf = defaultTimeframe(symbol);
+    setTf(initialTf);
     initialDone.current = false;
-  }, [symbol]);
 
-  useEffect(() => {
     let cancelled = false;
     setBundleLoading(true);
     setBundleError(null);
+    setBars([]);
 
-    api<{ bars: Bar[] }>(`/forex/${symbol}/ohlcv?timeframe=${tf}&limit=120`)
+    api<{ bars: Bar[] }>(`/forex/${symbol}/ohlcv?timeframe=${initialTf}&limit=120`)
       .then((env) => {
         if (cancelled) return;
         setBars(env.data.bars ?? []);
@@ -97,7 +97,9 @@ export default function ForexDetail() {
       .catch(async (err) => {
         if (cancelled) return;
         try {
-          const b = await api<Bundle>(`/forex/${symbol}/bundle?timeframe=${tf}&limit=120`);
+          const b = await api<Bundle>(
+            `/forex/${symbol}/bundle?timeframe=${initialTf}&limit=120`,
+          );
           if (cancelled) return;
           setBundle(b.data);
           setBars(b.data.bars ?? []);
@@ -110,7 +112,7 @@ export default function ForexDetail() {
         initialDone.current = true;
       });
 
-    void api<Bundle>(`/forex/${symbol}/bundle?timeframe=${tf}&limit=120`)
+    void api<Bundle>(`/forex/${symbol}/bundle?timeframe=${initialTf}&limit=120`)
       .then((env) => {
         if (cancelled) return;
         setBundle(env.data);
@@ -124,7 +126,7 @@ export default function ForexDetail() {
     return () => {
       cancelled = true;
     };
-  }, [symbol, tf]);
+  }, [symbol]);
 
   const loadTf = useCallback(
     async (next: string) => {
