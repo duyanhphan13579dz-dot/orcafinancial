@@ -1,40 +1,99 @@
 /**
  * LLM narrative for Morning Brief & Market Summary.
- * Falls back to null when no provider is configured or call fails.
+ *
+ * Morning pipeline (as designed):
+ * 1. Data Engine supplies news + VN/global indices
+ * 2. LLM classifies news: vi mô / vĩ mô / trong nước / quốc tế / doanh nghiệp
+ * 3. LLM scores impact of key news
+ * 4. LLM assesses VN → world index moves impact
+ * 5. Strategy conclusion for the opening session
  */
 import { chatWithFallback } from "@/lib/llm/router";
 import { forProvider } from "@/lib/logger";
 
 export type ReportLlmKind = "morning" | "summary";
 
+export type NewsCategory =
+  | "vi_mo"
+  | "vi_mo_macro"
+  | "trong_nuoc"
+  | "quoc_te"
+  | "doanh_nghiep";
+
+export type ImpactLevel = "thap" | "trung_binh" | "cao" | "rat_cao";
+
+export interface ClassifiedNewsItem {
+  title: string;
+  category: NewsCategory;
+  impact: ImpactLevel;
+  /** Vì sao tin này quan trọng với phiên hôm nay */
+  rationale: string;
+  source?: string;
+}
+
+export interface IndexImpactItem {
+  name: string;
+  changePct: number | null;
+  impact: ImpactLevel;
+  note: string;
+}
+
 export interface ReportLlmNarrative {
   headline: string;
   lede: string;
-  /** 5–10 bullet points: tin cần chú ý + vì sao quan trọng */
+  /** Classified + scored news (morning) */
+  classifiedNews: ClassifiedNewsItem[];
+  /** Legacy flat list still used by summary */
   newsInsights: string[];
-  /** 2–4 đoạn nhận định thị trường chi tiết */
+  /** Assessment of VN + global index moves */
+  indexImpacts: IndexImpactItem[];
+  /** Multi-paragraph market commentary */
   marketCommentary: string;
-  /** Ba kịch bản (summary) hoặc chiến lược phiên (morning) */
   actionPoints: string[];
   conclusion: string;
   recommendation: string;
-  /** Mã / chủ đề cần theo dõi */
   watchlist: string[];
   model?: string;
   provider?: string;
 }
 
-const SYSTEM = `Bạn là chuyên gia phân tích thị trường chứng khoán Việt Nam của ORCA FINANCIAL.
-Nhiệm vụ: viết nội dung báo cáo chuyên sâu bằng tiếng Việt, dựa CHỈ trên dữ liệu JSON được cung cấp.
+const MORNING_SYSTEM = `Bạn là chuyên gia phân tích đầu phiên của ORCA FINANCIAL (thị trường chứng khoán Việt Nam).
+
+QUY TRÌNH BẮT BUỘC (làm đúng thứ tự, dựa CHỈ trên JSON dữ liệu):
+1) Phân loại từng tin quan trọng vào đúng một nhóm:
+   - "vi_mo": vi mô ngành / dòng tiền / kỹ thuật hẹp
+   - "vi_mo_macro": vĩ mô (lãi suất, lạm phát, tỷ giá, chính sách tiền tệ/tài khóa)
+   - "trong_nuoc": sự kiện trong nước (chính sách VN, TTCK VN, pháp lý)
+   - "quoc_te": sự kiện quốc tế ảnh hưởng VN
+   - "doanh_nghiep": kết quả KD, M&A, lãnh đạo, sự cố doanh nghiệp
+2) Chấm mức độ ảnh hưởng của mỗi tin: "thap" | "trung_binh" | "cao" | "rat_cao" + rationale ngắn.
+3) Đánh giá ảnh hưởng của biến động chỉ số VN (VN-Index, HNX, UPCOM) và thế giới (nếu có trong dữ liệu) tới phiên mở cửa hôm nay.
+4) Kết luận chiến lược đầu ngày: tỷ trọng, ưu tiên ngành/mã, rủi ro cần tránh.
 
 QUY TẮC:
-1. Không bịa số liệu, giá, % thay đổi — chỉ dùng số trong dữ liệu.
-2. Nếu thiếu dữ liệu thì nói rõ "chưa có dữ liệu" thay vì suy đoán.
-3. Giọng văn chuyên nghiệp, súc tích, có chiều sâu (không sáo rỗng).
-4. Nhấn mạnh tin / sự kiện CÓ ẢNH HƯỞNG tới VN-Index, thanh khoản, dòng tiền ngành.
-5. Khuyến nghị phải cụ thể (tỷ trọng, vùng hỗ trợ/kháng cự nếu có số).
-6. Luôn nhớ đây là tham khảo, không phải lời khuyên đầu tư.
-7. Trả về ĐÚNG JSON thuần (không markdown fence), schema:
+- Không bịa số liệu; thiếu dữ liệu thì ghi "chưa có dữ liệu".
+- Ưu tiên tin impact cao/rất cao; bỏ tin nhiễu.
+- Giọng tiếng Việt chuyên nghiệp, súc tích.
+- Trả về JSON thuần (không markdown) theo schema:
+{
+  "headline": string,
+  "lede": string,
+  "classifiedNews": [
+    { "title": string, "category": "vi_mo"|"vi_mo_macro"|"trong_nuoc"|"quoc_te"|"doanh_nghiep", "impact": "thap"|"trung_binh"|"cao"|"rat_cao", "rationale": string, "source": string }
+  ],
+  "indexImpacts": [
+    { "name": string, "changePct": number|null, "impact": "thap"|"trung_binh"|"cao"|"rat_cao", "note": string }
+  ],
+  "marketCommentary": string,
+  "actionPoints": string[],
+  "conclusion": string,
+  "recommendation": string,
+  "watchlist": string[]
+}`;
+
+const SUMMARY_SYSTEM = `Bạn là chuyên gia tổng kết cuối phiên của ORCA FINANCIAL.
+Dựa CHỈ trên JSON dữ liệu, viết nhận định chuyên sâu bằng tiếng Việt.
+Không bịa số liệu. Trả JSON thuần:
 {
   "headline": string,
   "lede": string,
@@ -43,45 +102,108 @@ QUY TẮC:
   "actionPoints": string[],
   "conclusion": string,
   "recommendation": string,
-  "watchlist": string[]
+  "watchlist": string[],
+  "classifiedNews": [],
+  "indexImpacts": []
 }`;
+
+const CATEGORIES = new Set<string>([
+  "vi_mo",
+  "vi_mo_macro",
+  "trong_nuoc",
+  "quoc_te",
+  "doanh_nghiep",
+]);
+const IMPACTS = new Set<string>(["thap", "trung_binh", "cao", "rat_cao"]);
+
+function str(v: unknown, max = 800): string {
+  return typeof v === "string" ? v.trim().slice(0, max) : "";
+}
+
+function arrStr(v: unknown, maxItems = 12, maxLen = 360): string[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    .slice(0, maxItems)
+    .map((x) => x.trim().slice(0, maxLen));
+}
+
+function parseClassified(raw: unknown): ClassifiedNewsItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ClassifiedNewsItem[] = [];
+  for (const item of raw.slice(0, 16)) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const title = str(o.title, 280);
+    if (!title) continue;
+    const category = CATEGORIES.has(String(o.category)) ? (o.category as NewsCategory) : "trong_nuoc";
+    const impact = IMPACTS.has(String(o.impact)) ? (o.impact as ImpactLevel) : "trung_binh";
+    out.push({
+      title,
+      category,
+      impact,
+      rationale: str(o.rationale, 280) || "—",
+      source: str(o.source, 80) || undefined,
+    });
+  }
+  return out;
+}
+
+function parseIndexImpacts(raw: unknown): IndexImpactItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: IndexImpactItem[] = [];
+  for (const item of raw.slice(0, 12)) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const name = str(o.name, 80);
+    if (!name) continue;
+    const cp = o.changePct;
+    const changePct =
+      typeof cp === "number" && Number.isFinite(cp)
+        ? cp
+        : cp === null
+          ? null
+          : Number.isFinite(Number(cp))
+            ? Number(cp)
+            : null;
+    const impact = IMPACTS.has(String(o.impact)) ? (o.impact as ImpactLevel) : "trung_binh";
+    out.push({
+      name,
+      changePct,
+      impact,
+      note: str(o.note, 320) || "—",
+    });
+  }
+  return out;
+}
 
 function parseNarrative(raw: string): ReportLlmNarrative | null {
   const match = raw.trim().match(/\{[\s\S]*\}/);
   if (!match) return null;
   try {
     const obj = JSON.parse(match[0]) as Record<string, unknown>;
-    const str = (v: unknown, max = 800) =>
-      typeof v === "string" ? v.trim().slice(0, max) : "";
-    const arr = (v: unknown, maxItems = 12, maxLen = 320): string[] =>
-      Array.isArray(v)
-        ? v
-            .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-            .slice(0, maxItems)
-            .map((x) => x.trim().slice(0, maxLen))
-        : [];
-
-    const headline = str(obj.headline, 160);
-    const lede = str(obj.lede, 400);
-    const marketCommentary = str(obj.marketCommentary, 2500);
-    const conclusion = str(obj.conclusion, 500);
-    const recommendation = str(obj.recommendation, 500);
+    const headline = str(obj.headline, 180);
+    const marketCommentary = str(obj.marketCommentary, 3200);
     if (!headline || !marketCommentary) return null;
+
+    const classifiedNews = parseClassified(obj.classifiedNews);
+    const newsInsights =
+      arrStr(obj.newsInsights, 12, 360) ||
+      classifiedNews.map((n) => `[${n.impact}] ${n.title}: ${n.rationale}`);
 
     return {
       headline,
-      lede:
-        lede ||
-        marketCommentary.slice(0, 220) +
-          (marketCommentary.length > 220 ? "…" : ""),
-      newsInsights: arr(obj.newsInsights, 10, 360),
+      lede: str(obj.lede, 450) || marketCommentary.slice(0, 220),
+      classifiedNews,
+      newsInsights,
+      indexImpacts: parseIndexImpacts(obj.indexImpacts),
       marketCommentary,
-      actionPoints: arr(obj.actionPoints, 8, 400),
-      conclusion: conclusion || "Theo dõi sát diễn biến phiên; ưu tiên bảo toàn vốn.",
+      actionPoints: arrStr(obj.actionPoints, 10, 400),
+      conclusion: str(obj.conclusion, 600) || "Ưu tiên quan sát và bảo toàn vốn đầu phiên.",
       recommendation:
-        recommendation ||
-        "Giữ tỷ trọng vừa phải, chờ tín hiệu rõ hơn trước khi mở vị thế mới.",
-      watchlist: arr(obj.watchlist, 10, 40),
+        str(obj.recommendation, 600) ||
+        "Giữ tỷ trọng vừa phải; chờ tín hiệu rõ sau 30–60 phút đầu phiên.",
+      watchlist: arrStr(obj.watchlist, 12, 40),
     };
   } catch {
     return null;
@@ -95,31 +217,38 @@ export async function generateReportNarrative(
   if (process.env.LLM_REPORTS_DISABLED === "1") return null;
 
   const log = forProvider("reports-llm");
+  const system = kind === "morning" ? MORNING_SYSTEM : SUMMARY_SYSTEM;
   const task =
     kind === "morning"
-      ? "Viết Morning Brief (bản tin đầu ngày): chọn tin quan trọng nhất, nhận định trước phiên, chiến lược thận trọng."
-      : "Viết Market Summary (tổng kết cuối phiên): đọc vị phiên hôm nay chi tiết, ba kịch bản phiên tới, khuyến nghị hành động."
+      ? [
+          "THỰC HIỆN ĐÚNG 4 BƯỚC:",
+          "(1) Phân loại tin: vi mô / vĩ mô / trong nước / quốc tế / doanh nghiệp",
+          "(2) Chấm impact từng tin quan trọng",
+          "(3) Đánh giá ảnh hưởng biến động chỉ số VN → thế giới tới phiên mở cửa",
+          "(4) Kết luận chiến lược đầu ngày (tỷ trọng, ưu tiên, rủi ro)",
+        ].join("\n")
+      : "Tổng kết cuối phiên: nhận định sâu, tin đáng chú ý, ba kịch bản phiên tới, khuyến nghị.";
 
   const user = [
-    `LOẠI BÁO CÁO: ${kind}`,
-    `NHIỆM VỤ: ${task}`,
+    `LOẠI: ${kind}`,
+    task,
     "",
-    "DỮ LIỆU TỔNG HỢP TỪ DATA ENGINE (JSON):",
-    JSON.stringify(context).slice(0, 14_000),
+    "DỮ LIỆU DATA ENGINE (JSON):",
+    JSON.stringify(context).slice(0, 16_000),
     "",
-    "Hãy trả về JSON theo schema đã quy định. Ưu tiên chiều sâu phân tích, không liệt kê máy móc.",
+    "Trả về đúng schema JSON đã quy định.",
   ].join("\n");
 
   try {
     const llm = await chatWithFallback(
       [
-        { role: "system", content: SYSTEM },
+        { role: "system", content: system },
         { role: "user", content: user },
       ],
       {
-        maxTokens: 2200,
-        temperature: 0.35,
-        timeoutMs: 35_000,
+        maxTokens: kind === "morning" ? 2800 : 2200,
+        temperature: 0.3,
+        timeoutMs: 40_000,
       },
     );
     if (!llm) {
@@ -128,10 +257,7 @@ export async function generateReportNarrative(
     }
     const parsed = parseNarrative(llm.text);
     if (!parsed) {
-      log.warn("report_llm_parse_failed", {
-        kind,
-        snippet: llm.text.slice(0, 160),
-      });
+      log.warn("report_llm_parse_failed", { kind, snippet: llm.text.slice(0, 180) });
       return null;
     }
     parsed.model = llm.model;
@@ -141,7 +267,8 @@ export async function generateReportNarrative(
       provider: llm.provider,
       model: llm.model,
       latencyMs: llm.latencyMs,
-      insights: parsed.newsInsights.length,
+      classified: parsed.classifiedNews.length,
+      indexImpacts: parsed.indexImpacts.length,
     });
     return parsed;
   } catch (err) {
