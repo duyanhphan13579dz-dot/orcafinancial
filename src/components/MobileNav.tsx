@@ -1,99 +1,169 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SearchBar } from "@/components/search-bar";
+import { UserMenu } from "@/components/UserMenu";
 
-const NAV = [
+const PRIMARY = [
   { href: "/", label: "Tổng quan", icon: "📊" },
   { href: "/heatmap", label: "Heatmap", icon: "🟩" },
-  { href: "/commodities", label: "Hàng hóa", icon: "📦" },
   { href: "/crypto", label: "Crypto", icon: "🪙" },
   { href: "/forex", label: "Forex", icon: "💱" },
+  { href: "/commodities", label: "Hàng hóa", icon: "📦" },
+];
+
+const MORE = [
   { href: "/reports", label: "Báo cáo", icon: "📰" },
   { href: "/screener", label: "Bộ lọc", icon: "🔍" },
-  { href: "/news", label: "Tin tức", icon: "📰" },
+  { href: "/news", label: "Tin tức", icon: "📡" },
   { href: "/watchlist", label: "Theo dõi", icon: "⭐" },
   { href: "/agent", label: "AI Agent", icon: "🤖" },
   { href: "/system", label: "Hệ thống", icon: "🩺" },
   { href: "/settings", label: "Cài đặt", icon: "⚙️" },
 ];
 
+const ALL_NAV = [...PRIMARY, ...MORE];
+
 export function MobileHeader() {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
+  // Lock body scroll while drawer is open (prevents page scroll under menu)
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  // Close on route change
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
   return (
     <>
-      <div className="md:hidden sticky top-0 z-50 border-b border-[#1a3558] bg-[#0A2540]/98 backdrop-blur">
-        <div className="flex items-center justify-between px-4 py-3">
-          <Link href="/" className="flex items-center gap-2 shrink-0">
-            <div className="h-7 w-7 rounded bg-gradient-to-br from-[#00d4ff] to-[#0073a8] flex items-center justify-center text-sm">
+      {/* Phone + tablet (< lg): sticky header with hamburger */}
+      <div className="lg:hidden sticky top-0 z-50 border-b border-[#1a3558] bg-[#0A2540]/98 backdrop-blur safe-area-pt">
+        <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5">
+          <Link href="/" className="flex items-center gap-2 shrink-0 min-w-0">
+            <div className="h-8 w-8 rounded-md bg-gradient-to-br from-[#00d4ff] to-[#0073a8] flex items-center justify-center text-sm shrink-0">
               🐋
             </div>
-            <div className="font-display font-bold text-white text-sm">ORCA</div>
+            <div className="font-display font-bold text-white text-sm truncate">ORCA</div>
           </Link>
-          <button
-            type="button"
-            onClick={() => setOpen(!open)}
-            className="h-10 w-10 flex items-center justify-center rounded-lg border border-[#1a3558] bg-[#0e2e4f] text-white active:scale-95 transition-transform"
-            aria-label={open ? "Đóng menu" : "Mở menu"}
-            aria-expanded={open}
-          >
-            {open ? "✕" : "☰"}
-          </button>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="hidden sm:block">
+              <UserMenu />
+            </div>
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="h-11 w-11 flex items-center justify-center rounded-lg border border-[#1a3558] bg-[#0e2e4f] text-white text-lg active:scale-95 transition-transform touch-min"
+              aria-label={open ? "Đóng menu" : "Mở menu"}
+              aria-expanded={open}
+            >
+              {open ? "✕" : "☰"}
+            </button>
+          </div>
         </div>
-        <div className="px-4 pb-3">
+
+        <div className="px-3 sm:px-4 pb-2.5 min-w-0">
           <SearchBar />
         </div>
-        {open && (
-          <div className="absolute top-full left-0 right-0 bg-[#0A2540] border-b border-[#1a3558] shadow-2xl animate-in slide-in-from-top-2">
-            <nav className="p-2">
-              {NAV.map((n) => {
-                const active = pathname === n.href;
+      </div>
+
+      {/* Full-screen drawer + backdrop */}
+      {open && (
+        <>
+          <button
+            type="button"
+            className="lg:hidden fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm"
+            aria-label="Đóng menu"
+            onClick={() => setOpen(false)}
+          />
+          <div
+            className="lg:hidden fixed inset-y-0 right-0 z-[70] w-[min(100vw,320px)] bg-[#0A2540] border-l border-[#1a3558] shadow-2xl flex flex-col safe-area-pb"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a3558]">
+              <span className="font-display font-bold text-white text-sm">Menu</span>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="h-10 w-10 rounded-lg border border-[#1a3558] flex items-center justify-center text-slate-300 active:scale-95"
+                aria-label="Đóng"
+              >
+                ✕
+              </button>
+            </div>
+
+            <nav className="flex-1 overflow-y-auto overscroll-contain p-2">
+              {ALL_NAV.map((n) => {
+                const active =
+                  n.href === "/"
+                    ? pathname === "/"
+                    : pathname === n.href || pathname.startsWith(`${n.href}/`);
                 return (
                   <Link
                     key={n.href}
                     href={n.href}
                     onClick={() => setOpen(false)}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-lg mb-1 active:scale-[0.98] transition-all ${
+                    className={`flex items-center gap-3 px-4 py-3.5 rounded-lg mb-1 min-h-[48px] active:scale-[0.98] transition-all ${
                       active
                         ? "bg-[#00d4ff]/15 text-[#00d4ff] border border-[#00d4ff]/30"
-                        : "text-slate-300 hover:bg-[#0e2e4f]"
+                        : "text-slate-300 hover:bg-[#0e2e4f] border border-transparent"
                     }`}
                   >
-                    <span className="text-xl">{n.icon}</span>
-                    <span className="font-medium">{n.label}</span>
+                    <span className="text-xl w-7 text-center shrink-0">{n.icon}</span>
+                    <span className="font-medium text-sm">{n.label}</span>
                   </Link>
                 );
               })}
             </nav>
+
+            <div className="border-t border-[#1a3558] p-3 sm:hidden">
+              <UserMenu />
+            </div>
           </div>
-        )}
-      </div>
-      <div className="hidden md:block" />
+        </>
+      )}
     </>
   );
 }
 
 export function MobileBottomNav() {
   const pathname = usePathname();
+  // 4 primary + "More" opens path to settings via hamburger; keep bottom bar light
+  const items = [
+    ...PRIMARY.slice(0, 4),
+    { href: "/settings", label: "Cài đặt", icon: "⚙️" },
+  ];
+
   return (
-    <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#0A2540]/98 backdrop-blur border-t border-[#1a3558] safe-area-pb">
-      <nav className="flex items-center justify-around py-2">
-        {NAV.slice(0, 5).map((n) => {
-          const active = pathname === n.href;
+    <div className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#0A2540]/98 backdrop-blur border-t border-[#1a3558] safe-area-pb">
+      <nav className="flex items-center justify-around px-1 py-1.5">
+        {items.map((n) => {
+          const active =
+            n.href === "/"
+              ? pathname === "/"
+              : pathname === n.href || pathname.startsWith(`${n.href}/`);
           return (
             <Link
               key={n.href}
               href={n.href}
-              className={`flex flex-col items-center justify-center w-full py-2 active:scale-95 transition-transform ${
+              className={`flex flex-col items-center justify-center flex-1 min-w-0 py-2 px-0.5 min-h-[48px] active:scale-95 transition-transform ${
                 active ? "text-[#00d4ff]" : "text-slate-400"
               }`}
             >
-              <span className="text-xl mb-0.5">{n.icon}</span>
-              <span className="text-[10px] font-medium">{n.label}</span>
+              <span className="text-lg leading-none mb-0.5">{n.icon}</span>
+              <span className="text-[9px] sm:text-[10px] font-medium truncate max-w-full">{n.label}</span>
             </Link>
           );
         })}
