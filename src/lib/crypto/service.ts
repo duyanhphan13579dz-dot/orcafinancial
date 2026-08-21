@@ -28,7 +28,6 @@ const POPULAR = [
   "AVAX", "LINK", "DOT", "LTC", "BCH", "SUI", "TON",
 ];
 
-/** Quote-only stables — never chart as base/USDT pair. */
 const STABLECOINS = new Set([
   "USDT", "USDC", "FDUSD", "TUSD", "DAI", "BUSD", "USDE", "USD1", "PYUSD",
 ]);
@@ -58,7 +57,7 @@ type CryptoCoinDetail =
   | null;
 
 const FRESHNESS_CACHE_TTL = 5_000;
-const LATEST_PRICES_CACHE_TTL = 5_000;
+const LATEST_PRICES_CACHE_TTL = 8_000;
 const COIN_CACHE_TTL = 3_000;
 const USD_VND_CACHE_TTL = 10 * 60_000;
 
@@ -116,15 +115,19 @@ async function usdVndRate() {
   if (usdVndCache && Date.now() - usdVndCache.timestamp < USD_VND_CACHE_TTL) {
     return usdVndCache.value;
   }
-  const [row] = await db
-    .select()
-    .from(exchangeRates)
-    .where(eq(exchangeRates.currency, "USD"))
-    .orderBy(desc(exchangeRates.date))
-    .limit(1);
-  const rate = row?.rate ?? null;
-  usdVndCache = { value: rate, timestamp: Date.now() };
-  return rate;
+  try {
+    const [row] = await db
+      .select()
+      .from(exchangeRates)
+      .where(eq(exchangeRates.currency, "USD"))
+      .orderBy(desc(exchangeRates.date))
+      .limit(1);
+    const rate = row?.rate ?? null;
+    usdVndCache = { value: rate, timestamp: Date.now() };
+    return rate;
+  } catch {
+    return null;
+  }
 }
 
 export async function syncCryptoMarket(limit = 100, syncAllCoins = false) {
@@ -237,6 +240,10 @@ export async function syncCryptoMarket(limit = 100, syncAllCoins = false) {
   return syncPromises[key]!;
 }
 
+/**
+ * Freshness helper — does NOT block on full market ingest when DB already has rows.
+ * Cold DB (no prices) still awaits one sync so list is not empty.
+ */
 export async function ensureCryptoFresh(maxAgeMs = 15_000) {
   if (freshnessCache && Date.now() - freshnessCache.timestamp < FRESHNESS_CACHE_TTL) {
     return freshnessCache.value;
@@ -246,15 +253,34 @@ export async function ensureCryptoFresh(maxAgeMs = 15_000) {
     freshnessCache = { value: result, timestamp: Date.now() };
     return result;
   }
-  const result = await db.execute(sql`SELECT MAX(created_at) AS latest FROM crypto_prices`);
-  const raw = (result.rows[0] as { latest?: Date | string | null } | undefined)?.latest;
-  const latest = raw ? new Date(raw).getTime() : 0;
-  if (!latest || Date.now() - latest > maxAgeMs) {
-    const refreshed = await syncCryptoMarket(100);
-    const value = { refreshed: true, ...refreshed };
-    freshnessCache = { value, timestamp: Date.now() };
-    return value;
+
+  let latest = 0;
+  try {
+    const result = await db.execute(sql`SELECT MAX(created_at) AS latest FROM crypto_prices`);
+    const raw = (result.rows[0] as { latest?: Date | string | null } | undefined)?.latest;
+    latest = raw ? new Date(raw).getTime() : 0;
+  } catch {
+    return { refreshed: false };
   }
+
+  if (!latest) {
+    try {
+      const refreshed = await syncCryptoMarket(100);
+      const value = { refreshed: true, ...refreshed };
+      freshnessCache = { value, timestamp: Date.now() };
+      return value;
+    } catch (err) {
+      log.warn("ensure_crypto_cold_sync_failed", { error: String(err) });
+      return { refreshed: false };
+    }
+  }
+
+  if (Date.now() - latest > maxAgeMs) {
+    void syncCryptoMarket(100).catch((e) =>
+      log.warn("bg_crypto_sync_failed", { error: String(e) }),
+    );
+  }
+
   lastMarketSyncAt = latest;
   const value = { refreshed: false, latestAt: new Date(latest).toISOString() };
   freshnessCache = { value, timestamp: Date.now() };
