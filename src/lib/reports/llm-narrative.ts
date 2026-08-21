@@ -12,27 +12,24 @@ export interface NewsBullet {
   title: string;
   source?: string;
   time?: string;
+  /** Original article URL when available */
+  link?: string;
 }
 
 export interface MorningBriefContent {
   headline: string;
   lede: string;
-  /** 01 · Điểm tin vĩ mô */
   macroIntro: string;
   macroNews: NewsBullet[];
   macroCommoditiesNote: string;
-  /** 02 · Tin doanh nghiệp */
   corporateIntro: string;
   corporateNews: NewsBullet[];
   corporateNote: string;
-  /** 03 · Tin thị trường */
   marketIntro: string;
   marketNews: NewsBullet[];
   cryptoLine: string;
-  /** 04 · Chiến lược thận trọng */
   strategyIntro: string;
   strategyPoints: string[];
-  /** 05 · Rủi ro */
   risks: string[];
   riskWarning: string;
   conclusion: string;
@@ -41,7 +38,6 @@ export interface MorningBriefContent {
   provider?: string;
 }
 
-/** Compatibility shape used by summary + older callers */
 export interface ReportLlmNarrative extends MorningBriefContent {
   newsInsights: string[];
   actionPoints: string[];
@@ -52,33 +48,26 @@ export interface ReportLlmNarrative extends MorningBriefContent {
 }
 
 const MORNING_SYSTEM = `Bạn là biên tập viên Morning Brief của ORCA FINANCIAL.
-Nhiệm vụ: viết BẢN TIN ĐẦU NGÀY theo ĐÚNG cấu trúc mẫu báo cáo chuyên nghiệp dưới đây, dựa CHỈ trên JSON Data Engine.
+Nhiệm vụ: viết BẢN TIN ĐẦU NGÀY theo ĐÚNG cấu trúc mẫu, dựa CHỈ trên JSON Data Engine.
 
-CẤU TRÚC BẮT BUỘC (giọng tiếng Việt chuyên nghiệp, súc tích, không sáo rỗng):
-01 · ĐIỂM TIN VĨ MÔ — chọn tin vĩ mô / chính sách / quốc tế / tỷ giá / hàng hoá có khả năng chi phối tâm lý TTCK VN hôm nay.
-02 · TIN DOANH NGHIỆP — tin KQKD, nhân sự, sự kiện DN nổi bật 24h.
-03 · TIN THỊ TRƯỜNG — diễn biến phiên trước, dòng tiền, khối ngoại, tín hiệu mở cửa (dùng số liệu VN-Index nếu có).
-04 · CHIẾN LƯỢC THẬN TRỌNG — kỷ luật giao dịch, tỷ trọng, danh mục phòng thủ, hỗ trợ/kháng cự nếu có số.
-05 · RỦI RO CẦN CẢNH GIÁC — 3–5 rủi ro cụ thể + một đoạn CẢNH BÁO RỦI RO tổng hợp.
-Cuối: KẾT LUẬN & NHẬN ĐỊNH CHỐT + KHUYẾN NGHỊ CHIẾN LƯỢC ngắn, hành động được.
+CẤU TRÚC: 01 Vĩ mô · 02 Doanh nghiệp · 03 Thị trường · 04 Chiến lược · 05 Rủi ro · Cảnh báo · Kết luận · Khuyến nghị.
 
 QUY TẮC:
-1. Không bịa giá/%/điểm; thiếu số liệu thì nói "chưa có dữ liệu".
-2. Mỗi bullet tin: giữ nguyên ý tiêu đề tin từ nguồn; ghi source nếu có.
-3. Bỏ tin nhiễu (giật gân không liên quan TTCK) — ưu tiên tin ảnh hưởng dòng tiền/tâm lý.
-4. headline mặc định gần với: "Điểm tin đầu ngày & chiến lược thận trọng".
-5. Trả JSON thuần (không markdown fence):
+1. Không bịa giá/%/điểm.
+2. Mỗi bullet tin PHẢI copy "link" từ mục news trong dữ liệu nếu khớp tiêu đề (để người đọc bấm xem bài gốc).
+3. Bỏ tin nhiễu; ưu tiên tin ảnh hưởng TTCK VN.
+4. Trả JSON thuần:
 {
   "headline": string,
   "lede": string,
   "macroIntro": string,
-  "macroNews": [{ "title": string, "source": string, "time": string }],
+  "macroNews": [{ "title": string, "source": string, "time": string, "link": string }],
   "macroCommoditiesNote": string,
   "corporateIntro": string,
-  "corporateNews": [{ "title": string, "source": string, "time": string }],
+  "corporateNews": [{ "title": string, "source": string, "time": string, "link": string }],
   "corporateNote": string,
   "marketIntro": string,
-  "marketNews": [{ "title": string, "source": string, "time": string }],
+  "marketNews": [{ "title": string, "source": string, "time": string, "link": string }],
   "cryptoLine": string,
   "strategyIntro": string,
   "strategyPoints": string[],
@@ -89,7 +78,7 @@ QUY TẮC:
 }`;
 
 const SUMMARY_SYSTEM = `Bạn là chuyên gia tổng kết cuối phiên ORCA FINANCIAL.
-Dựa CHỈ trên JSON, viết nhận định cuối phiên. Không bịa số liệu. JSON thuần:
+Dựa CHỈ trên JSON. Mỗi tin marketNews nên kèm link từ dữ liệu. JSON thuần:
 {
   "headline": string,
   "lede": string,
@@ -100,7 +89,7 @@ Dựa CHỈ trên JSON, viết nhận định cuối phiên. Không bịa số l
   "corporateNews": [],
   "corporateNote": "",
   "marketIntro": string,
-  "marketNews": [{ "title": string, "source": string, "time": string }],
+  "marketNews": [{ "title": string, "source": string, "time": string, "link": string }],
   "cryptoLine": "",
   "strategyIntro": string,
   "strategyPoints": string[],
@@ -112,6 +101,13 @@ Dựa CHỈ trên JSON, viết nhận định cuối phiên. Không bịa số l
 
 function str(v: unknown, max = 1200): string {
   return typeof v === "string" ? v.trim().slice(0, max) : "";
+}
+
+function safeLink(v: unknown): string | undefined {
+  const s = str(v, 900);
+  if (!s) return undefined;
+  if (!/^https?:\/\//i.test(s)) return undefined;
+  return s;
 }
 
 function bullets(raw: unknown, max = 10): NewsBullet[] {
@@ -130,6 +126,7 @@ function bullets(raw: unknown, max = 10): NewsBullet[] {
       title,
       source: str(o.source, 60) || undefined,
       time: str(o.time, 20) || undefined,
+      link: safeLink(o.link),
     });
   }
   return out;
@@ -141,6 +138,30 @@ function arrStr(v: unknown, maxItems = 10, maxLen = 400): string[] {
     .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
     .slice(0, maxItems)
     .map((x) => x.trim().slice(0, maxLen));
+}
+
+/** Attach missing links by fuzzy-matching titles against Data Engine news list. */
+export function attachNewsLinks(
+  items: NewsBullet[],
+  catalog: Array<{ title: string; link?: string | null; source?: string | null }>,
+): NewsBullet[] {
+  if (!items.length || !catalog.length) return items;
+  return items.map((it) => {
+    if (it.link) return it;
+    const t = it.title.toLowerCase();
+    const hit = catalog.find((c) => {
+      const ct = (c.title || "").toLowerCase();
+      return ct && (ct.includes(t.slice(0, 40)) || t.includes(ct.slice(0, 40)));
+    });
+    if (hit?.link && /^https?:\/\//i.test(hit.link)) {
+      return {
+        ...it,
+        link: hit.link,
+        source: it.source || hit.source || undefined,
+      };
+    }
+    return it;
+  });
 }
 
 function parseMorning(raw: string): ReportLlmNarrative | null {
@@ -161,9 +182,7 @@ function parseMorning(raw: string): ReportLlmNarrative | null {
     const marketNews = bullets(o.marketNews, 8);
 
     const marketCommentary =
-      str(o.marketIntro, 800) ||
-      str(o.macroIntro, 800) ||
-      conclusion;
+      str(o.marketIntro, 800) || str(o.macroIntro, 800) || conclusion;
 
     return {
       headline,
@@ -211,8 +230,8 @@ export async function generateReportNarrative(
   const system = kind === "morning" ? MORNING_SYSTEM : SUMMARY_SYSTEM;
   const task =
     kind === "morning"
-      ? "Viết Morning Brief đúng mẫu: 01 Vĩ mô → 02 Doanh nghiệp → 03 Thị trường → 04 Chiến lược → 05 Rủi ro → Kết luận → Khuyến nghị. Lọc tin nhiễu, ưu tiên tin ảnh hưởng TTCK VN."
-      : "Viết tổng kết cuối phiên: diễn biến, tin đáng chú ý, rủi ro, khuyến nghị phiên tới.";
+      ? "Viết Morning Brief đúng mẫu. Mỗi tin trong macroNews/corporateNews/marketNews phải có link từ dữ liệu news nếu có."
+      : "Viết tổng kết cuối phiên; marketNews kèm link gốc.";
 
   const user = [
     `LOẠI: ${kind}`,
