@@ -9,9 +9,14 @@ import { fetchForexSnapshot } from "@/lib/forex/connectors";
 import { FOREX_BY_SYMBOL } from "@/lib/forex/data";
 
 export const dynamic = "force-dynamic";
+/** Vercel function budget — fail fast rather than hang 60s. */
+export const maxDuration = 20;
 
 const MEMORY_TTL_MS = 12_000;
 const MEMORY_HARD_TTL_MS = 45_000;
+/** Absolute ceiling for this handler. */
+const HARD_DEADLINE_MS = 12_000;
+const DB_BUDGET_MS = 4_000;
 
 interface ForexPricesPayload {
   prices: unknown[];
@@ -35,8 +40,17 @@ function getCachedPayload(allowStale = false): ForexPricesPayload | null {
   return null;
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms),
+    ),
+  ]);
+}
+
 async function liveYahooPrices(): Promise<ForexPricesPayload> {
-  const snapshot = await fetchForexSnapshot();
+  const snapshot = await withTimeout(fetchForexSnapshot(), 10_000, "yahoo_snapshot");
   const prices = snapshot.quotes.map((q) => {
     const def = FOREX_BY_SYMBOL.get(q.symbol);
     return {
@@ -56,20 +70,21 @@ async function liveYahooPrices(): Promise<ForexPricesPayload> {
   });
   return {
     prices,
-    freshness: {
-      refreshed: true,
-      source: snapshot.source,
-      live: true,
-    },
+    freshness: { refreshed: true, source: snapshot.source, live: true },
   };
 }
 
-async function loadFromDb(): Promise<ForexPricesPayload | null> {
+async function loadFromDbFast(): Promise<ForexPricesPayload | null> {
   try {
-    await ensureMarketTables().catch(() => undefined);
-    // Non-blocking: kick refresh if stale, never wait for full Yahoo multi-pair sync here
+    await withTimeout(
+      ensureMarketTables().catch(() => undefined),
+      2_000,
+      "ensure_tables",
+    ).catch(() => undefined);
+
     void ensureForexFresh(15_000).catch(() => undefined);
-    const prices = await latestForexPrices();
+
+    const prices = await withTimeout(latestForexPrices(), DB_BUDGET_MS, "latest_forex");
     if (!prices?.length) return null;
     return {
       prices,
@@ -88,12 +103,17 @@ async function loadForexPrices(): Promise<ForexPricesPayload> {
 
   if (!refreshPromise) {
     refreshPromise = (async () => {
-      const fromDb = await loadFromDb();
-      if (fromDb) return fromDb;
-      const live = await liveYahooPrices();
-      // Warm DB in background after live response path
-      void ensureForexFresh(0).catch(() => undefined);
-      return live;
+      // Race DB vs Yahoo — first usable wins; hard overall deadline
+      const dbAttempt = loadFromDbFast();
+      const yahooAttempt = liveYahooPrices().catch((e) => {
+        throw e;
+      });
+
+      // Prefer DB if it returns rows within budget; else Yahoo
+      const db = await dbAttempt;
+      if (db) return db;
+
+      return yahooAttempt;
     })()
       .then((payload) => {
         memoryCache = { payload, createdAt: Date.now() };
@@ -114,7 +134,7 @@ async function loadForexPrices(): Promise<ForexPricesPayload> {
     return stale;
   }
 
-  return refreshPromise;
+  return withTimeout(refreshPromise, HARD_DEADLINE_MS, "forex_prices_total");
 }
 
 export async function GET(req: NextRequest) {
