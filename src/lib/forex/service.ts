@@ -14,6 +14,7 @@ import {
 import { analyzeForex } from "./analysis";
 import { forProvider } from "@/lib/logger";
 import type { Ohlcv } from "@/lib/connectors/core";
+import { timeframesFor } from "./timeframes";
 
 const log = forProvider("forex-service");
 
@@ -30,6 +31,9 @@ const OHLCV_SOFT_TTL: Record<string, number> = {
   "1h": 300_000,
   "4h": 900_000,
   "1d": 2_400_000,
+  "1w": 6_000_000,
+  "1mo": 12_000_000,
+  "12mo": 30_000_000,
 };
 
 const OHLCV_HARD_TTL: Record<string, number> = {
@@ -39,9 +43,11 @@ const OHLCV_HARD_TTL: Record<string, number> = {
   "1h": 1_800_000,
   "4h": 3_600_000,
   "1d": 12_000_000,
+  "1w": 25_000_000,
+  "1mo": 50_000_000,
+  "12mo": 90_000_000,
 };
 
-/** In-process memory cache — sub-ms on warm serverless instances. */
 const MEM_OHLCV_TTL = 20_000;
 const memOhlcv = new Map<
   string,
@@ -222,7 +228,6 @@ export async function ensureForexFresh(maxAgeMs = 10_000) {
   const latest = raw ? new Date(raw).getTime() : 0;
 
   if (!latest) {
-    // Cold DB — one blocking sync
     try {
       const refreshed = await syncForexPrices();
       const value = { refreshed: true, ...refreshed };
@@ -234,7 +239,6 @@ export async function ensureForexFresh(maxAgeMs = 10_000) {
   }
 
   if (Date.now() - latest > maxAgeMs) {
-    // Background only — never block chart path
     void syncForexPrices().catch((e) =>
       log.warn("bg_forex_sync_failed", { error: String(e) }),
     );
@@ -394,10 +398,6 @@ async function persistBars(
   }
 }
 
-/**
- * Chart path target: 1–3s cold, <200ms warm.
- * Priority: memory → DB soft → DB hard+SWR → Yahoo race → DB fallback.
- */
 export async function syncForexOhlcv(
   symbol: string,
   timeframe: string,
@@ -528,7 +528,6 @@ export async function runForexAnalysis(symbol: string, timeframe = "1h") {
   return { symbol: pair.symbol, name: pair.name, timeframe, source, ...a };
 }
 
-/** First paint: chart is priority; price sync never blocks. */
 export async function getForexDetailBundle(
   symbol: string,
   timeframe = "1h",
@@ -558,9 +557,9 @@ export async function getForexDetailBundle(
   };
 }
 
-/** Pre-warm other TFs after first paint so switches stay <1s. */
+/** Pre-warm other TFs for the symbol (standard or DXY set). */
 export function warmForexTimeframes(symbol: string, primary = "1h") {
-  const others = ["1m", "5m", "15m", "1h", "4h", "1d"].filter((t) => t !== primary);
+  const others = timeframesFor(symbol).filter((t) => t !== primary);
   void Promise.allSettled(
     others.map((tf) =>
       syncForexOhlcv(symbol, tf, 100).catch((e) =>
