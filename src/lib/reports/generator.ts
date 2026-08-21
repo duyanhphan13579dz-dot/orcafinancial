@@ -61,9 +61,22 @@ function pct(n: number | null | undefined): string {
   const sign = n > 0 ? "+" : "";
   return `${sign}${n.toFixed(2)}%`;
 }
+
+const HTML_ESC: Record<string, string> = {
+  "\u0026": "\u0026amp;",
+  "\u003c": "\u003clt;".replace("lt;", "lt;"),
+  "\u003e": "\u003egt;".replace("gt;", "gt;"),
+};
+
 function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&", "<": "<", ">": ">", '"': """, "'": "&#39;" }[c]!));
+  return s
+    .replace(/\u0026/g, "\u0026amp;")
+    .replace(/\u003c/g, "\u003clt;".replace("lt;", "lt;"))
+    .replace(/\u003e/g, "\u003egt;".replace("gt;", "gt;"))
+    .replace(/"/g, "\u0026quot;")
+    .replace(/'/g, "\u0026#39;");
 }
+
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
 }
@@ -97,9 +110,13 @@ function wrapHtml(opts: {
   recommendation: string;
 }): string {
   const p = vnParts(opts.date);
-  const typeLabel = opts.type === "morning" ? "Morning Brief · Bản tin đầu ngày" : "Market Summary · Nhận định cuối phiên";
+  const typeLabel =
+    opts.type === "morning"
+      ? "Morning Brief · Bản tin đầu ngày"
+      : "Market Summary · Nhận định cuối phiên";
   const accent = opts.type === "morning" ? "#0ea5e9" : "#0A2540";
-  return `<!DOCTYPE html>
+  return `
+<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8" />
@@ -120,7 +137,7 @@ function wrapHtml(opts: {
 </style>
 </head>
 <body>
-  <div class="meta">ORCA FINANCIAL · ${typeLabel}<br/>${viLongDate(opts.date)} · Phát hành ${String(p.hh).padStart(2,"0")}:${String(p.mm).padStart(2,"0")} ICT</div>
+  <div class="meta">ORCA FINANCIAL · ${typeLabel}<br/>${viLongDate(opts.date)} · Phát hành ${String(p.hh).padStart(2, "0")}:${String(p.mm).padStart(2, "0")} ICT</div>
   <h1>${opts.headline}</h1>
   <div class="lede">${opts.lede}</div>
   ${opts.body}
@@ -131,9 +148,28 @@ function wrapHtml(opts: {
 </html>`;
 }
 
-function newsList(items: Array<{ title: string; link: string; sourceName: string }>, max = 6): string {
-  if (!items.length) return `<p><em>Không có tin mới tại thời điểm phát hành.</em></p>`;
-  return `<ul>${items.slice(0, max).map((it) => `<li><a href="${it.link}" target="_blank" rel="noreferrer">${escapeHtml(it.title)}</a> — ${escapeHtml(it.sourceName)}</li>`).join("")}</ul>`;
+function newsList(
+  items: Array<{ title: string; link: string; sourceName: string }>,
+  max = 6,
+): string {
+  if (!items.length) return "<p><em>Không có tin mới tại thời điểm phát hành.</em></p>";
+  return (
+    "<ul>" +
+    items
+      .slice(0, max)
+      .map(
+        (it) =>
+          "<li><a href=\"" +
+          it.link +
+          "\" target=\"_blank\" rel=\"noreferrer\">" +
+          escapeHtml(it.title) +
+          "</a> — " +
+          escapeHtml(it.sourceName) +
+          "</li>",
+      )
+      .join("") +
+    "</ul>"
+  );
 }
 
 export async function generateMorningBrief(date: Date = new Date()) {
@@ -148,34 +184,52 @@ export async function generateMorningBrief(date: Date = new Date()) {
     withTimeout(loadRecentNews(40), 10_000, [] as Awaited<ReturnType<typeof loadRecentNews>>),
   ]);
 
-  const vn = overview?.indices?.find((i) => i.code === "VNINDEX") ?? overview?.indices?.[0] ?? null;
+  const vn =
+    overview?.indices?.find((i) => i.code === "VNINDEX") ?? overview?.indices?.[0] ?? null;
   const analysis = bars.length >= 30 ? analyze("VNINDEX", bars) : null;
   const support = analysis?.supportResistance?.support ?? null;
   const resistance = analysis?.supportResistance?.resistance ?? null;
   const defensivePicks = ["VNM", "FPT", "VCB"];
 
-  const body = `
-    <h2>01 · Điểm tin</h2>
-    ${newsList(newsItems as any, 8)}
-    <h2>02 · Thị trường tham chiếu</h2>
-    <p>VN-Index: <strong>${fmt(vn?.close)}</strong> (${pct(vn?.changePct)}), thanh khoản ${fmtVol(vn?.volume)}.</p>
-    ${support ? `<p>Hỗ trợ gần: ${fmt(support)}. Kháng cự: ${fmt(resistance)}.</p>` : ""}
-    <h2>03 · Chiến lược thận trọng</h2>
-    <ul>
-      <li>Tỷ trọng cổ phiếu khuyến nghị: <strong>30–45%</strong>.</li>
-      <li>Danh mục phòng thủ: ${defensivePicks.join(", ")}.</li>
-      <li>Cắt lỗ cứng −5% đến −7% cho vị thế ngắn hạn.</li>
-      <li>Không mua đuổi, không dùng margin cao.</li>
-    </ul>`;
+  const body =
+    "<h2>01 · Điểm tin</h2>" +
+    newsList(newsItems as any, 8) +
+    "<h2>02 · Thị trường tham chiếu</h2>" +
+    "<p>VN-Index: <strong>" +
+    fmt(vn?.close) +
+    "</strong> (" +
+    pct(vn?.changePct) +
+    "), thanh khoản " +
+    fmtVol(vn?.volume) +
+    ".</p>" +
+    (support
+      ? "<p>Hỗ trợ gần: " + fmt(support) + ". Kháng cự: " + fmt(resistance) + ".</p>"
+      : "") +
+    "<h2>03 · Chiến lược thận trọng</h2>" +
+    "<ul>" +
+    "<li>Tỷ trọng cổ phiếu khuyến nghị: <strong>30–45%</strong>.</li>" +
+    "<li>Danh mục phòng thủ: " +
+    defensivePicks.join(", ") +
+    ".</li>" +
+    "<li>Cắt lỗ cứng −5% đến −7% cho vị thế ngắn hạn.</li>" +
+    "<li>Không mua đuổi, không dùng margin cao.</li>" +
+    "</ul>";
 
   const html = wrapHtml({
     type: "morning",
     date,
     headline: "Điểm tin đầu ngày & chiến lược thận trọng",
-    lede: `Bản tin đầu ngày ${viShortDate(date)} tổng hợp tin và chiến lược giao dịch thận trọng, ưu tiên bảo toàn vốn.`,
+    lede:
+      "Bản tin đầu ngày " +
+      viShortDate(date) +
+      " tổng hợp tin và chiến lược giao dịch thận trọng, ưu tiên bảo toàn vốn.",
     body,
-    conclusion: "Phiên hôm nay nghiêng về kịch bản giằng co trong biên độ hẹp. Ưu tiên quan sát và chọn lọc, hạn chế mở vị thế đầu cơ.",
-    recommendation: `Giữ tỷ trọng 30–45%. Ưu tiên ${defensivePicks.join(", ")}. Cắt lỗ −5% đến −7%.`,
+    conclusion:
+      "Phiên hôm nay nghiêng về kịch bản giằng co trong biên độ hẹp. Ưu tiên quan sát và chọn lọc, hạn chế mở vị thế đầu cơ.",
+    recommendation:
+      "Giữ tỷ trọng 30–45%. Ưu tiên " +
+      defensivePicks.join(", ") +
+      ". Cắt lỗ −5% đến −7%.",
   });
 
   const saved = await storePersist("morning", dateKey, html, `Morning Brief ${dateKey}`, {
@@ -184,8 +238,19 @@ export async function generateMorningBrief(date: Date = new Date()) {
     newsCount: newsItems.length,
     latencyMs: Date.now() - startedAt,
   });
-  log.info("generate_done", { date: dateKey, id: saved.id, persisted: saved.persisted, latencyMs: Date.now() - startedAt });
-  return { id: saved.id ?? undefined, html, type: "morning" as const, date: dateKey, persisted: saved.persisted };
+  log.info("generate_done", {
+    date: dateKey,
+    id: saved.id,
+    persisted: saved.persisted,
+    latencyMs: Date.now() - startedAt,
+  });
+  return {
+    id: saved.id ?? undefined,
+    html,
+    type: "morning" as const,
+    date: dateKey,
+    persisted: saved.persisted,
+  };
 }
 
 export async function generateMarketSummary(date: Date = new Date()) {
@@ -202,8 +267,13 @@ export async function generateMarketSummary(date: Date = new Date()) {
 
   if (!overview) log.warn("no_overview_data_using_fallback", { date: dateKey });
 
-  const emptyIdx = { close: null as number | null, changePct: null as number | null, volume: null as number | null };
-  const vn = overview?.indices?.find((i) => i.code === "VNINDEX") ?? overview?.indices?.[0] ?? emptyIdx;
+  const emptyIdx = {
+    close: null as number | null,
+    changePct: null as number | null,
+    volume: null as number | null,
+  };
+  const vn =
+    overview?.indices?.find((i) => i.code === "VNINDEX") ?? overview?.indices?.[0] ?? emptyIdx;
   const hnx = overview?.indices?.find((i) => i.code === "HNX") ?? null;
   const adv = overview?.breadth?.advancers ?? 0;
   const dec = overview?.breadth?.decliners ?? 0;
@@ -214,26 +284,55 @@ export async function generateMarketSummary(date: Date = new Date()) {
   const resistance = analysis?.supportResistance?.resistance ?? null;
   const pctVal = vn.changePct ?? 0;
 
-  const body = `
-    <h2>01 · Diễn biến phiên</h2>
-    <p>VN-Index <strong>${fmt(vn.close)}</strong> (${pct(vn.changePct)}) · HNX ${fmt(hnx?.close)} (${pct(hnx?.changePct)}) · Thanh khoản ${fmtVol(vn.volume)}</p>
-    <p>Độ rộng: ${adv} tăng · ${dec} giảm.</p>
-    <p>Top tăng: ${topG.map((g) => `${g.symbol} ${pct(g.changePct)}`).join(", ") || "—"}</p>
-    <p>Top giảm: ${topL.map((l) => `${l.symbol} ${pct(l.changePct)}`).join(", ") || "—"}</p>
-    <h2>02 · Ba kịch bản phiên tới</h2>
-    <ul>
-      <li><strong>Cơ sở:</strong> biên độ ${fmt(support)} – ${fmt(resistance)}, tỷ trọng 45–55%.</li>
-      <li><strong>Tích cực:</strong> breakout kháng cự kèm thanh khoản → tỷ trọng 60–70%.</li>
-      <li><strong>Tiêu cực:</strong> thủng hỗ trợ → cắt lỗ, giảm tỷ trọng 20–30%.</li>
-    </ul>
-    <h2>03 · Tin cần theo dõi</h2>
-    ${newsList(newsItems as any, 6)}`;
+  const body =
+    "<h2>01 · Diễn biến phiên</h2>" +
+    "<p>VN-Index <strong>" +
+    fmt(vn.close) +
+    "</strong> (" +
+    pct(vn.changePct) +
+    ") · HNX " +
+    fmt(hnx?.close) +
+    " (" +
+    pct(hnx?.changePct) +
+    ") · Thanh khoản " +
+    fmtVol(vn.volume) +
+    "</p>" +
+    "<p>Độ rộng: " +
+    adv +
+    " tăng · " +
+    dec +
+    " giảm.</p>" +
+    "<p>Top tăng: " +
+    (topG.map((g) => g.symbol + " " + pct(g.changePct)).join(", ") || "—") +
+    "</p>" +
+    "<p>Top giảm: " +
+    (topL.map((l) => l.symbol + " " + pct(l.changePct)).join(", ") || "—") +
+    "</p>" +
+    "<h2>02 · Ba kịch bản phiên tới</h2>" +
+    "<ul>" +
+    "<li><strong>Cơ sở:</strong> biên độ " +
+    fmt(support) +
+    " – " +
+    fmt(resistance) +
+    ", tỷ trọng 45–55%.</li>" +
+    "<li><strong>Tích cực:</strong> breakout kháng cự kèm thanh khoản → tỷ trọng 60–70%.</li>" +
+    "<li><strong>Tiêu cực:</strong> thủng hỗ trợ → cắt lỗ, giảm tỷ trọng 20–30%.</li>" +
+    "</ul>" +
+    "<h2>03 · Tin cần theo dõi</h2>" +
+    newsList(newsItems as any, 6);
 
   const html = wrapHtml({
     type: "summary",
     date,
     headline: "Đọc vị phiên hôm nay & kế hoạch hành động phiên tới",
-    lede: `Phiên ${viShortDate(date)} khép lại với VN-Index ${fmt(vn.close)} (${pct(vn.changePct)}). Bản tổng kết kèm ba kịch bản phiên tới.`,
+    lede:
+      "Phiên " +
+      viShortDate(date) +
+      " khép lại với VN-Index " +
+      fmt(vn.close) +
+      " (" +
+      pct(vn.changePct) +
+      "). Bản tổng kết kèm ba kịch bản phiên tới.",
     body,
     conclusion:
       pctVal > 0.5
@@ -243,10 +342,14 @@ export async function generateMarketSummary(date: Date = new Date()) {
           : "Trung lập thiên thận trọng — giao dịch chọn lọc, tỷ trọng vừa phải.",
     recommendation:
       pctVal > 0.5
-        ? `Tỷ trọng 50–60%. Chốt lời 30% tại ${fmt(resistance)}. Cắt lỗ −5%.`
+        ? "Tỷ trọng 50–60%. Chốt lời 30% tại " + fmt(resistance) + ". Cắt lỗ −5%."
         : pctVal < -0.5
-          ? `Tỷ trọng 25–35%. Cắt lỗ vị thế vi phạm. Không bắt đáy. Hỗ trợ ${fmt(support)}.`
-          : `Tỷ trọng 40–50%. Chỉ mở vị thế khi kiểm định ${fmt(support)} hoặc breakout ${fmt(resistance)}.`,
+          ? "Tỷ trọng 25–35%. Cắt lỗ vị thế vi phạm. Không bắt đáy. Hỗ trợ " + fmt(support) + "."
+          : "Tỷ trọng 40–50%. Chỉ mở vị thế khi kiểm định " +
+            fmt(support) +
+            " hoặc breakout " +
+            fmt(resistance) +
+            ".",
   });
 
   const saved = await storePersist("summary", dateKey, html, `Market Summary ${dateKey}`, {
@@ -257,8 +360,19 @@ export async function generateMarketSummary(date: Date = new Date()) {
     newsCount: newsItems.length,
     latencyMs: Date.now() - startedAt,
   });
-  log.info("generate_done", { date: dateKey, id: saved.id, persisted: saved.persisted, latencyMs: Date.now() - startedAt });
-  return { id: saved.id ?? undefined, html, type: "summary" as const, date: dateKey, persisted: saved.persisted };
+  log.info("generate_done", {
+    date: dateKey,
+    id: saved.id,
+    persisted: saved.persisted,
+    latencyMs: Date.now() - startedAt,
+  });
+  return {
+    id: saved.id ?? undefined,
+    html,
+    type: "summary" as const,
+    date: dateKey,
+    persisted: saved.persisted,
+  };
 }
 
 export async function getStoredReport(type: ReportType, dateKey: string) {
