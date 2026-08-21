@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 
-import { db } from "@/db";
+import { db, safeDbQuery } from "@/db";
 import { ensureAuthTables } from "@/db/ensure-auth-tables";
 import { refreshTokens, users } from "@/db/schema";
 
@@ -46,11 +46,14 @@ function redirectWithError(
   return response;
 }
 
-/** Never leak raw SQL / stack traces to the browser. */
 function publicAuthError(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error);
-  if (/Failed query|relation .* does not exist|ECONNREFUSED|ECONNRESET|timeout|password authentication|SSL/i.test(msg)) {
-    return "Không kết nối được cơ sở dữ liệu. Vui lòng thử lại sau vài giây.";
+  if (
+    /Failed query|relation .* does not exist|ECONNREFUSED|ECONNRESET|timeout|password authentication|SSL|connect|pool_connect/i.test(
+      msg,
+    )
+  ) {
+    return "Không kết nối được cơ sở dữ liệu. Kiểm tra DATABASE_URL trên Vercel (Supabase Transaction pooler :6543 + ?pgbouncer=true) rồi redeploy.";
   }
   if (msg.length > 180) return "Đăng nhập Google thất bại. Vui lòng thử lại.";
   return msg || "Đăng nhập Google thất bại";
@@ -69,11 +72,16 @@ async function createSession(
   const refreshToken = generateRefreshToken();
   const expiresAt = getRefreshTokenExpiresAt();
 
-  await db.insert(refreshTokens).values({
-    token: refreshToken,
-    userId: user.id,
-    expiresAt,
-  });
+  await safeDbQuery(
+    "google_insert_refresh",
+    () =>
+      db.insert(refreshTokens).values({
+        token: refreshToken,
+        userId: user.id,
+        expiresAt,
+      }),
+    { attempts: 3, baseMs: 800 },
+  );
 
   await upsertSession({
     userId: user.id,
@@ -130,7 +138,6 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Ensure auth schema exists before any user query (cold start / missed migration).
     await ensureAuthTables();
 
     const redirectUri = `${getAppUrl(req)}/api/v1/auth/google/callback`;
@@ -159,11 +166,16 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      const existingRows = await db
-        .select()
-        .from(users)
-        .where(eq(users.email, google.email))
-        .limit(1);
+      const existingRows = await safeDbQuery(
+        "google_link_select",
+        () =>
+          db
+            .select()
+            .from(users)
+            .where(eq(users.email, google.email))
+            .limit(1),
+        { attempts: 3, baseMs: 800 },
+      );
 
       const existing = existingRows[0];
 
@@ -175,17 +187,22 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      const updated = await db
-        .update(users)
-        .set({
-          provider: "google",
-          name: currentUser.name || google.name || null,
-          avatarUrl: google.picture || currentUser.avatarUrl || null,
-          emailVerified: true,
-          updatedAt: new Date(),
-        })
-        .where(eq(users.id, currentUserId))
-        .returning();
+      const updated = await safeDbQuery(
+        "google_link_update",
+        () =>
+          db
+            .update(users)
+            .set({
+              provider: "google",
+              name: currentUser.name || google.name || null,
+              avatarUrl: google.picture || currentUser.avatarUrl || null,
+              emailVerified: true,
+              updatedAt: new Date(),
+            })
+            .where(eq(users.id, currentUserId))
+            .returning(),
+        { attempts: 3, baseMs: 800 },
+      );
 
       if (!updated.length) {
         return redirectWithError(
@@ -205,40 +222,55 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const existingRows = await db
-      .select()
-      .from(users)
-      .where(eq(users.email, google.email))
-      .limit(1);
+    const existingRows = await safeDbQuery(
+      "google_login_select",
+      () =>
+        db
+          .select()
+          .from(users)
+          .where(eq(users.email, google.email))
+          .limit(1),
+      { attempts: 3, baseMs: 800 },
+    );
 
     let user = existingRows[0];
 
     if (!user) {
-      const inserted = await db
-        .insert(users)
-        .values({
-          email: google.email,
-          passwordHash: null,
-          name: google.name,
-          avatarUrl: google.picture,
-          provider: "google",
-          emailVerified: true,
-        })
-        .returning();
+      const inserted = await safeDbQuery(
+        "google_login_insert",
+        () =>
+          db
+            .insert(users)
+            .values({
+              email: google.email,
+              passwordHash: null,
+              name: google.name,
+              avatarUrl: google.picture,
+              provider: "google",
+              emailVerified: true,
+            })
+            .returning(),
+        { attempts: 3, baseMs: 800 },
+      );
 
       user = inserted[0];
     } else {
-      const updated = await db
-        .update(users)
-        .set({
-          provider: "google",
-          emailVerified: true,
-          name: user.name || google.name || null,
-          avatarUrl: user.avatarUrl || google.picture || null,
-          updatedAt: new Date(),
-        })
-        .where(eq(users.id, user.id))
-        .returning();
+      const updated = await safeDbQuery(
+        "google_login_update",
+        () =>
+          db
+            .update(users)
+            .set({
+              provider: "google",
+              emailVerified: true,
+              name: user.name || google.name || null,
+              avatarUrl: user.avatarUrl || google.picture || null,
+              updatedAt: new Date(),
+            })
+            .where(eq(users.id, user.id))
+            .returning(),
+        { attempts: 3, baseMs: 800 },
+      );
 
       if (updated.length) {
         user = updated[0];
