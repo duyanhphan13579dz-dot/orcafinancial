@@ -1,4 +1,4 @@
-import { asc, desc, sql } from "drizzle-orm";
+import { asc, desc } from "drizzle-orm";
 import { db } from "@/db";
 import { companies, priceSnapshots } from "@/db/schema";
 import { FEATURED_SYMBOLS, getQuotes } from "@/lib/market";
