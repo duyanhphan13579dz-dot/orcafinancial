@@ -34,7 +34,8 @@ export const dynamic = "force-dynamic";
  * POST /api/v1/auth/login
  */
 export async function POST(req: NextRequest) {
-  const limited = checkRateLimit(req, 10);
+  // Auth retries after DB blips must not lock users out at 10/min.
+  const limited = checkRateLimit(req, 40);
   if (limited) return limited;
 
   try {
@@ -142,9 +143,17 @@ export async function POST(req: NextRequest) {
     return response;
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Đăng nhập thất bại";
-    if (/Failed query|relation .* does not exist|ECONNREFUSED|ECONNRESET/i.test(msg)) {
-      return fail("Không kết nối được cơ sở dữ liệu. Vui lòng thử lại sau.", 503);
+    console.error("[auth/login]", msg);
+    if (
+      /Failed query|relation .* does not exist|ECONNREFUSED|ECONNRESET|timeout|password authentication|SSL|connect/i.test(
+        msg,
+      )
+    ) {
+      return fail(
+        "Không kết nối được cơ sở dữ liệu. Kiểm tra DATABASE_URL trên Vercel hoặc thử lại sau vài giây.",
+        503,
+      );
     }
-    return fail(msg, 500);
+    return fail("Đăng nhập thất bại. Vui lòng thử lại.", 500);
   }
 }
