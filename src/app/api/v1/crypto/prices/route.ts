@@ -8,11 +8,13 @@ import {
 import { fetchBinanceTickers } from "@/lib/crypto/connectors";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 20;
 
-/** Soft in-process cache — list page can re-hit within this window without DB. */
 const MEMORY_TTL_MS = 15_000;
-/** Stale cache still served while background refresh runs. */
 const MEMORY_HARD_TTL_MS = 60_000;
+const HARD_DEADLINE_MS = 12_000;
+const DB_BUDGET_MS = 4_000;
+const BINANCE_BUDGET_MS = 8_000;
 
 const STABLES = new Set([
   "USDT", "USDC", "FDUSD", "TUSD", "DAI", "BUSD", "USDE", "USD1", "PYUSD",
@@ -41,6 +43,15 @@ function getCachedPayload(allowStale = false): CryptoPricesPayload | null {
   return null;
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms),
+    ),
+  ]);
+}
+
 async function ensureTablesOnce() {
   if (!marketTablesPromise) {
     marketTablesPromise = ensureMarketTables().catch((error) => {
@@ -51,9 +62,8 @@ async function ensureTablesOnce() {
   return marketTablesPromise;
 }
 
-/** Direct Binance 24hr tickers — no DB required. */
 async function liveBinancePrices(limit: number): Promise<CryptoPricesPayload> {
-  const tickers = await fetchBinanceTickers();
+  const tickers = await withTimeout(fetchBinanceTickers(), BINANCE_BUDGET_MS, "binance_tickers");
   const prices = tickers
     .filter((t) => !STABLES.has(t.symbol.toUpperCase()))
     .slice(0, limit)
@@ -78,10 +88,11 @@ async function liveBinancePrices(limit: number): Promise<CryptoPricesPayload> {
 
 async function loadFromDb(limit: number): Promise<CryptoPricesPayload | null> {
   try {
-    await ensureTablesOnce().catch(() => undefined);
-    // Soft freshness: only schedule background sync, do not block on full market ingest
+    await withTimeout(ensureTablesOnce().catch(() => undefined), 2_000, "ensure_tables").catch(
+      () => undefined,
+    );
     void ensureCryptoFresh(20_000).catch(() => undefined);
-    const prices = await latestCryptoPrices(limit);
+    const prices = await withTimeout(latestCryptoPrices(limit), DB_BUDGET_MS, "latest_crypto");
     if (!prices?.length) return null;
     return {
       prices,
@@ -96,15 +107,12 @@ async function loadCryptoPrices(limit: number): Promise<CryptoPricesPayload> {
   const fresh = getCachedPayload(false);
   if (fresh) return fresh;
 
-  // Serve slightly stale memory while one refresh is in flight
   const stale = getCachedPayload(true);
 
   if (!refreshPromise) {
     refreshPromise = (async () => {
       const fromDb = await loadFromDb(limit);
       if (fromDb) return fromDb;
-
-      // Cold path: live Binance, then background DB warm
       const live = await liveBinancePrices(limit);
       void ensureCryptoFresh(0).catch(() => undefined);
       return live;
@@ -124,12 +132,11 @@ async function loadCryptoPrices(limit: number): Promise<CryptoPricesPayload> {
   }
 
   if (stale) {
-    // Don't wait — return stale immediately; refresh runs in background
     void refreshPromise;
     return stale;
   }
 
-  return refreshPromise;
+  return withTimeout(refreshPromise, HARD_DEADLINE_MS, "crypto_prices_total");
 }
 
 export async function GET(req: NextRequest) {
