@@ -75,24 +75,23 @@ export default function ForexDetail() {
     let cancelled = false;
     setBundleLoading(true);
     setBundleError(null);
-    api<Bundle>(`/forex/${symbol}/bundle?timeframe=${tf}&limit=200`)
+    // Prefer OHLCV-only first for sub-3s chart; bundle analysis can follow
+    api<{ bars: Bar[] }>(`/forex/${symbol}/ohlcv?timeframe=${tf}&limit=120`)
       .then((env) => {
         if (cancelled) return;
-        setBundle(env.data);
         setBars(env.data.bars ?? []);
-        setChartSource(env.data.source ?? "");
+        setChartSource(String(env.meta?.source ?? "yahoo"));
         setBundleLoading(false);
         initialDone.current = true;
       })
       .catch(async (err) => {
         if (cancelled) return;
         try {
-          const o = await api<{ bars: Bar[] }>(
-            `/forex/${symbol}/ohlcv?timeframe=${tf}&limit=200`,
-          );
+          const b = await api<Bundle>(`/forex/${symbol}/bundle?timeframe=${tf}&limit=120`);
           if (cancelled) return;
-          setBars(o.data.bars ?? []);
-          setChartSource(String(o.meta?.source ?? "yahoo"));
+          setBundle(b.data);
+          setBars(b.data.bars ?? []);
+          setChartSource(b.data.source ?? "");
           setBundleError(null);
         } catch {
           setBundleError(err instanceof Error ? err.message : String(err));
@@ -100,6 +99,19 @@ export default function ForexDetail() {
         setBundleLoading(false);
         initialDone.current = true;
       });
+
+    // Meta + analysis in background (does not block chart)
+    void api<Bundle>(`/forex/${symbol}/bundle?timeframe=${tf}&limit=120`)
+      .then((env) => {
+        if (cancelled) return;
+        setBundle(env.data);
+        if (!bars.length && env.data.bars?.length) {
+          setBars(env.data.bars);
+          setChartSource(env.data.source ?? "");
+        }
+      })
+      .catch(() => undefined);
+
     return () => {
       cancelled = true;
     };
@@ -112,16 +124,14 @@ export default function ForexDetail() {
       setBundleError(null);
       try {
         const o = await api<{ bars: Bar[] }>(
-          `/forex/${symbol}/ohlcv?timeframe=${next}&limit=200`,
+          `/forex/${symbol}/ohlcv?timeframe=${next}&limit=120`,
         );
         setBars(o.data.bars ?? []);
         setChartSource(String(o.meta?.source ?? "yahoo"));
         void api<Analysis>(`/forex/${symbol}/analysis?timeframe=${next}`)
           .then((a) => {
             setBundle((prev) =>
-              prev
-                ? { ...prev, analysis: a.data, timeframe: next }
-                : prev,
+              prev ? { ...prev, analysis: a.data, timeframe: next } : prev,
             );
           })
           .catch(() => undefined);
