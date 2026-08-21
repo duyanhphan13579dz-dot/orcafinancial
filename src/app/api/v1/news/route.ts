@@ -14,7 +14,21 @@ export async function GET(req: NextRequest) {
       limit: Number(sp.get("limit") ?? "20") || 20,
       symbol: sp.get("symbol")?.toUpperCase() || undefined,
     });
-    return ok(result, { source: "vnexpress+cafef+vietstock (RSS)", confidence: 1 }, { cacheSeconds: 20 });
+    const response = ok(
+      result,
+      { source: "vnexpress+cafef+vietstock (RSS)", confidence: 1 },
+      { cacheSeconds: 30 },
+    );
+    // Edge/CDN: short max-age, long SWR so repeat navigations are instant
+    response.headers.set(
+      "Cache-Control",
+      "public, s-maxage=30, stale-while-revalidate=120",
+    );
+    response.headers.set(
+      "Vercel-CDN-Cache-Control",
+      "public, s-maxage=30, stale-while-revalidate=120",
+    );
+    return response;
   } catch (err) {
     return handleError(err, "news");
   }
