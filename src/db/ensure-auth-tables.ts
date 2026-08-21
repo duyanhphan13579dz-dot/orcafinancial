@@ -94,10 +94,30 @@ export async function ensureAuthTables(): Promise<void> {
   if (ensurePromise) return ensurePromise;
 
   ensurePromise = (async () => {
-    const client = await pool.connect();
+    let client;
     try {
-      // pgcrypto / gen_random_uuid is available on modern Postgres & Supabase
-      await client.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto"`);
+      client = await Promise.race([
+        pool.connect(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("ensure_auth_pool_connect_timeout")), 12_000),
+        ),
+      ]);
+
+      // Supabase already has gen_random_uuid(); extension may fail for non-superuser.
+      try {
+        await client.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto"`);
+      } catch (extErr) {
+        console.warn(
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            level: "warn",
+            provider: "database",
+            msg: "pgcrypto_extension_skip",
+            error: extErr instanceof Error ? extErr.message : String(extErr),
+          }),
+        );
+      }
+
       await client.query(DDL);
       ensured = true;
       console.log(
@@ -118,10 +138,9 @@ export async function ensureAuthTables(): Promise<void> {
           error: err instanceof Error ? err.message : String(err),
         }),
       );
-      // Do not mark ensured — next request can retry
       throw err;
     } finally {
-      client.release();
+      client?.release();
       ensurePromise = null;
     }
   })();
