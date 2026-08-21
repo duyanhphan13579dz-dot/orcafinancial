@@ -1,7 +1,7 @@
 /**
- * LLM narrative aligned to ORCA Morning Brief sample layout:
- * 01 Vĩ mô · 02 Doanh nghiệp · 03 Thị trường · 04 Chiến lược · 05 Rủi ro
- * + Cảnh báo rủi ro · Kết luận · Khuyến nghị chiến lược
+ * LLM narrative for ORCA reports
+ * Morning: 01 Vĩ mô · 02 DN · 03 Thị trường · 04 Chiến lược · 05 Rủi ro
+ * Summary: 01 Diễn biến · 02 Tin · 03 Nhận định phiên · 04 3 kịch bản · 05 Rủi ro · Đánh giá tổng quan
  */
 import { chatWithFallback } from "@/lib/llm/router";
 import { forProvider } from "@/lib/logger";
@@ -12,8 +12,14 @@ export interface NewsBullet {
   title: string;
   source?: string;
   time?: string;
-  /** Original article URL when available */
   link?: string;
+}
+
+export interface ScenarioItem {
+  /** Cơ sở | Tích cực | Tiêu cực */
+  name: string;
+  condition: string;
+  action: string;
 }
 
 export interface MorningBriefContent {
@@ -34,6 +40,12 @@ export interface MorningBriefContent {
   riskWarning: string;
   conclusion: string;
   recommendation: string;
+  /** Summary-only: detailed session analysis */
+  sessionAnalysis?: string;
+  /** Summary-only: 3 scenarios for next session */
+  scenarios?: ScenarioItem[];
+  /** Summary-only: overall session evaluation (end of report) */
+  sessionOverview?: string;
   model?: string;
   provider?: string;
 }
@@ -54,9 +66,9 @@ CẤU TRÚC: 01 Vĩ mô · 02 Doanh nghiệp · 03 Thị trường · 04 Chiến
 
 QUY TẮC:
 1. Không bịa giá/%/điểm.
-2. Mỗi bullet tin PHẢI copy "link" từ mục news trong dữ liệu nếu khớp tiêu đề (để người đọc bấm xem bài gốc).
+2. Mỗi bullet tin PHẢI copy "link" từ mục news trong dữ liệu nếu khớp tiêu đề.
 3. Bỏ tin nhiễu; ưu tiên tin ảnh hưởng TTCK VN.
-4. KHÔNG đưa "danh mục tham khảo", "danh mục phòng thủ", "danh mục ưu tiên" hay liệt kê mã cụ thể (VNM, FPT, VCB…). Chiến lược chỉ nói tỷ trọng, kỷ luật vào lệnh/cắt lỗ, vùng hỗ trợ–kháng cự chỉ số — không gợi ý basket cổ phiếu.
+4. KHÔNG đưa danh mục tham khảo / liệt kê mã cụ thể (VNM, FPT, VCB…).
 5. Trả JSON thuần:
 {
   "headline": string,
@@ -79,26 +91,34 @@ QUY TẮC:
 }`;
 
 const SUMMARY_SYSTEM = `Bạn là chuyên gia tổng kết cuối phiên ORCA FINANCIAL.
-Dựa CHỈ trên JSON. Mỗi tin marketNews nên kèm link từ dữ liệu.
-Không đưa danh mục tham khảo / liệt kê mã cổ phiếu cụ thể.
-JSON thuần:
+Quy trình: (1) đọc dữ liệu thô Data Engine → (2) lọc & chuẩn hóa tin/số liệu phiên → (3) phân tích nhận định chi tiết → (4) đánh giá phiên → (5) 3 kịch bản phiên tới → (6) đánh giá tổng quan toàn phiên.
+
+CẤU TRÚC BẮT BUỘC:
+01 · DIỄN BIẾN PHIÊN — tóm tắt số liệu VN-Index/HNX/độ rộng/thanh khoản (chỉ dùng số có trong JSON).
+02 · TIN ĐÁNG CHÚ Ý — lọc tin liên quan phiên; mỗi tin kèm link từ dữ liệu nếu có.
+03 · NHẬN ĐỊNH CHI TIẾT — phân tích dòng tiền, khối ngoại, nhóm ngành, tâm lý; viết sessionAnalysis 2–4 đoạn súc tích.
+04 · BA KỊCH BẢN PHIÊN TỚI — đúng 3 mục: Cơ sở, Tích cực, Tiêu cực; mỗi mục có condition + action (tỷ trọng, không liệt kê mã cụ thể).
+05 · RỦI RO — 3–5 rủi ro cụ thể + riskWarning ngắn.
+CUỐI: sessionOverview = ĐÁNH GIÁ TỔNG QUAN TOÀN PHIÊN (đoạn kết đọng, không lặp lại bullet).
+
+QUY TẮC:
+1. Không bịa số liệu. Thiếu thì nói "chưa có dữ liệu".
+2. Không danh mục tham khảo / mã cổ phiếu cụ thể.
+3. Trả JSON thuần:
 {
   "headline": string,
   "lede": string,
-  "macroIntro": "",
-  "macroNews": [],
-  "macroCommoditiesNote": "",
-  "corporateIntro": "",
-  "corporateNews": [],
-  "corporateNote": "",
   "marketIntro": string,
   "marketNews": [{ "title": string, "source": string, "time": string, "link": string }],
-  "cryptoLine": "",
-  "strategyIntro": string,
-  "strategyPoints": string[],
+  "sessionAnalysis": string,
+  "scenarios": [
+    { "name": "Cơ sở", "condition": string, "action": string },
+    { "name": "Tích cực", "condition": string, "action": string },
+    { "name": "Tiêu cực", "condition": string, "action": string }
+  ],
   "risks": string[],
   "riskWarning": string,
-  "conclusion": string,
+  "sessionOverview": string,
   "recommendation": string
 }`;
 
@@ -147,7 +167,6 @@ function arrStr(v: unknown, maxItems = 10, maxLen = 400): string[] {
     .slice(0, maxItems);
 }
 
-/** Strip reference-basket wording from free text. */
 function stripBasket(text: string): string {
   return text
     .replace(/Danh\s*mục\s*(phòng\s*thủ\s*)?(tham\s*khảo|ưu\s*tiên)[^.]{0,120}\.?/gi, "")
@@ -155,7 +174,25 @@ function stripBasket(text: string): string {
     .trim();
 }
 
-/** Attach missing links by fuzzy-matching titles against Data Engine news list. */
+function parseScenarios(raw: unknown): ScenarioItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ScenarioItem[] = [];
+  for (const item of raw.slice(0, 3)) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const name = str(o.name, 40) || str(o.title, 40);
+    const condition = stripBasket(str(o.condition, 320) || str(o.desc, 320));
+    const action = stripBasket(str(o.action, 320));
+    if (!name && !condition) continue;
+    out.push({
+      name: name || "Kịch bản",
+      condition: condition || "—",
+      action: action || "Quan sát, giữ kỷ luật tỷ trọng.",
+    });
+  }
+  return out;
+}
+
 export function attachNewsLinks(
   items: NewsBullet[],
   catalog: Array<{ title: string; link?: string | null; source?: string | null }>,
@@ -199,9 +236,6 @@ function parseMorning(raw: string): ReportLlmNarrative | null {
     const corporateNews = bullets(o.corporateNews, 8);
     const marketNews = bullets(o.marketNews, 8);
 
-    const marketCommentary =
-      str(o.marketIntro, 800) || str(o.macroIntro, 800) || conclusion;
-
     return {
       headline,
       lede:
@@ -226,7 +260,80 @@ function parseMorning(raw: string): ReportLlmNarrative | null {
       recommendation,
       newsInsights: [...macroNews, ...corporateNews, ...marketNews].map((n) => n.title),
       actionPoints: strategyPoints,
-      marketCommentary,
+      marketCommentary: str(o.marketIntro, 800) || conclusion,
+      watchlist: [],
+      classifiedNews: [],
+      indexImpacts: [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseSummary(raw: string): ReportLlmNarrative | null {
+  const match = raw.trim().match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const o = JSON.parse(match[0]) as Record<string, unknown>;
+    const headline = str(o.headline, 160) || "Đọc vị phiên hôm nay & kế hoạch phiên tới";
+    const lede = str(o.lede, 500);
+    const sessionAnalysis = stripBasket(str(o.sessionAnalysis, 1600) || str(o.marketCommentary, 1600));
+    const sessionOverview = stripBasket(
+      str(o.sessionOverview, 900) || str(o.conclusion, 900),
+    );
+    const recommendation = stripBasket(str(o.recommendation, 500));
+    if (!lede && !sessionAnalysis && !sessionOverview) return null;
+
+    const marketNews = bullets(o.marketNews, 10);
+    const risks = arrStr(o.risks, 6, 320);
+    let scenarios = parseScenarios(o.scenarios);
+
+    // Fallback: strategyPoints as scenario-like lines
+    if (scenarios.length < 3) {
+      const pts = arrStr(o.strategyPoints, 3, 420);
+      const names = ["Cơ sở", "Tích cực", "Tiêu cực"];
+      while (scenarios.length < 3 && pts[scenarios.length]) {
+        const i = scenarios.length;
+        scenarios.push({
+          name: names[i] || `Kịch bản ${i + 1}`,
+          condition: pts[i],
+          action: "Điều chỉnh tỷ trọng theo tín hiệu xác nhận.",
+        });
+      }
+    }
+
+    const strategyPoints = scenarios.map(
+      (s) => `${s.name}: ${s.condition} → ${s.action}`,
+    );
+
+    return {
+      headline,
+      lede:
+        lede ||
+        "Tổng kết phiên giao dịch: diễn biến chỉ số, tin đáng chú ý, nhận định và ba kịch bản phiên tới.",
+      macroIntro: "",
+      macroNews: [],
+      macroCommoditiesNote: "",
+      corporateIntro: "",
+      corporateNews: [],
+      corporateNote: "",
+      marketIntro: str(o.marketIntro, 900),
+      marketNews,
+      cryptoLine: str(o.cryptoLine, 280),
+      strategyIntro: stripBasket(str(o.strategyIntro, 600)),
+      strategyPoints,
+      risks,
+      riskWarning: str(o.riskWarning, 500),
+      conclusion: sessionOverview,
+      recommendation:
+        recommendation ||
+        "Giữ kỷ luật tỷ trọng; chỉ gia tăng khi kịch bản tích cực được xác nhận bằng thanh khoản.",
+      sessionAnalysis,
+      scenarios,
+      sessionOverview,
+      newsInsights: marketNews.map((n) => n.title),
+      actionPoints: strategyPoints,
+      marketCommentary: sessionAnalysis || str(o.marketIntro, 800),
       watchlist: [],
       classifiedNews: [],
       indexImpacts: [],
@@ -247,7 +354,7 @@ export async function generateReportNarrative(
   const task =
     kind === "morning"
       ? "Viết Morning Brief đúng mẫu. Mỗi tin kèm link nếu có. Không liệt kê danh mục cổ phiếu tham khảo."
-      : "Viết tổng kết cuối phiên; marketNews kèm link gốc. Không danh mục tham khảo.";
+      : "Viết Market Summary: lọc dữ liệu phiên → nhận định chi tiết → 3 kịch bản (Cơ sở/Tích cực/Tiêu cực) → đánh giá tổng quan toàn phiên ở cuối (sessionOverview). Tin kèm link. Không danh mục mã cụ thể.";
 
   const user = [
     `LOẠI: ${kind}`,
@@ -266,16 +373,16 @@ export async function generateReportNarrative(
         { role: "user", content: user },
       ],
       {
-        maxTokens: kind === "morning" ? 3200 : 2200,
+        maxTokens: kind === "morning" ? 3200 : 3600,
         temperature: 0.28,
-        timeoutMs: 42_000,
+        timeoutMs: 45_000,
       },
     );
     if (!llm) {
       log.warn("report_llm_unavailable", { kind });
       return null;
     }
-    const parsed = parseMorning(llm.text);
+    const parsed = kind === "summary" ? parseSummary(llm.text) : parseMorning(llm.text);
     if (!parsed) {
       log.warn("report_llm_parse_failed", { kind, snippet: llm.text.slice(0, 180) });
       return null;
@@ -288,8 +395,8 @@ export async function generateReportNarrative(
       model: llm.model,
       latencyMs: llm.latencyMs,
       macro: parsed.macroNews.length,
-      corporate: parsed.corporateNews.length,
       market: parsed.marketNews.length,
+      scenarios: parsed.scenarios?.length ?? 0,
     });
     return parsed;
   } catch (err) {
