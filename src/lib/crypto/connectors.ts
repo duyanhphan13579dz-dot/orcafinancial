@@ -243,14 +243,24 @@ export async function fetchCoinPaprikaMarkets(
   });
 }
 
-export async function fetchCryptoMarketsWithFallback(limit = 100) {
+export async function fetchCryptoMarketsWithFallback(
+  limit = 100,
+): Promise<{ coins: CryptoCoinSource[]; prices: CryptoTicker[]; source: string }> {
   try {
-    // Tickers alone are enough for list prices; exchangeInfo is heavier — only if needed for catalog
+    // Tickers alone are enough for list prices; exchangeInfo is heavier
     const binancePrices = await fetchBinanceTickers();
-    const coins = binancePrices.map((p) => ({
+    const coins: CryptoCoinSource[] = binancePrices.map((p) => ({
       symbol: p.symbol,
       name: p.symbol,
       binanceSymbol: p.binanceSymbol,
+      coingeckoId: undefined,
+      coinpaprikaId: undefined,
+      rank: null,
+      logoUrl: null,
+      marketCap: p.marketCap,
+      circulatingSupply: null,
+      totalSupply: null,
+      maxSupply: null,
     }));
     return { coins, prices: binancePrices.slice(0, limit), source: BINANCE };
   } catch (binanceError) {
