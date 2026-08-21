@@ -8,13 +8,57 @@ import { generateFundamentalReport, type FundamentalReport } from "@/lib/fundame
 import { agentNarrative, listConfiguredProviders, smoothAgentAnswer } from "@/lib/llm";
 import { getHistory, getMarketOverview, getNews, getNewsSentiment, getQuote, searchSymbols } from "@/lib/market";
 import { sentimentLabel } from "@/lib/sentiment";
-import { detectCandlestickPatterns, detectChartPatterns, type CandlePattern, type ChartPattern } from "@/lib/technical-patterns";
+import {
+  detectCandlestickPatterns,
+  detectChartPatterns,
+  type CandlePattern,
+  type ChartPattern,
+} from "@/lib/technical-patterns";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const TICKER_RE = /\b([A-Z]{3})\b/g;
+
+type AgentIntent =
+  | "market_ticker"
+  | "market_overview"
+  | "personal_finance"
+  | "corporate_finance"
+  | "wealth"
+  | "general";
+
+function detectIntent(message: string, hasTickers: boolean): AgentIntent {
+  const m = message.toLowerCase();
+  if (hasTickers) return "market_ticker";
+
+  if (
+    /ngân\s*sách|tiết\s*kiệm|quỹ\s*khẩn|chi\s*tiêu|lương|nợ\s*thẻ|vay\s*cá\s*nhân|bảo\s*hiểm\s*nhân\s*thọ|mục\s*tiêu\s*tài\s*chính|personal\s*finance|budget|emergency\s*fund/.test(
+      m,
+    )
+  ) {
+    return "personal_finance";
+  }
+  if (
+    /doanh\s*nghiệp|báo\s*cáo\s*tài\s*chính|vốn\s*lưu\s*động|cấu\s*trúc\s*vốn|dòng\s*tiền\s*dn|ebitda|đòn\s*bẩy|corporate|working\s*capital|capex/.test(
+      m,
+    )
+  ) {
+    return "corporate_finance";
+  }
+  if (
+    /gia\s*sản|wealth|phân\s*bổ\s*tài\s*sản|asset\s*allocation|danh\s*mục\s*dài\s*hạn|hưu\s*trí|khẩu\s*vị\s*rủi\s*ro|đa\s*dạng\s*hóa/.test(
+      m,
+    )
+  ) {
+    return "wealth";
+  }
+  if (/thị\s*trường|vn-?index|tổng\s*quan|hôm\s*nay|phiên|chỉ\s*số|crypto|forex|chứng\s*khoán/.test(m)) {
+    return "market_overview";
+  }
+  return "general";
+}
 
 interface SymbolContext {
   symbol: string;
@@ -63,41 +107,46 @@ function fmt(n: number | null | undefined, digits = 2): string {
   return n === null || n === undefined || !Number.isFinite(n) ? "n/a" : n.toFixed(digits);
 }
 
-/** Prose fallback when LLM is unavailable — no markdown headers/bullets. */
 function composeDeterministicAnswer(
-  _message: string,
+  message: string,
+  intent: AgentIntent,
   contexts: SymbolContext[],
   market: Awaited<ReturnType<typeof getMarketOverview>> | null,
+  headlines: string[],
 ): string {
   const parts: string[] = [];
+  parts.push(`Câu hỏi người dùng: ${message}`);
+  parts.push(`Phân loại intent: ${intent}`);
 
-  if (contexts.length === 0 && market) {
-    const idxLine = market.indices
-      .map((idx) => `${idx.name} ở mức ${fmt(idx.close)} (${(idx.changePct ?? 0) >= 0 ? "+" : ""}${fmt(idx.changePct)}%)`)
-      .join("; ");
-    parts.push(`Tổng quan thị trường hiện tại: ${idxLine}.`);
+  if (intent === "personal_finance") {
     parts.push(
-      `Độ rộng trên mẫu ${market.breadth.sample} mã: ${market.breadth.advancers} mã tăng, ${market.breadth.decliners} mã giảm, ${market.breadth.unchanged} đứng giá.`,
+      "Gợi ý khung trả lời (tài chính cá nhân): làm rõ mục tiêu và chân trời thời gian; quỹ khẩn cấp 3–6 tháng chi tiêu; tỷ lệ chi tiêu/tiết kiệm tham khảo (vd 50/30/20); ưu tiên trả nợ lãi cao; bảo hiểm rủi ro cơ bản trước khi đầu tư. Không ép sản phẩm cụ thể.",
     );
-    if (market.topGainers.length > 0) {
-      parts.push(
-        `Nhóm dẫn dắt gồm ${market.topGainers
-          .slice(0, 3)
-          .map((q) => `${q.symbol} (+${fmt(q.changePct)}%)`)
-          .join(", ")}.`,
-      );
-    }
-    if (market.crypto.length > 0) {
-      parts.push(
-        `Crypto tham chiếu: ${market.crypto
-          .map(
-            (c) =>
-              `${c.symbol} $${c.priceUsd.toLocaleString()} (${c.change24hPct >= 0 ? "+" : ""}${c.change24hPct.toFixed(2)}%)`,
-          )
-          .join(", ")}.`,
-      );
-    }
-    parts.push(`Bạn có thể hỏi cụ thể một mã, ví dụ "Phân tích VNM", để nhận nhận định đầy đủ hơn.`);
+  } else if (intent === "corporate_finance") {
+    parts.push(
+      "Gợi ý khung trả lời (tài chính DN): dòng tiền hoạt động vs đầu tư vs tài chính; vốn lưu động; đòn bẩy và khả năng trả lãi; đọc nhanh ROE/ROA/biên lợi nhuận; rủi ro thanh khoản. Thiếu số liệu BCTC thì nói chưa có dữ liệu.",
+    );
+  } else if (intent === "wealth") {
+    parts.push(
+      "Gợi ý khung trả lời (wealth): khẩu vị rủi ro, chân trời, đa dạng hóa theo nhóm tài sản, tái cân bằng định kỳ, tránh tập trung quá mức một mã/ngành. Không liệt kê basket mã cố định.",
+    );
+  }
+
+  if (market) {
+    const idxLine = market.indices
+      .map(
+        (idx) =>
+          `${idx.name} ở mức ${fmt(idx.close)} (${(idx.changePct ?? 0) >= 0 ? "+" : ""}${fmt(idx.changePct)}%)`,
+      )
+      .join("; ");
+    parts.push(`Tổng quan thị trường (Data Engine): ${idxLine}.`);
+    parts.push(
+      `Độ rộng mẫu ${market.breadth.sample} mã: ${market.breadth.advancers} tăng, ${market.breadth.decliners} giảm, ${market.breadth.unchanged} đứng giá.`,
+    );
+  }
+
+  if (headlines.length > 0) {
+    parts.push(`Tin gần đây: ${headlines.slice(0, 5).join("; ")}.`);
   }
 
   for (const c of contexts) {
@@ -107,61 +156,41 @@ function composeDeterministicAnswer(
       `Với ${c.symbol}, khuyến nghị kỹ thuật hiện tại là ${a.recommendation} (độ tin cậy khoảng ${conf}%). Giá gần nhất ${fmt(a.lastClose)}, biến động 1 ngày ${fmt(a.changePct1d)}% và 1 tháng ${fmt(a.changePct1m)}% (nguồn ${c.quote.source}).`,
     );
 
-    let tech = `Về kỹ thuật, RSI(14) khoảng ${fmt(a.rsi14, 1)}, MACD histogram ${fmt(a.macd?.histogram, 3)}, SMA20 ${fmt(a.sma20)} và SMA50 ${fmt(a.sma50)}. Biến động ${fmt(a.volatilityPct, 1)}%, drawdown tối đa gần đây ${fmt(a.maxDrawdownPct, 1)}%.`;
+    let tech = `Về kỹ thuật, RSI(14) khoảng ${fmt(a.rsi14, 1)}, MACD histogram ${fmt(a.macd?.histogram, 3)}, SMA20 ${fmt(a.sma20)} và SMA50 ${fmt(a.sma50)}.`;
     if (a.supportResistance) {
-      tech += ` Vùng hỗ trợ quanh ${fmt(a.supportResistance.support)}, kháng cự quanh ${fmt(a.supportResistance.resistance)}.`;
+      tech += ` Hỗ trợ quanh ${fmt(a.supportResistance.support)}, kháng cự quanh ${fmt(a.supportResistance.resistance)}.`;
     }
     parts.push(tech);
 
-    if (a.reasons.length > 0) {
-      parts.push(`Các lý do chính: ${a.reasons.join("; ")}.`);
-    }
+    if (a.reasons.length > 0) parts.push(`Các lý do chính: ${a.reasons.join("; ")}.`);
 
     if (c.fundamental) {
       const f = c.fundamental;
       const h = f.financialHealth;
       const v = f.valuation;
-      let fund = `Phía cơ bản, sức khỏe tài chính xếp hạng ${h.rating} (${h.overallScore}/100). EPS khoảng ${fmt(f.eps)}, ROE ${fmt(f.roe)}%, ROA ${fmt(f.roa)}%`;
-      if (f.cagr3y !== null) fund += `, CAGR 3 năm khoảng ${fmt(f.cagr3y)}%`;
-      fund += ".";
-      parts.push(fund);
-      if (f.dupont) parts.push(f.dupont.description);
-      let val = `Định giá tham chiếu: P/E ${fmt(v.pe, 1)}, P/B ${fmt(v.pb, 1)}, EV/EBITDA ${fmt(v.evEbitda, 1)}, Graham ${fmt(v.grahamNumber)}, DDM ${fmt(v.ddm)}.`;
-      if (v.dcf) {
-        val += ` DCF bi quan / cơ sở / lạc quan lần lượt khoảng ${fmt(v.dcf.pessimistic)}, ${fmt(v.dcf.base)} và ${fmt(v.dcf.optimistic)}.`;
-      }
-      if (v.reverseDcfGrowth !== null) {
-        val += ` Reverse DCF cho thấy thị trường đang price-in tăng trưởng khoảng ${fmt(v.reverseDcfGrowth)}%/năm.`;
-      }
-      val += ` ${v.verdictVi}.`;
-      parts.push(val);
-    }
-
-    const patternBits: string[] = [];
-    for (const p of c.chartPatterns) {
-      patternBits.push(
-        `${p.nameVi} (${p.type === "bullish" ? "tăng" : p.type === "bearish" ? "giảm" : "trung tính"}, tin cậy ${(p.reliability * 100).toFixed(0)}%)`,
+      parts.push(
+        `Cơ bản: sức khỏe ${h.rating} (${h.overallScore}/100). EPS ${fmt(f.eps)}, ROE ${fmt(f.roe)}%, ROA ${fmt(f.roa)}%. P/E ${fmt(v.pe, 1)}, P/B ${fmt(v.pb, 1)}. ${v.verdictVi}.`,
       );
-    }
-    for (const p of c.candlePatterns) {
-      patternBits.push(
-        `nến ${p.nameVi} (${p.type === "bullish" ? "tăng" : p.type === "bearish" ? "giảm" : "trung tính"})`,
-      );
-    }
-    if (patternBits.length > 0) {
-      parts.push(`Mẫu hình đáng chú ý gần đây: ${patternBits.join("; ")}.`);
     }
 
     parts.push(
-      `Tâm lý tin tức quanh mã đang ${c.sentimentLabel.toLowerCase()} (điểm ${c.sentimentScore >= 0 ? "+" : ""}${c.sentimentScore.toFixed(2)}).`,
+      `Tâm lý tin tức: ${c.sentimentLabel.toLowerCase()} (điểm ${c.sentimentScore >= 0 ? "+" : ""}${c.sentimentScore.toFixed(2)}).`,
     );
-    if (c.headlines.length > 0) {
-      parts.push(`Tin liên quan gần đây gồm: ${c.headlines.join("; ")}.`);
-    }
+    if (c.headlines.length > 0) parts.push(`Tin liên quan mã: ${c.headlines.join("; ")}.`);
+  }
+
+  if (
+    contexts.length === 0 &&
+    !market &&
+    (intent === "personal_finance" || intent === "corporate_finance" || intent === "wealth" || intent === "general")
+  ) {
+    parts.push(
+      "Không có snapshot thị trường bắt buộc cho câu hỏi này. Hãy trả lời dựa trên nguyên tắc tài chính chuẩn và hỏi thêm thông tin nếu thiếu.",
+    );
   }
 
   parts.push(
-    `Phân tích dựa trên dữ liệu giá thật (VNDirect/Yahoo), tin RSS và mô hình nội bộ. Đây không phải lời khuyên đầu tư, chỉ mang tính tham khảo.`,
+    "Nhắc cuối: phân tích mang tính tham khảo, không phải lời khuyên đầu tư cá nhân hóa.",
   );
 
   return parts.join("\n\n");
@@ -188,16 +217,31 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const contexts = (await Promise.all(validated.map(buildSymbolContext))).filter(
-      (c): c is SymbolContext => c !== null,
-    );
-    const market = contexts.length === 0 ? await getMarketOverview().catch(() => null) : null;
+    const intent = detectIntent(message, validated.length > 0);
 
-    if (contexts.length === 0 && market === null) {
-      return fail("No real market data available right now. Please retry.", 503);
+    const needMarket =
+      intent === "market_ticker" || intent === "market_overview" || intent === "general";
+
+    const [contexts, market, newsRes] = await Promise.all([
+      Promise.all(validated.map(buildSymbolContext)).then((list) =>
+        list.filter((c): c is SymbolContext => c !== null),
+      ),
+      needMarket || intent === "wealth"
+        ? getMarketOverview().catch(() => null)
+        : Promise.resolve(null),
+      intent === "market_overview" || intent === "general" || intent === "market_ticker"
+        ? getNews({ limit: 6 }).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+
+    const headlines = newsRes?.items?.map((n) => `${n.title} (${n.sourceName})`) ?? [];
+
+    // Only hard-fail when user clearly asked for market data and we have nothing
+    if (intent === "market_ticker" && contexts.length === 0) {
+      return fail("Không lấy được dữ liệu mã. Thử lại hoặc kiểm tra mã.", 503);
     }
 
-    const deterministic = composeDeterministicAnswer(message, contexts, market);
+    const deterministic = composeDeterministicAnswer(message, intent, contexts, market, headlines);
     const llmResult = await agentNarrative(message, deterministic);
     const answer = smoothAgentAnswer(llmResult?.text ?? deterministic);
     const model = llmResult ? `${llmResult.provider}/${llmResult.model}` : "rule-engine";
@@ -213,13 +257,14 @@ export async function POST(req: NextRequest) {
       {
         answer,
         model,
+        intent,
         symbols: validated,
         providersConfigured: listConfiguredProviders().map((p) => p.id),
       },
       {
         latencyMs,
-        source: "data-engine+fundamental+technical+sentiment+llm",
-        confidence: contexts[0]?.analysis.confidence ?? 0.9,
+        source: "data-engine+intent+llm",
+        confidence: contexts[0]?.analysis.confidence ?? 0.85,
         llmProvider: llmResult?.provider ?? null,
       },
     );
