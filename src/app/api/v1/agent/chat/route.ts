@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/db";
 import { agentLogs } from "@/db/schema";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
+import { getAuthedUser } from "@/lib/auth/guard";
 import { analyze, type AnalysisResult } from "@/lib/analysis";
 import type { Quote } from "@/lib/connectors/core";
 import { generateFundamentalReport, type FundamentalReport } from "@/lib/fundamental";
@@ -14,6 +15,8 @@ import {
   type CandlePattern,
   type ChartPattern,
 } from "@/lib/technical-patterns";
+import { buildPersonalFinanceContext } from "@/lib/personal-finance/context";
+import { buildCorporateFinanceContext } from "@/lib/corporate-finance/context";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -113,23 +116,34 @@ function composeDeterministicAnswer(
   contexts: SymbolContext[],
   market: Awaited<ReturnType<typeof getMarketOverview>> | null,
   headlines: string[],
+  personalContext: string | null,
+  corporateContext: string | null,
 ): string {
   const parts: string[] = [];
   parts.push(`Câu hỏi người dùng: ${message}`);
   parts.push(`Phân loại intent: ${intent}`);
 
   if (intent === "personal_finance") {
-    parts.push(
-      "Gợi ý khung trả lời (tài chính cá nhân): làm rõ mục tiêu và chân trời thời gian; quỹ khẩn cấp 3–6 tháng chi tiêu; tỷ lệ chi tiêu/tiết kiệm tham khảo (vd 50/30/20); ưu tiên trả nợ lãi cao; bảo hiểm rủi ro cơ bản trước khi đầu tư. Không ép sản phẩm cụ thể.",
-    );
+    if (personalContext) {
+      parts.push(personalContext);
+    } else {
+      parts.push(
+        "Người dùng CHƯA khai báo hồ sơ tài chính cá nhân (thu nhập/chi tiêu/nợ/mục tiêu) tại /api/v1/personal-finance/profile. Gợi ý khung trả lời tổng quát: làm rõ mục tiêu và chân trời thời gian; quỹ khẩn cấp 3–6 tháng chi tiêu; tỷ lệ chi tiêu/tiết kiệm tham khảo (vd 50/30/20); ưu tiên trả nợ lãi cao; bảo hiểm rủi ro cơ bản trước khi đầu tư. Chủ động gợi ý người dùng khai báo hồ sơ để nhận tư vấn cá nhân hóa với số liệu thật.",
+      );
+    }
   } else if (intent === "corporate_finance") {
-    parts.push(
-      "Gợi ý khung trả lời (tài chính DN): dòng tiền hoạt động vs đầu tư vs tài chính; vốn lưu động; đòn bẩy và khả năng trả lãi; đọc nhanh ROE/ROA/biên lợi nhuận; rủi ro thanh khoản. Thiếu số liệu BCTC thì nói chưa có dữ liệu.",
-    );
+    if (corporateContext) {
+      parts.push(corporateContext);
+    } else {
+      parts.push(
+        "Người dùng CHƯA nhập số liệu tài chính doanh nghiệp tại /api/v1/corporate-finance/statements. Gợi ý khung trả lời tổng quát: dòng tiền hoạt động vs đầu tư vs tài chính; vốn lưu động; đòn bẩy và khả năng trả lãi; đọc nhanh ROE/ROA/biên lợi nhuận; rủi ro thanh khoản. Chủ động gợi ý người dùng nhập số liệu BCTC để nhận phân tích chính xác với số liệu thật thay vì lý thuyết chung.",
+      );
+    }
   } else if (intent === "wealth") {
     parts.push(
       "Gợi ý khung trả lời (wealth): khẩu vị rủi ro, chân trời, đa dạng hóa theo nhóm tài sản, tái cân bằng định kỳ, tránh tập trung quá mức một mã/ngành. Không liệt kê basket mã cố định.",
     );
+    if (personalContext) parts.push(personalContext);
   }
 
   if (market) {
@@ -182,6 +196,8 @@ function composeDeterministicAnswer(
   if (
     contexts.length === 0 &&
     !market &&
+    !personalContext &&
+    !corporateContext &&
     (intent === "personal_finance" || intent === "corporate_finance" || intent === "wealth" || intent === "general")
   ) {
     parts.push(
@@ -201,10 +217,12 @@ export async function POST(req: NextRequest) {
   if (limited) return limited;
   const started = Date.now();
   try {
-    const body = (await req.json()) as { message?: string };
+    const body = (await req.json()) as { message?: string; companyName?: string };
     const message = body.message?.trim() ?? "";
     if (!message) return fail("Missing message", 400);
     if (message.length > 2000) return fail("Message too long", 400);
+
+    const authedUser = await getAuthedUser(req).catch(() => null);
 
     const candidates = [...new Set([...message.toUpperCase().matchAll(TICKER_RE)].map((m) => m[1]))].slice(0, 3);
     const validated: string[] = [];
@@ -222,7 +240,7 @@ export async function POST(req: NextRequest) {
     const needMarket =
       intent === "market_ticker" || intent === "market_overview" || intent === "general";
 
-    const [contexts, market, newsRes] = await Promise.all([
+    const [contexts, market, newsRes, personalContext, corporateContext] = await Promise.all([
       Promise.all(validated.map(buildSymbolContext)).then((list) =>
         list.filter((c): c is SymbolContext => c !== null),
       ),
@@ -231,6 +249,12 @@ export async function POST(req: NextRequest) {
         : Promise.resolve(null),
       intent === "market_overview" || intent === "general" || intent === "market_ticker"
         ? getNews({ limit: 6 }).catch(() => null)
+        : Promise.resolve(null),
+      intent === "personal_finance" || intent === "wealth"
+        ? buildPersonalFinanceContext(authedUser?.id ?? null).catch(() => null)
+        : Promise.resolve(null),
+      intent === "corporate_finance"
+        ? buildCorporateFinanceContext(authedUser?.id ?? null, body.companyName).catch(() => null)
         : Promise.resolve(null),
     ]);
 
@@ -241,7 +265,15 @@ export async function POST(req: NextRequest) {
       return fail("Không lấy được dữ liệu mã. Thử lại hoặc kiểm tra mã.", 503);
     }
 
-    const deterministic = composeDeterministicAnswer(message, intent, contexts, market, headlines);
+    const deterministic = composeDeterministicAnswer(
+      message,
+      intent,
+      contexts,
+      market,
+      headlines,
+      personalContext,
+      corporateContext,
+    );
     const llmResult = await agentNarrative(message, deterministic);
     const answer = smoothAgentAnswer(llmResult?.text ?? deterministic);
     const model = llmResult ? `${llmResult.provider}/${llmResult.model}` : "rule-engine";
@@ -259,6 +291,7 @@ export async function POST(req: NextRequest) {
         model,
         intent,
         symbols: validated,
+        personalized: Boolean(personalContext || corporateContext),
         providersConfigured: listConfiguredProviders().map((p) => p.id),
       },
       {
