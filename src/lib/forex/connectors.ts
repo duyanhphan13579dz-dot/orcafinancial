@@ -13,11 +13,11 @@ const YAHOO1 = "yahoo-forex-primary";
 const YAHOO2 = "yahoo-forex-fallback";
 const log = forProvider("forex-connectors");
 
-/** Tight timeouts — list page must stay under ~12s end-to-end. */
-const QUOTE_TIMEOUT_MS = 6_000;
-const QUOTE_RETRIES = 1;
-const BARS_TIMEOUT_MS = 8_000;
-const BARS_RETRIES = 1;
+/** Tight timeouts — chart target 1–3s end-to-end. */
+const QUOTE_TIMEOUT_MS = 4_000;
+const QUOTE_RETRIES = 0;
+const BARS_TIMEOUT_MS = 2_500;
+const BARS_RETRIES = 0;
 
 export interface ForexQuote {
   symbol: string;
@@ -94,10 +94,6 @@ function deriveValue(def: ForexPairDef, map: Map<string, ForexQuote>): ForexQuot
   };
 }
 
-/**
- * ONE HTTP call for all direct Yahoo symbols (was ~20 sequential chart calls).
- * Partial results are accepted — derived pairs fill what they can.
- */
 async function fetchBatchQuotes(base: string, provider: string): Promise<Map<string, ForexQuote>> {
   const direct = FOREX_PAIRS.filter((p) => p.yahooSymbol);
   const symbols = direct.map((p) => p.yahooSymbol!).join(",");
@@ -113,7 +109,6 @@ async function fetchBatchQuotes(base: string, provider: string): Promise<Map<str
     throw new ProviderError(provider, "Yahoo batch quote returned empty result");
   }
 
-  // Map yahooSymbol → our pair def
   const byYahoo = new Map(direct.map((p) => [p.yahooSymbol!, p]));
   const map = new Map<string, ForexQuote>();
 
@@ -147,7 +142,6 @@ async function fetchBatchQuotes(base: string, provider: string): Promise<Map<str
     throw new ProviderError(provider, "Yahoo batch quote had no valid prices");
   }
 
-  // Derive VND / composite pairs when parents exist
   for (const def of FOREX_PAIRS) {
     if (!def.derived) continue;
     const q = deriveValue(def, map);
@@ -175,21 +169,42 @@ export async function fetchForexSnapshot(): Promise<{ quotes: ForexQuote[]; sour
     return { quotes, source: provider };
   };
 
-  try {
-    return await tryHost("https://query1.finance.yahoo.com", YAHOO1);
-  } catch (err) {
-    log.warn("yahoo_primary_failed", { error: String(err) });
-    return tryHost("https://query2.finance.yahoo.com", YAHOO2);
-  }
+  // Race both Yahoo hosts — first good result wins
+  const attempts = [
+    tryHost("https://query1.finance.yahoo.com", YAHOO1),
+    tryHost("https://query2.finance.yahoo.com", YAHOO2),
+  ];
+  const errors: string[] = [];
+  return await new Promise<{ quotes: ForexQuote[]; source: string }>((resolve, reject) => {
+    let pending = attempts.length;
+    let settled = false;
+    for (const p of attempts) {
+      p.then((v) => {
+        if (!settled) {
+          settled = true;
+          resolve(v);
+        }
+      }).catch((e) => {
+        errors.push(String(e));
+        pending -= 1;
+        if (pending === 0 && !settled) {
+          reject(new ProviderError("forex-race", `all failed: ${errors.join(" | ")}`));
+        }
+      });
+    }
+  });
 }
 
 const VALID = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
 
+/** Smaller ranges → faster Yahoo response, enough bars for chart + indicators. */
 function yahooParams(tf: string, limit: number) {
-  if (tf === "4h") return { interval: "1h", range: limit > 300 ? "2y" : "3mo" };
-  if (tf === "1d") return { interval: "1d", range: limit > 365 ? "5y" : "2y" };
-  if (tf === "1h") return { interval: "1h", range: "3mo" };
-  return { interval: tf, range: tf === "1m" ? "7d" : "60d" };
+  if (tf === "4h") return { interval: "1h", range: limit > 200 ? "3mo" : "1mo" };
+  if (tf === "1d") return { interval: "1d", range: limit > 200 ? "2y" : "1y" };
+  if (tf === "1h") return { interval: "1h", range: "1mo" };
+  if (tf === "15m") return { interval: "15m", range: "10d" };
+  if (tf === "5m") return { interval: "5m", range: "5d" };
+  return { interval: "1m", range: "2d" };
 }
 
 function aggregate4h(bars: Ohlcv[]): Ohlcv[] {
@@ -287,26 +302,53 @@ async function fetchBarsFrom(
   return result;
 }
 
+/**
+ * Race Yahoo query1 + query2 in parallel — first success wins.
+ * Hard deadline ~2.5s per host; wall clock typically 0.5–2.5s.
+ */
 export async function fetchForexBars(
   symbol: string,
   timeframe: string,
-  limit = 300,
+  limit = 120,
 ): Promise<{ bars: Ohlcv[]; source: string }> {
   if (!VALID.has(timeframe)) throw new Error("Invalid timeframe");
-  try {
-    return {
-      bars: await getBreaker(YAHOO1).exec(() =>
+
+  const attempts: Array<Promise<{ bars: Ohlcv[]; source: string }>> = [
+    getBreaker(YAHOO1)
+      .exec(() =>
         fetchBarsFrom(symbol, timeframe, limit, "https://query1.finance.yahoo.com", YAHOO1),
-      ),
-      source: YAHOO1,
-    };
-  } catch (err) {
-    log.warn("yahoo_ohlcv_primary_failed", { symbol, timeframe, error: String(err) });
-    return {
-      bars: await getBreaker(YAHOO2).exec(() =>
+      )
+      .then((bars) => ({ bars, source: YAHOO1 })),
+    getBreaker(YAHOO2)
+      .exec(() =>
         fetchBarsFrom(symbol, timeframe, limit, "https://query2.finance.yahoo.com", YAHOO2),
-      ),
-      source: YAHOO2,
-    };
-  }
+      )
+      .then((bars) => ({ bars, source: YAHOO2 })),
+  ];
+
+  const errors: string[] = [];
+  return await new Promise<{ bars: Ohlcv[]; source: string }>((resolve, reject) => {
+    let pending = attempts.length;
+    let settled = false;
+    for (const p of attempts) {
+      p.then((v) => {
+        if (!settled && v.bars.length >= 10) {
+          settled = true;
+          resolve(v);
+        } else if (!settled) {
+          errors.push(`${v.source}:few_bars`);
+          pending -= 1;
+          if (pending === 0) {
+            reject(new ProviderError("forex-ohlcv-race", `all failed: ${errors.join(" | ")}`));
+          }
+        }
+      }).catch((e) => {
+        errors.push(String(e));
+        pending -= 1;
+        if (pending === 0 && !settled) {
+          reject(new ProviderError("forex-ohlcv-race", `all failed: ${errors.join(" | ")}`));
+        }
+      });
+    }
+  });
 }
