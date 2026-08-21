@@ -543,7 +543,6 @@ export async function generateMorningBrief(date: Date = new Date()) {
   const analysis = bars.length >= 30 ? analyze("VNINDEX", bars) : null;
   const support = analysis?.supportResistance?.support ?? null;
   const resistance = analysis?.supportResistance?.resistance ?? null;
-  const defensivePicks = ["VNM", "FPT", "VCB"];
   const crypto = (overview as { crypto?: Array<{ symbol?: string; price?: number; changePct?: number }> })
     ?.crypto;
 
@@ -581,7 +580,6 @@ export async function generateMorningBrief(date: Date = new Date()) {
   }));
   const fallbackStrategy = [
     `Tỷ trọng cổ phiếu khuyến nghị: 30–45% tổng tài sản; phần còn lại giữ tiền mặt hoặc trái phiếu ngắn hạn.`,
-    `Danh mục phòng thủ tham khảo: ${defensivePicks.join(", ")} — đầu ngành, dòng tiền ổn định.`,
     `Nguyên tắc vào lệnh: chỉ giải ngân khi giá kiểm định lại vùng hỗ trợ với thanh khoản suy giảm; không mua đuổi đầu phiên.`,
     `Nguyên tắc cắt lỗ: −5% đến −7% cho vị thế ngắn hạn mới; không trung bình giá xuống khi xu hướng chưa đảo chiều.`,
     support != null
@@ -666,10 +664,10 @@ export async function generateMorningBrief(date: Date = new Date()) {
       "Rủi ro chính trong 24 giờ tới: (i) bán ròng kéo dài của khối ngoại; (ii) tin vĩ mô ngoài giờ gây gap-down; (iii) thanh khoản suy giảm. Nếu hai trong ba yếu tố xuất hiện đồng thời, giảm tỷ trọng cổ phiếu về 20–25% và đứng ngoài quan sát.",
     conclusion:
       narrative?.conclusion ||
-      "Tổng hợp các tín hiệu hiện có, ORCA FINANCIAL đánh giá phiên hôm nay nghiêng về kịch bản giằng co trong biên độ hẹp với thanh khoản ở mức trung bình. Chiến lược phù hợp là quan sát và chọn lọc, ưu tiên nắm giữ cổ phiếu cơ bản tốt trong danh mục phòng thủ, hạn chế mở vị thế mới ở nhóm đầu cơ.",
+      "Tổng hợp các tín hiệu hiện có, ORCA FINANCIAL đánh giá phiên hôm nay nghiêng về kịch bản giằng co trong biên độ hẹp với thanh khoản ở mức trung bình. Chiến lược phù hợp là quan sát và chọn lọc theo tín hiệu dòng tiền, hạn chế mở vị thế mới ở nhóm đầu cơ.",
     recommendation:
       narrative?.recommendation ||
-      `Giữ tỷ trọng cổ phiếu 30–45%. Không mua đuổi, không dùng margin cao. Danh mục ưu tiên: ${defensivePicks.join(", ")}. Cắt lỗ cứng −5% đến −7% cho mọi vị thế ngắn hạn.` +
+      `Giữ tỷ trọng cổ phiếu 30–45%. Không mua đuổi, không dùng margin cao. Cắt lỗ cứng −5% đến −7% cho mọi vị thế ngắn hạn.` +
       (support != null ? ` Chờ tín hiệu rõ tại vùng hỗ trợ ${fmt(support)} trước khi giải ngân thêm.` : ""),
     llmMeta,
   });
