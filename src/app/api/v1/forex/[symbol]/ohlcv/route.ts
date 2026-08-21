@@ -2,12 +2,14 @@ import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { syncForexOhlcv } from "@/lib/forex/service";
 import { fetchForexBars } from "@/lib/forex/connectors";
+import {
+  defaultTimeframe,
+  isValidTimeframe,
+} from "@/lib/forex/timeframes";
 
-const V = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
 export const dynamic = "force-dynamic";
 export const maxDuration = 8;
 
-/** Hard wall clock for chart — target 1–3s; fail over at 2.8s. */
 const HARD_MS = 2_800;
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -28,8 +30,11 @@ export async function GET(
 
   const { symbol } = await c.params;
   const sym = symbol.toUpperCase();
-  const tf = req.nextUrl.searchParams.get("timeframe") ?? "1h";
-  if (!V.has(tf)) return fail("Invalid timeframe", 400);
+  const tf =
+    req.nextUrl.searchParams.get("timeframe") ?? defaultTimeframe(sym);
+  if (!isValidTimeframe(tf, sym)) {
+    return fail(`Invalid timeframe for ${sym}: ${tf}`, 400);
+  }
 
   const limit = Math.min(
     200,
@@ -45,7 +50,6 @@ export async function GET(
       bars = d.bars;
       source = d.source;
     } catch (inner) {
-      // Service slow/failed → direct Yahoo race (already parallel hosts)
       const live = await withTimeout(fetchForexBars(sym, tf, limit), HARD_MS, "yahoo_bars");
       bars = live.bars;
       source = `${live.source}-direct`;
@@ -65,7 +69,6 @@ export async function GET(
       { symbol: sym, timeframe: tf, bars },
       { source, timezone: "Asia/Ho_Chi_Minh" },
     );
-    // Edge cache: repeat TF switches hit CDN in <100ms
     response.headers.set(
       "Cache-Control",
       "public, s-maxage=15, stale-while-revalidate=60",
