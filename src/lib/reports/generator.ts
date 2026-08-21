@@ -1,6 +1,8 @@
 /**
- * ORCA Report Generator — v5 Morning pipeline
- * Data Engine → classify news → impact news → impact indices VN→world → strategy
+ * ORCA Report Generator — v6
+ * Morning Brief layout matches sample PDF:
+ * Header · Lede · 01 Vĩ mô · 02 DN · 03 Thị trường · 04 Chiến lược · 05 Rủi ro
+ * · Cảnh báo · Kết luận · Khuyến nghị · Notes
  */
 import type { Ohlcv } from "@/lib/connectors/core";
 import { getMarketOverview, getHistory, getNews } from "@/lib/market";
@@ -13,9 +15,7 @@ import {
 } from "./store";
 import {
   generateReportNarrative,
-  type ClassifiedNewsItem,
-  type IndexImpactItem,
-  type NewsCategory,
+  type NewsBullet,
   type ReportLlmNarrative,
 } from "./llm-narrative";
 
@@ -108,7 +108,6 @@ async function loadRecentNews(limit = 50) {
   }
 }
 
-/** Overnight / global reference quotes via Yahoo chart meta. */
 const GLOBAL_SYMBOLS: Array<{ yahoo: string; name: string }> = [
   { yahoo: "^GSPC", name: "S&P 500" },
   { yahoo: "^DJI", name: "Dow Jones" },
@@ -121,7 +120,6 @@ const GLOBAL_SYMBOLS: Array<{ yahoo: string; name: string }> = [
 ];
 
 async function fetchYahooMeta(symbol: string): Promise<{
-  name: string;
   price: number | null;
   changePct: number | null;
 } | null> {
@@ -139,7 +137,6 @@ async function fetchYahooMeta(symbol: string): Promise<{
             regularMarketPrice?: number;
             chartPreviousClose?: number;
             previousClose?: number;
-            shortName?: string;
           };
         }>;
       };
@@ -150,19 +147,13 @@ async function fetchYahooMeta(symbol: string): Promise<{
     const prev = meta.chartPreviousClose ?? meta.previousClose ?? null;
     const changePct =
       price != null && prev != null && prev !== 0 ? ((price - prev) / prev) * 100 : null;
-    return {
-      name: meta.shortName ?? symbol,
-      price,
-      changePct,
-    };
+    return { price, changePct };
   } catch {
     return null;
   }
 }
 
-async function loadGlobalSnapshots(): Promise<
-  Array<{ symbol: string; name: string; price: number | null; changePct: number | null }>
-> {
+async function loadGlobalSnapshots() {
   const rows = await Promise.all(
     GLOBAL_SYMBOLS.map(async (g) => {
       const m = await fetchYahooMeta(g.yahoo);
@@ -177,85 +168,21 @@ async function loadGlobalSnapshots(): Promise<
   return rows.filter((r) => r.price != null || r.changePct != null);
 }
 
-function wrapHtml(opts: {
-  type: ReportType;
-  date: Date;
-  headline: string;
-  lede: string;
-  body: string;
-  conclusion: string;
-  recommendation: string;
-  llmMeta?: string;
-}): string {
-  const p = vnParts(opts.date);
-  const typeLabel =
-    opts.type === "morning"
-      ? "Morning Brief · Bản tin đầu ngày"
-      : "Market Summary · Nhận định cuối phiên";
-  const accent = opts.type === "morning" ? "#0ea5e9" : "#0A2540";
-  const llmNote = opts.llmMeta
-    ? `<div class="meta" style="margin-top:4px">Phân tích hỗ trợ bởi LLM · ${escapeHtml(opts.llmMeta)}</div>`
-    : "";
-  return `
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="UTF-8" />
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<title>ORCA FINANCIAL — ${escapeHtml(opts.headline)}</title>
-<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800&display=swap&subset=vietnamese,latin" rel="stylesheet" />
-<style>
-  body{font-family:"Be Vietnam Pro",system-ui,sans-serif;color:#0b1e33;line-height:1.55;max-width:820px;margin:0 auto;padding:28px 32px;font-size:11.5pt}
-  h1{font-size:22pt;margin:0 0 8px;color:#0A2540}
-  h3{font-size:11.5pt;color:#334e68;margin:14px 0 6px}
-  .meta{color:#5c7794;font-size:9pt;margin-bottom:16px}
-  .lede{border-left:3px solid ${accent};padding:8px 12px;background:#f0f7fc;font-style:italic;margin-bottom:18px}
-  h2{font-size:13pt;border-bottom:1px solid #cfdcec;padding-bottom:4px;color:#0A2540;margin-top:22px}
-  p{margin:8px 0}
-  ul{margin:6px 0 12px 18px} li{margin:5px 0}
-  .badge{display:inline-block;font-size:8.5pt;padding:1px 6px;border-radius:3px;margin-right:6px;background:#e8f1fa;color:#0A2540}
-  .badge-cao,.badge-rat_cao{background:#fee2e2;color:#991b1b}
-  .badge-trung_binh{background:#fef3c7;color:#92400e}
-  .badge-thap{background:#e5e7eb;color:#374151}
-  .conclusion{background:#f0f6fb;border-left:4px solid ${accent};padding:12px 16px;margin-top:18px}
-  .rec{background:#0A2540;color:#fff;padding:12px 16px;border-radius:4px;margin-top:10px}
-  .foot{margin-top:20px;font-size:8pt;color:#5c7794;border-top:1px solid #cfdcec;padding-top:8px}
-  .para{white-space:pre-wrap}
-  @media print{body{padding:0}}
-</style>
-</head>
-<body>
-  <div class="meta">ORCA FINANCIAL · ${typeLabel}<br/>${viLongDate(opts.date)} · Phát hành ${String(p.hh).padStart(2, "0")}:${String(p.mm).padStart(2, "0")} ICT</div>
-  ${llmNote}
-  <h1>${escapeHtml(opts.headline)}</h1>
-  <div class="lede">${escapeHtml(opts.lede)}</div>
-  ${opts.body}
-  <div class="conclusion"><strong>Kết luận chiến lược đầu ngày:</strong> ${escapeHtml(opts.conclusion)}</div>
-  <div class="rec"><strong>Khuyến nghị hành động</strong><br/>${escapeHtml(opts.recommendation)}</div>
-  <div class="foot">ORCA FINANCIAL · Research Engine · Báo cáo tự động · Không phải lời khuyên đầu tư</div>
-</body>
-</html>`;
-}
-
-function newsListHtml(
-  items: Array<{ title: string; link: string; sourceName: string }>,
-  max = 12,
-): string {
-  if (!items.length) return "<p><em>Không có tin mới tại thời điểm phát hành.</em></p>";
+function newsBulletHtml(items: NewsBullet[]): string {
+  if (!items.length) return "<p><em>Chưa có tin phù hợp trong nhóm này.</em></p>";
   return (
     "<ul>" +
     items
-      .slice(0, max)
-      .map(
-        (it) =>
-          '<li><a href="' +
-          it.link +
-          '" target="_blank" rel="noreferrer">' +
-          escapeHtml(it.title) +
-          "</a> — " +
-          escapeHtml(it.sourceName) +
-          "</li>",
-      )
+      .map((n) => {
+        const meta = [n.source, n.time].filter(Boolean).join(", ");
+        return (
+          "<li><strong>" +
+          escapeHtml(n.title) +
+          "</strong>" +
+          (meta ? " — " + escapeHtml(meta) : "") +
+          "</li>"
+        );
+      })
       .join("") +
     "</ul>"
   );
@@ -266,75 +193,302 @@ function bulletsHtml(items: string[]): string {
   return "<ul>" + items.map((t) => "<li>" + escapeHtml(t) + "</li>").join("") + "</ul>";
 }
 
-function commentaryHtml(text: string): string {
-  const paras = text
-    .split(/\n{2,}/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-  if (!paras.length) return "<p>" + escapeHtml(text) + "</p>";
-  return paras.map((p) => '<p class="para">' + escapeHtml(p) + "</p>").join("");
+function rawNewsHtml(
+  items: Array<{ title: string; link?: string; sourceName: string }>,
+  max = 8,
+): string {
+  if (!items.length) return "<p><em>Không có tin.</em></p>";
+  return (
+    "<ul>" +
+    items
+      .slice(0, max)
+      .map(
+        (it) =>
+          "<li><strong>" +
+          escapeHtml(it.title) +
+          "</strong> — " +
+          escapeHtml(it.sourceName) +
+          "</li>",
+      )
+      .join("") +
+    "</ul>"
+  );
 }
 
-const CAT_LABEL: Record<NewsCategory, string> = {
-  vi_mo: "Vi mô",
-  vi_mo_macro: "Vĩ mô",
-  trong_nuoc: "Trong nước",
-  quoc_te: "Quốc tế",
-  doanh_nghiep: "Doanh nghiệp",
-};
+/** Sample-PDF layout for Morning Brief */
+function renderMorningHtml(opts: {
+  date: Date;
+  headline: string;
+  lede: string;
+  macroIntro: string;
+  macroNews: NewsBullet[];
+  macroCommoditiesNote: string;
+  corporateIntro: string;
+  corporateNews: NewsBullet[];
+  corporateNote: string;
+  marketIntro: string;
+  marketNews: NewsBullet[];
+  cryptoLine: string;
+  strategyIntro: string;
+  strategyPoints: string[];
+  risks: string[];
+  riskWarning: string;
+  conclusion: string;
+  recommendation: string;
+  llmMeta?: string;
+}): string {
+  const p = vnParts(opts.date);
+  const band =
+    "MORNING BRIEF · " +
+    VI_WEEKDAYS[p.weekday].toUpperCase() +
+    ", NGÀY " +
+    String(p.d).padStart(2, "0") +
+    "/" +
+    String(p.m).padStart(2, "0") +
+    "/" +
+    p.y;
+  const time =
+    String(p.hh).padStart(2, "0") + ":" + String(p.mm).padStart(2, "0") + " ICT";
 
-const IMPACT_LABEL: Record<string, string> = {
-  thap: "Thấp",
-  trung_binh: "TB",
-  cao: "Cao",
-  rat_cao: "Rất cao",
-};
+  return `<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<title>ORCA FINANCIAL — ${escapeHtml(opts.headline)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap&subset=vietnamese,latin" rel="stylesheet" />
+<style>
+  :root {
+    --navy: #0A2540;
+    --sky: #0ea5e9;
+    --muted: #5c7794;
+    --line: #cfdcec;
+    --lede-bg: #eef6fc;
+    --warn-border: #f59e0b;
+    --warn-bg: #fffbeb;
+    --ok-bg: #f0f6fb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Be Vietnam Pro", system-ui, sans-serif;
+    color: #0b1e33;
+    line-height: 1.55;
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 28px 36px 40px;
+    font-size: 11pt;
+  }
+  .brand-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 6px;
+  }
+  .brand {
+    font-size: 9pt;
+    letter-spacing: 0.04em;
+    color: var(--sky);
+    font-weight: 600;
+  }
+  .brand::before {
+    content: "●";
+    margin-right: 6px;
+    color: var(--sky);
+  }
+  h1 {
+    font-size: 22pt;
+    line-height: 1.2;
+    margin: 4px 0 0;
+    color: var(--navy);
+    font-weight: 800;
+  }
+  .side-meta {
+    text-align: right;
+    font-size: 9pt;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .band {
+    margin: 14px 0 10px;
+    font-size: 8.5pt;
+    letter-spacing: 0.12em;
+    color: var(--sky);
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .lede {
+    background: var(--lede-bg);
+    border-left: 3px solid var(--sky);
+    padding: 10px 14px;
+    margin: 0 0 20px;
+    font-size: 10.5pt;
+    color: #1e3a5f;
+  }
+  .sec {
+    margin-top: 22px;
+  }
+  .sec-num {
+    font-size: 9pt;
+    letter-spacing: 0.14em;
+    color: var(--sky);
+    font-weight: 700;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  .sec-title {
+    font-size: 13.5pt;
+    color: var(--navy);
+    font-weight: 700;
+    margin: 0 0 8px;
+  }
+  p { margin: 6px 0 10px; }
+  ul { margin: 6px 0 12px; padding-left: 18px; }
+  li { margin: 5px 0; }
+  .box-warn {
+    margin-top: 16px;
+    border-left: 4px solid var(--warn-border);
+    background: var(--warn-bg);
+    padding: 12px 14px;
+  }
+  .box-warn .label {
+    font-size: 9pt;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    color: #b45309;
+    margin-bottom: 4px;
+  }
+  .box-conclusion {
+    margin-top: 16px;
+    border-left: 4px solid var(--sky);
+    background: var(--ok-bg);
+    padding: 12px 14px;
+  }
+  .box-conclusion .label {
+    font-size: 9pt;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    color: var(--sky);
+    margin-bottom: 4px;
+  }
+  .box-rec {
+    margin-top: 14px;
+    background: var(--navy);
+    color: #fff;
+    padding: 14px 16px;
+    border-radius: 2px;
+  }
+  .box-rec .label {
+    font-size: 9pt;
+    letter-spacing: 0.12em;
+    font-weight: 700;
+    margin-bottom: 6px;
+    opacity: 0.9;
+  }
+  .notes {
+    margin-top: 22px;
+    font-size: 8.5pt;
+    color: var(--muted);
+  }
+  .notes ol { padding-left: 18px; margin: 6px 0; }
+  .notes li { margin: 4px 0; }
+  .foot {
+    margin-top: 16px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    font-size: 8.5pt;
+    color: var(--muted);
+  }
+  .llm-tag { font-size: 8pt; color: var(--muted); margin-top: 4px; }
+  @media print {
+    body { padding: 12px 20px; }
+  }
+</style>
+</head>
+<body>
+  <div class="brand-row">
+    <div>
+      <div class="brand">ORCA FINANCIAL · INTELLIGENT INVESTMENT</div>
+      <h1>${escapeHtml(opts.headline)}</h1>
+    </div>
+    <div class="side-meta">
+      Morning Brief · Bản tin<br/>đầu ngày<br/>
+      ${escapeHtml(viLongDate(opts.date))}<br/>
+      Phát hành: ${time}
+    </div>
+  </div>
+  <div class="band">${escapeHtml(band)}</div>
+  <div class="lede">${escapeHtml(opts.lede)}</div>
+  ${opts.llmMeta ? `<div class="llm-tag">Phân tích hỗ trợ bởi LLM · ${escapeHtml(opts.llmMeta)}</div>` : ""}
 
-function classifiedNewsHtml(items: ClassifiedNewsItem[]): string {
-  if (!items.length) return "";
-  const order: NewsCategory[] = [
-    "vi_mo_macro",
-    "quoc_te",
-    "trong_nuoc",
-    "doanh_nghiep",
-    "vi_mo",
-  ];
-  const byCat = new Map<NewsCategory, ClassifiedNewsItem[]>();
-  for (const it of items) {
-    const list = byCat.get(it.category) ?? [];
-    list.push(it);
-    byCat.set(it.category, list);
-  }
-  let html = "";
-  for (const cat of order) {
-    const list = byCat.get(cat);
-    if (!list?.length) continue;
-    html += `<h3>${CAT_LABEL[cat]}</h3><ul>`;
-    for (const n of list) {
-      const badge = IMPACT_LABEL[n.impact] ?? n.impact;
-      html +=
-        `<li><span class="badge badge-${n.impact}">${escapeHtml(badge)}</span>` +
-        `<strong>${escapeHtml(n.title)}</strong>` +
-        (n.source ? ` <em>(${escapeHtml(n.source)})</em>` : "") +
-        `<br/><span style="color:#5c7794">${escapeHtml(n.rationale)}</span></li>`;
-    }
-    html += "</ul>";
-  }
-  return html;
-}
+  <div class="sec">
+    <div class="sec-num">01 · Điểm tin vĩ mô</div>
+    <div class="sec-title">Bức tranh vĩ mô trong nước & quốc tế</div>
+    ${opts.macroIntro ? `<p>${escapeHtml(opts.macroIntro)}</p>` : ""}
+    ${newsBulletHtml(opts.macroNews)}
+    ${opts.macroCommoditiesNote ? `<p>${escapeHtml(opts.macroCommoditiesNote)}</p>` : ""}
+  </div>
 
-function indexImpactsHtml(items: IndexImpactItem[]): string {
-  if (!items.length) return "";
-  let html = "<ul>";
-  for (const it of items) {
-    const badge = IMPACT_LABEL[it.impact] ?? it.impact;
-    html +=
-      `<li><span class="badge badge-${it.impact}">${escapeHtml(badge)}</span>` +
-      `<strong>${escapeHtml(it.name)}</strong> ${pct(it.changePct)}` +
-      `<br/><span style="color:#5c7794">${escapeHtml(it.note)}</span></li>`;
+  <div class="sec">
+    <div class="sec-num">02 · Tin doanh nghiệp</div>
+    <div class="sec-title">Tin doanh nghiệp nổi bật trước giờ mở cửa</div>
+    ${opts.corporateIntro ? `<p>${escapeHtml(opts.corporateIntro)}</p>` : ""}
+    ${newsBulletHtml(opts.corporateNews)}
+    ${opts.corporateNote ? `<p><em>${escapeHtml(opts.corporateNote)}</em></p>` : ""}
+  </div>
+
+  <div class="sec">
+    <div class="sec-num">03 · Tin thị trường</div>
+    <div class="sec-title">Diễn biến đêm qua & tín hiệu mở cửa</div>
+    ${opts.marketIntro ? `<p>${escapeHtml(opts.marketIntro)}</p>` : ""}
+    ${newsBulletHtml(opts.marketNews)}
+    ${opts.cryptoLine ? `<p>${escapeHtml(opts.cryptoLine)}</p>` : ""}
+  </div>
+
+  <div class="sec">
+    <div class="sec-num">04 · Chiến lược thận trọng trong ngày</div>
+    <div class="sec-title">Kỷ luật giao dịch — ưu tiên bảo toàn vốn</div>
+    ${opts.strategyIntro ? `<p>${escapeHtml(opts.strategyIntro)}</p>` : ""}
+    ${bulletsHtml(opts.strategyPoints)}
+  </div>
+
+  <div class="sec">
+    <div class="sec-num">05 · Rủi ro cần cảnh giác</div>
+    <div class="sec-title">Các yếu tố có thể kích hoạt nhịp giảm mạnh</div>
+    ${bulletsHtml(opts.risks)}
+  </div>
+
+  ${
+    opts.riskWarning
+      ? `<div class="box-warn"><div class="label">CẢNH BÁO RỦI RO</div><div>${escapeHtml(opts.riskWarning)}</div></div>`
+      : ""
   }
-  html += "</ul>";
-  return html;
+
+  <div class="box-conclusion">
+    <div class="label">KẾT LUẬN & NHẬN ĐỊNH CHỐT</div>
+    <div>${escapeHtml(opts.conclusion)}</div>
+  </div>
+
+  <div class="box-rec">
+    <div class="label">KHUYẾN NGHỊ CHIẾN LƯỢC</div>
+    <div>${escapeHtml(opts.recommendation)}</div>
+  </div>
+
+  <div class="notes">
+    <ol>
+      <li>Dữ liệu giá và chỉ số lấy từ VNDirect dchart và Yahoo Finance qua Data Engine với circuit breaker + fallback.</li>
+      <li>Tin tức tổng hợp từ RSS VnExpress, CafeF, Vietstock; phân nhóm và nhận định bởi LLM trên dữ liệu Data Engine.</li>
+      <li>Phân tích kỹ thuật (hỗ trợ/kháng cự) tính trên chuỗi giá gần nhất của VN-Index khi đủ dữ liệu.</li>
+      <li>Báo cáo được tạo tự động, mang tính tham khảo. Nhà đầu tư tự chịu trách nhiệm với quyết định giao dịch của mình.</li>
+    </ol>
+  </div>
+  <div class="foot">
+    <span>ORCA FINANCIAL · Research Engine v2</span>
+    <span>Báo cáo tự động · Không phải lời khuyên đầu tư</span>
+  </div>
+</body>
+</html>`;
 }
 
 function buildContextPayload(opts: {
@@ -342,9 +496,10 @@ function buildContextPayload(opts: {
   dateKey: string;
   overview: Awaited<ReturnType<typeof getMarketOverview>> | null;
   bars: Ohlcv[];
-  newsItems: Array<{ title: string; link: string; sourceName: string; publishedAt?: string }>;
+  newsItems: Array<{ title: string; link: string; sourceName: string; publishedAt?: string | Date | null }>;
   analysis: ReturnType<typeof analyze> | null;
   globalIndices: Array<{ symbol: string; name: string; price: number | null; changePct: number | null }>;
+  crypto?: Array<{ symbol?: string; price?: number; changePct?: number }>;
 }) {
   const emptyIdx = {
     close: null as number | null,
@@ -356,55 +511,31 @@ function buildContextPayload(opts: {
     opts.overview?.indices?.[0] ??
     emptyIdx;
   const hnx = opts.overview?.indices?.find((i) => i.code === "HNX") ?? null;
-  const upcom = opts.overview?.indices?.find((i) => i.code === "UPCOM") ?? null;
 
   return {
     kind: opts.kind,
     date: opts.dateKey,
-    pipeline:
-      opts.kind === "morning"
-        ? [
-            "classify_news",
-            "score_news_impact",
-            "score_index_impact_vn_to_world",
-            "opening_strategy",
-          ]
-        : ["session_review", "scenarios", "recommendation"],
+    layoutHint:
+      "01 macro · 02 corporate · 03 market · 04 strategy · 05 risks · warning · conclusion · recommendation",
     indicesVn: {
       vnIndex: { close: vn.close, changePct: vn.changePct, volume: vn.volume },
       hnx: hnx ? { close: hnx.close, changePct: hnx.changePct, volume: hnx.volume } : null,
-      upcom: upcom ? { close: upcom.close, changePct: upcom.changePct } : null,
     },
     indicesGlobal: opts.globalIndices,
     breadth: opts.overview?.breadth ?? null,
-    topGainers: (opts.overview?.topGainers ?? []).slice(0, 8).map((g) => ({
-      symbol: g.symbol,
-      changePct: g.changePct,
-      close: (g as { close?: number }).close,
-    })),
-    topLosers: (opts.overview?.topLosers ?? []).slice(0, 8).map((l) => ({
-      symbol: l.symbol,
-      changePct: l.changePct,
-      close: (l as { close?: number }).close,
-    })),
+    topGainers: (opts.overview?.topGainers ?? []).slice(0, 6),
+    topLosers: (opts.overview?.topLosers ?? []).slice(0, 6),
     technical: opts.analysis
       ? {
           support: opts.analysis.supportResistance?.support ?? null,
           resistance: opts.analysis.supportResistance?.resistance ?? null,
-          trend: (opts.analysis as { trend?: string }).trend ?? null,
-          signal: (opts.analysis as { signal?: string }).signal ?? null,
         }
       : null,
-    recentBars: opts.bars.slice(-8).map((b) => ({
-      t: b.time,
-      c: b.close,
-      v: b.volume,
-    })),
-    news: opts.newsItems.slice(0, 28).map((n) => ({
+    crypto: (opts.crypto ?? []).slice(0, 4),
+    news: opts.newsItems.slice(0, 30).map((n) => ({
       title: n.title,
       source: n.sourceName,
-      publishedAt: n.publishedAt ?? null,
-      link: n.link,
+      publishedAt: n.publishedAt ? String(n.publishedAt) : null,
     })),
   };
 }
@@ -428,6 +559,8 @@ export async function generateMorningBrief(date: Date = new Date()) {
   const support = analysis?.supportResistance?.support ?? null;
   const resistance = analysis?.supportResistance?.resistance ?? null;
   const defensivePicks = ["VNM", "FPT", "VCB"];
+  const crypto = (overview as { crypto?: Array<{ symbol?: string; price?: number; changePct?: number }> })
+    ?.crypto;
 
   const context = buildContextPayload({
     kind: "morning",
@@ -437,126 +570,109 @@ export async function generateMorningBrief(date: Date = new Date()) {
     newsItems: newsItems as any,
     analysis,
     globalIndices,
+    crypto,
   });
 
   const narrative = await withTimeout(
     generateReportNarrative("morning", context),
-    42_000,
+    45_000,
     null as ReportLlmNarrative | null,
   );
 
-  let body: string;
-  let headline: string;
-  let lede: string;
-  let conclusion: string;
-  let recommendation: string;
-  let llmMeta: string | undefined;
+  const llmMeta = narrative
+    ? [narrative.provider, narrative.model].filter(Boolean).join("/")
+    : undefined;
 
-  if (narrative) {
-    llmMeta = [narrative.provider, narrative.model].filter(Boolean).join("/");
-    headline = narrative.headline;
-    lede = narrative.lede;
-    conclusion = narrative.conclusion;
-    recommendation = narrative.recommendation;
+  // Fallback pieces when LLM unavailable
+  const fallbackMacro: NewsBullet[] = (newsItems as any[])
+    .slice(0, 6)
+    .map((n) => ({ title: n.title, source: n.sourceName }));
+  const fallbackStrategy = [
+    `Tỷ trọng cổ phiếu khuyến nghị: 30–45% tổng tài sản; phần còn lại giữ tiền mặt hoặc trái phiếu ngắn hạn.`,
+    `Danh mục phòng thủ tham khảo: ${defensivePicks.join(", ")} — đầu ngành, dòng tiền ổn định.`,
+    `Nguyên tắc vào lệnh: chỉ giải ngân khi giá kiểm định lại vùng hỗ trợ với thanh khoản suy giảm; không mua đuổi đầu phiên.`,
+    `Nguyên tắc cắt lỗ: −5% đến −7% cho vị thế ngắn hạn mới; không trung bình giá xuống khi xu hướng chưa đảo chiều.`,
+    support != null
+      ? `Vùng hỗ trợ cần theo dõi: ${fmt(support)} điểm.`
+      : "Theo dõi vùng hỗ trợ kỹ thuật gần nhất trên biểu đồ VN-Index.",
+    resistance != null
+      ? `Vùng kháng cự ngắn hạn: ${fmt(resistance)} điểm — chỉ gia tăng tỷ trọng khi breakout kèm thanh khoản.`
+      : "Chỉ gia tăng tỷ trọng khi có breakout xác nhận.",
+  ];
 
-    const newsBlock = narrative.classifiedNews.length
-      ? classifiedNewsHtml(narrative.classifiedNews)
-      : narrative.newsInsights.length
-        ? bulletsHtml(narrative.newsInsights)
-        : newsListHtml(newsItems as any, 12);
+  const cryptoLine =
+    narrative?.cryptoLine ||
+    (crypto && crypto.length
+      ? "Tài sản số tham chiếu: " +
+        crypto
+          .slice(0, 4)
+          .map(
+            (c) =>
+              `${c.symbol ?? "?"} $${fmt(c.price, 0)} (${pct(c.changePct)})`,
+          )
+          .join(" · ")
+      : "");
 
-    const indexBlock = narrative.indexImpacts.length
-      ? indexImpactsHtml(narrative.indexImpacts)
-      : globalIndices.length
-        ? "<ul>" +
-          globalIndices
-            .map(
-              (g) =>
-                `<li><strong>${escapeHtml(g.name)}</strong> ${pct(g.changePct)} · ${fmt(g.price)}</li>`,
-            )
-            .join("") +
-          "</ul>"
-        : "<p><em>Chưa có dữ liệu chỉ số toàn cầu.</em></p>";
+  const marketIntroFallback =
+    vn?.close != null
+      ? `Phiên giao dịch trước của VN-Index đóng cửa tại ${fmt(vn.close)} điểm (${pct(vn.changePct)}), thanh khoản ${fmtVol(vn.volume)}.`
+      : "Diễn biến phiên trước và dòng tiền được phản ánh qua các tin thị trường dưới đây.";
 
-    body =
-      "<h2>01 · Phân loại tin (vi mô · vĩ mô · trong nước · quốc tế · doanh nghiệp)</h2>" +
-      newsBlock +
-      "<h2>02 · Ảnh hưởng biến động chỉ số (VN → thế giới)</h2>" +
-      "<p>Tham chiếu phiên trước / overnight: VN-Index <strong>" +
-      fmt(vn?.close) +
-      "</strong> (" +
-      pct(vn?.changePct) +
-      "), KL " +
-      fmtVol(vn?.volume) +
-      ".</p>" +
-      indexBlock +
-      "<h2>03 · Nhận định trước phiên</h2>" +
-      commentaryHtml(narrative.marketCommentary) +
-      "<h2>04 · Chiến lược đầu ngày</h2>" +
-      (narrative.actionPoints.length
-        ? bulletsHtml(narrative.actionPoints)
-        : "<ul><li>Tỷ trọng 30–45%. Ưu tiên " +
-          defensivePicks.join(", ") +
-          ".</li></ul>") +
-      (narrative.watchlist.length
-        ? "<h2>05 · Watchlist</h2>" + bulletsHtml(narrative.watchlist)
-        : "") +
-      "<h2>06 · Nguồn tin (tham chiếu Data Engine)</h2>" +
-      newsListHtml(newsItems as any, 10);
-  } else {
-    headline = "Điểm tin đầu ngày & chiến lược thận trọng";
-    lede =
-      "Bản tin đầu ngày " +
-      viShortDate(date) +
-      " — Data Engine đã gom tin; LLM chưa khả dụng nên dùng khung template.";
-    conclusion =
-      "Phiên hôm nay nghiêng về kịch bản giằng co. Ưu tiên quan sát 30–60 phút đầu, hạn chế mở vị thế đầu cơ.";
-    recommendation =
-      "Giữ tỷ trọng 30–45%. Ưu tiên " +
-      defensivePicks.join(", ") +
-      ". Cắt lỗ −5% đến −7%.";
-    body =
-      "<h2>01 · Điểm tin (chưa phân loại LLM)</h2>" +
-      newsListHtml(newsItems as any, 14) +
-      "<h2>02 · Chỉ số tham chiếu</h2>" +
-      "<p>VN-Index: <strong>" +
-      fmt(vn?.close) +
-      "</strong> (" +
-      pct(vn?.changePct) +
-      "), KL " +
-      fmtVol(vn?.volume) +
-      ".</p>" +
-      (globalIndices.length
-        ? "<ul>" +
-          globalIndices
-            .map(
-              (g) =>
-                `<li>${escapeHtml(g.name)}: ${pct(g.changePct)} · ${fmt(g.price)}</li>`,
-            )
-            .join("") +
-          "</ul>"
-        : "") +
-      (support
-        ? "<p>Hỗ trợ gần: " + fmt(support) + ". Kháng cự: " + fmt(resistance) + ".</p>"
-        : "") +
-      "<h2>03 · Chiến lược đầu ngày (template)</h2>" +
-      "<ul>" +
-      "<li>Tỷ trọng khuyến nghị: <strong>30–45%</strong>.</li>" +
-      "<li>Danh mục phòng thủ: " +
-      defensivePicks.join(", ") +
-      ".</li>" +
-      "<li>Cắt lỗ −5% đến −7%. Không mua đuổi / margin cao.</li>" +
-      "</ul>";
-  }
-
-  const html = wrapHtml({
-    type: "morning",
+  const html = renderMorningHtml({
     date,
-    headline,
-    lede,
-    body,
-    conclusion,
-    recommendation,
+    headline: narrative?.headline || "Điểm tin đầu ngày & chiến lược thận trọng",
+    lede:
+      narrative?.lede ||
+      `Bản tin đầu ngày ${viShortDate(date)} tổng hợp các tin vĩ mô, doanh nghiệp và thị trường có khả năng chi phối phiên giao dịch hôm nay, kèm chiến lược giao dịch thận trọng ưu tiên bảo toàn vốn. Nhà đầu tư nên đọc kỹ phần cảnh báo rủi ro trước khi đặt lệnh.`,
+    macroIntro:
+      narrative?.macroIntro ||
+      "Phiên đêm qua và rạng sáng nay, thị trường tài chính toàn cầu vận động khi nhà đầu tư chờ đợi các dữ liệu then chốt. Dưới đây là những tin vĩ mô có khả năng tác động tới tâm lý TTCK Việt Nam hôm nay:",
+    macroNews: narrative?.macroNews?.length ? narrative.macroNews : fallbackMacro.slice(0, 5),
+    macroCommoditiesNote:
+      narrative?.macroCommoditiesNote ||
+      (globalIndices.length
+        ? "Tham chiếu overnight: " +
+          globalIndices
+            .slice(0, 5)
+            .map((g) => `${g.name} ${pct(g.changePct)}`)
+            .join("; ") +
+          "."
+        : ""),
+    corporateIntro:
+      narrative?.corporateIntro ||
+      "Các tin công bố kết quả kinh doanh, ký kết hợp đồng, thay đổi nhân sự và sự kiện doanh nghiệp được thị trường quan tâm trong 24 giờ qua:",
+    corporateNews: narrative?.corporateNews?.length
+      ? narrative.corporateNews
+      : fallbackMacro.slice(0, 4),
+    corporateNote:
+      narrative?.corporateNote ||
+      "Lưu ý: nhà đầu tư cần đối chiếu lịch chốt quyền cổ tức và lịch ĐHCĐ trên cổng HOSE/HNX trước khi đặt lệnh.",
+    marketIntro: narrative?.marketIntro || marketIntroFallback,
+    marketNews: narrative?.marketNews?.length ? narrative.marketNews : fallbackMacro.slice(0, 5),
+    cryptoLine,
+    strategyIntro:
+      narrative?.strategyIntro ||
+      "Trong bối cảnh thông tin còn nhiều điểm chưa rõ ràng, ORCA FINANCIAL khuyến nghị duy trì trạng thái thận trọng, tránh mua đuổi cổ phiếu đã tăng nóng và không sử dụng đòn bẩy cao trong phiên hôm nay.",
+    strategyPoints: narrative?.strategyPoints?.length
+      ? narrative.strategyPoints
+      : fallbackStrategy,
+    risks: narrative?.risks?.length
+      ? narrative.risks
+      : [
+          "Khối ngoại tiếp tục bán ròng ở nhóm vốn hóa lớn, tạo áp lực tâm lý lan tỏa.",
+          "Tin vĩ mô bất lợi ngoài giờ giao dịch có thể gây gap-down đầu phiên kế tiếp.",
+          "Thanh khoản suy giảm dưới mức trung bình phản ánh sự thận trọng của dòng tiền nội.",
+        ],
+    riskWarning:
+      narrative?.riskWarning ||
+      "Rủi ro chính trong 24 giờ tới: (i) bán ròng kéo dài của khối ngoại; (ii) tin vĩ mô ngoài giờ gây gap-down; (iii) thanh khoản suy giảm. Nếu hai trong ba yếu tố xuất hiện đồng thời, giảm tỷ trọng cổ phiếu về 20–25% và đứng ngoài quan sát.",
+    conclusion:
+      narrative?.conclusion ||
+      "Tổng hợp các tín hiệu hiện có, ORCA FINANCIAL đánh giá phiên hôm nay nghiêng về kịch bản giằng co trong biên độ hẹp với thanh khoản ở mức trung bình. Chiến lược phù hợp là quan sát và chọn lọc, ưu tiên nắm giữ cổ phiếu cơ bản tốt trong danh mục phòng thủ, hạn chế mở vị thế mới ở nhóm đầu cơ.",
+    recommendation:
+      narrative?.recommendation ||
+      `Giữ tỷ trọng cổ phiếu 30–45%. Không mua đuổi, không dùng margin cao. Danh mục ưu tiên: ${defensivePicks.join(", ")}. Cắt lỗ cứng −5% đến −7% cho mọi vị thế ngắn hạn.` +
+      (support != null ? ` Chờ tín hiệu rõ tại vùng hỗ trợ ${fmt(support)} trước khi giải ngân thêm.` : ""),
     llmMeta,
   });
 
@@ -599,8 +715,6 @@ export async function generateMarketSummary(date: Date = new Date()) {
     withTimeout(loadGlobalSnapshots(), 10_000, [] as Awaited<ReturnType<typeof loadGlobalSnapshots>>),
   ]);
 
-  if (!overview) log.warn("no_overview_data_using_fallback", { date: dateKey });
-
   const emptyIdx = {
     close: null as number | null,
     changePct: null as number | null,
@@ -611,8 +725,6 @@ export async function generateMarketSummary(date: Date = new Date()) {
   const hnx = overview?.indices?.find((i) => i.code === "HNX") ?? null;
   const adv = overview?.breadth?.advancers ?? 0;
   const dec = overview?.breadth?.decliners ?? 0;
-  const topG = (overview?.topGainers ?? []).slice(0, 8);
-  const topL = (overview?.topLosers ?? []).slice(0, 8);
   const analysis = bars.length >= 30 ? analyze("VNINDEX", bars) : null;
   const support = analysis?.supportResistance?.support ?? null;
   const resistance = analysis?.supportResistance?.resistance ?? null;
@@ -634,115 +746,58 @@ export async function generateMarketSummary(date: Date = new Date()) {
     null as ReportLlmNarrative | null,
   );
 
-  let body: string;
-  let headline: string;
-  let lede: string;
-  let conclusion: string;
-  let recommendation: string;
-  let llmMeta: string | undefined;
+  const llmMeta = narrative
+    ? [narrative.provider, narrative.model].filter(Boolean).join("/")
+    : undefined;
 
-  if (narrative) {
-    llmMeta = [narrative.provider, narrative.model].filter(Boolean).join("/");
-    headline = narrative.headline;
-    lede = narrative.lede;
-    conclusion = narrative.conclusion;
-    recommendation = narrative.recommendation;
-    body =
-      "<h2>01 · Diễn biến phiên (số liệu)</h2>" +
-      "<p>VN-Index <strong>" +
-      fmt(vn.close) +
-      "</strong> (" +
-      pct(vn.changePct) +
-      ") · HNX " +
-      fmt(hnx?.close) +
-      " (" +
-      pct(hnx?.changePct) +
-      ") · KL " +
-      fmtVol(vn.volume) +
-      "</p>" +
-      "<p>Độ rộng: " +
-      adv +
-      " tăng · " +
-      dec +
-      " giảm.</p>" +
-      "<p>Top tăng: " +
-      (topG.map((g) => g.symbol + " " + pct(g.changePct)).join(", ") || "—") +
-      "</p>" +
-      "<p>Top giảm: " +
-      (topL.map((l) => l.symbol + " " + pct(l.changePct)).join(", ") || "—") +
-      "</p>" +
-      "<h2>02 · Nhận định chuyên sâu</h2>" +
-      commentaryHtml(narrative.marketCommentary) +
-      "<h2>03 · Tin đáng chú ý</h2>" +
-      (narrative.newsInsights.length
-        ? bulletsHtml(narrative.newsInsights)
-        : newsListHtml(newsItems as any, 8)) +
-      "<h2>04 · Ba kịch bản / điểm hành động phiên tới</h2>" +
-      (narrative.actionPoints.length
-        ? bulletsHtml(narrative.actionPoints)
-        : "<ul><li>Cơ sở: biên độ " +
-          fmt(support) +
-          " – " +
-          fmt(resistance) +
-          ".</li></ul>") +
-      (narrative.watchlist.length
-        ? "<h2>05 · Watchlist</h2>" + bulletsHtml(narrative.watchlist)
-        : "") +
-      "<h2>06 · Nguồn tin</h2>" +
-      newsListHtml(newsItems as any, 8);
-  } else {
-    headline = "Đọc vị phiên hôm nay & kế hoạch hành động phiên tới";
-    lede =
-      "Phiên " +
-      viShortDate(date) +
-      " khép lại với VN-Index " +
-      fmt(vn.close) +
-      " (" +
-      pct(vn.changePct) +
-      ").";
-    conclusion =
-      pctVal > 0.5
+  // Reuse morning layout shell with summary-focused content
+  const html = renderMorningHtml({
+    date,
+    headline: narrative?.headline || "Đọc vị phiên hôm nay & kế hoạch phiên tới",
+    lede:
+      narrative?.lede ||
+      `Phiên ${viShortDate(date)} khép lại với VN-Index ${fmt(vn.close)} (${pct(vn.changePct)}). Bản tổng kết kèm rủi ro và khuyến nghị phiên tới.`,
+    macroIntro: narrative?.macroIntro || "",
+    macroNews: narrative?.macroNews ?? [],
+    macroCommoditiesNote: narrative?.macroCommoditiesNote || "",
+    corporateIntro: narrative?.corporateIntro || "",
+    corporateNews: narrative?.corporateNews ?? [],
+    corporateNote: "",
+    marketIntro:
+      narrative?.marketIntro ||
+      `VN-Index ${fmt(vn.close)} (${pct(vn.changePct)}) · HNX ${fmt(hnx?.close)} (${pct(hnx?.changePct)}) · Độ rộng ${adv} tăng / ${dec} giảm · KL ${fmtVol(vn.volume)}.`,
+    marketNews: narrative?.marketNews?.length
+      ? narrative.marketNews
+      : (newsItems as any[]).slice(0, 6).map((n) => ({ title: n.title, source: n.sourceName })),
+    cryptoLine: narrative?.cryptoLine || "",
+    strategyIntro:
+      narrative?.strategyIntro ||
+      "Ba kịch bản và điểm hành động cho phiên tới dựa trên hỗ trợ/kháng cự và dòng tiền.",
+    strategyPoints: narrative?.strategyPoints?.length
+      ? narrative.strategyPoints
+      : [
+          `Cơ sở: biên độ ${fmt(support)} – ${fmt(resistance)}, tỷ trọng 45–55%.`,
+          "Tích cực: breakout kháng cự kèm thanh khoản → tỷ trọng 60–70%.",
+          "Tiêu cực: thủng hỗ trợ → cắt lỗ, giảm tỷ trọng 20–30%.",
+        ],
+    risks: narrative?.risks?.length
+      ? narrative.risks
+      : ["Khối ngoại bán ròng", "Thanh khoản suy giảm", "Tin vĩ mô ngoài giờ"],
+    riskWarning: narrative?.riskWarning || "",
+    conclusion:
+      narrative?.conclusion ||
+      (pctVal > 0.5
         ? "Xu hướng ngắn hạn tích cực có điều kiện — nắm giữ, chốt lời từng phần tại kháng cự."
         : pctVal < -0.5
           ? "Xu hướng ngắn hạn tiêu cực — phòng thủ, giảm tỷ trọng."
-          : "Trung lập thiên thận trọng — giao dịch chọn lọc.";
-    recommendation =
-      pctVal > 0.5
-        ? "Tỷ trọng 50–60%. Chốt lời 30% tại " + fmt(resistance) + ". Cắt lỗ −5%."
+          : "Trung lập thiên thận trọng — giao dịch chọn lọc."),
+    recommendation:
+      narrative?.recommendation ||
+      (pctVal > 0.5
+        ? `Tỷ trọng 50–60%. Chốt lời từng phần tại ${fmt(resistance)}. Cắt lỗ −5%.`
         : pctVal < -0.5
-          ? "Tỷ trọng 25–35%. Hỗ trợ " + fmt(support) + "."
-          : "Tỷ trọng 40–50%. Kiểm định " + fmt(support) + " / breakout " + fmt(resistance) + ".";
-    body =
-      "<h2>01 · Diễn biến phiên</h2>" +
-      "<p>VN-Index <strong>" +
-      fmt(vn.close) +
-      "</strong> (" +
-      pct(vn.changePct) +
-      ") · HNX " +
-      fmt(hnx?.close) +
-      " (" +
-      pct(hnx?.changePct) +
-      ")</p>" +
-      "<h2>02 · Ba kịch bản phiên tới</h2>" +
-      "<ul><li><strong>Cơ sở:</strong> " +
-      fmt(support) +
-      " – " +
-      fmt(resistance) +
-      ".</li>" +
-      "<li><strong>Tích cực:</strong> breakout + thanh khoản.</li>" +
-      "<li><strong>Tiêu cực:</strong> thủng hỗ trợ → giảm tỷ trọng.</li></ul>" +
-      "<h2>03 · Tin</h2>" +
-      newsListHtml(newsItems as any, 10);
-  }
-
-  const html = wrapHtml({
-    type: "summary",
-    date,
-    headline,
-    lede,
-    body,
-    conclusion,
-    recommendation,
+          ? `Tỷ trọng 25–35%. Hỗ trợ ${fmt(support)}. Không bắt đáy.`
+          : `Tỷ trọng 40–50%. Kiểm định ${fmt(support)} hoặc breakout ${fmt(resistance)}.`),
     llmMeta,
   });
 
