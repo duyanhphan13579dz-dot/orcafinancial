@@ -307,7 +307,7 @@ export default function CryptoDetail() {
             <span title={websocketText} className={`h-2 w-2 rounded-full ${websocketClass}`} />
           </div>
           <div className="mt-1 text-[10px] text-slate-500">
-            {price?.source ?? chartSource || "Binance"} · {websocketText}
+            {(price?.source ?? chartSource) || "Binance"} · {websocketText}
           </div>
         </div>
         <div className="sm:ml-auto">
