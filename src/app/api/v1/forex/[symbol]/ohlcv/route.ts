@@ -5,9 +5,10 @@ import { fetchForexBars } from "@/lib/forex/connectors";
 
 const V = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
 export const dynamic = "force-dynamic";
-export const maxDuration = 10;
+export const maxDuration = 8;
 
-const HARD_MS = 5_500;
+/** Hard wall clock for chart — target 1–3s; fail over at 2.8s. */
+const HARD_MS = 2_800;
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -31,8 +32,8 @@ export async function GET(
   if (!V.has(tf)) return fail("Invalid timeframe", 400);
 
   const limit = Math.min(
-    300,
-    Math.max(50, Number(req.nextUrl.searchParams.get("limit") ?? 200)),
+    200,
+    Math.max(40, Number(req.nextUrl.searchParams.get("limit") ?? 120)),
   );
 
   try {
@@ -44,6 +45,7 @@ export async function GET(
       bars = d.bars;
       source = d.source;
     } catch (inner) {
+      // Service slow/failed → direct Yahoo race (already parallel hosts)
       const live = await withTimeout(fetchForexBars(sym, tf, limit), HARD_MS, "yahoo_bars");
       bars = live.bars;
       source = `${live.source}-direct`;
@@ -63,13 +65,14 @@ export async function GET(
       { symbol: sym, timeframe: tf, bars },
       { source, timezone: "Asia/Ho_Chi_Minh" },
     );
+    // Edge cache: repeat TF switches hit CDN in <100ms
     response.headers.set(
       "Cache-Control",
-      "public, s-maxage=20, stale-while-revalidate=90",
+      "public, s-maxage=15, stale-while-revalidate=60",
     );
     response.headers.set(
       "Vercel-CDN-Cache-Control",
-      "public, s-maxage=20, stale-while-revalidate=90",
+      "public, s-maxage=15, stale-while-revalidate=60",
     );
     return response;
   } catch (e) {
