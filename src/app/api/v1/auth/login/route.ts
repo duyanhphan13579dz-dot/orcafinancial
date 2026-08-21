@@ -1,12 +1,8 @@
 import { NextRequest } from "next/server";
 
-import {
-  checkRateLimit,
-  fail,
-  ok,
-} from "@/lib/api";
+import { fail, ok } from "@/lib/api";
 
-import { db } from "@/db";
+import { db, safeDbQuery } from "@/db";
 import { ensureAuthTables } from "@/db/ensure-auth-tables";
 
 import {
@@ -32,12 +28,9 @@ export const dynamic = "force-dynamic";
 
 /**
  * POST /api/v1/auth/login
+ * Rate limit intentionally removed — auth must remain usable after DB blips.
  */
 export async function POST(req: NextRequest) {
-  // Auth retries after DB blips must not lock users out at 10/min.
-  const limited = checkRateLimit(req, 40);
-  if (limited) return limited;
-
   try {
     await ensureAuthTables();
 
@@ -48,11 +41,18 @@ export async function POST(req: NextRequest) {
       return fail("Email và mật khẩu là bắt buộc", 400);
     }
 
-    const userResult = await db
-      .select()
-      .from(users)
-      .where(eq(users.email, String(email).trim().toLowerCase()))
-      .limit(1);
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    const userResult = await safeDbQuery(
+      "auth_login_select_user",
+      () =>
+        db
+          .select()
+          .from(users)
+          .where(eq(users.email, normalizedEmail))
+          .limit(1),
+      { attempts: 3, baseMs: 800 },
+    );
 
     if (userResult.length === 0) {
       return fail("Email hoặc mật khẩu không đúng", 401);
@@ -103,11 +103,16 @@ export async function POST(req: NextRequest) {
     const refreshToken = generateRefreshToken();
     const expiresAt = getRefreshTokenExpiresAt();
 
-    await db.insert(refreshTokens).values({
-      token: refreshToken,
-      userId: user.id,
-      expiresAt,
-    });
+    await safeDbQuery(
+      "auth_login_insert_refresh",
+      () =>
+        db.insert(refreshTokens).values({
+          token: refreshToken,
+          userId: user.id,
+          expiresAt,
+        }),
+      { attempts: 3, baseMs: 800 },
+    );
 
     await upsertSession({
       userId: user.id,
@@ -145,12 +150,12 @@ export async function POST(req: NextRequest) {
     const msg = err instanceof Error ? err.message : "Đăng nhập thất bại";
     console.error("[auth/login]", msg);
     if (
-      /Failed query|relation .* does not exist|ECONNREFUSED|ECONNRESET|timeout|password authentication|SSL|connect/i.test(
+      /Failed query|relation .* does not exist|ECONNREFUSED|ECONNRESET|timeout|password authentication|SSL|connect|pool_connect/i.test(
         msg,
       )
     ) {
       return fail(
-        "Không kết nối được cơ sở dữ liệu. Kiểm tra DATABASE_URL trên Vercel hoặc thử lại sau vài giây.",
+        "Không kết nối được cơ sở dữ liệu. Kiểm tra DATABASE_URL (Supabase pooler :6543 + pgbouncer=true) trên Vercel rồi redeploy.",
         503,
       );
     }
