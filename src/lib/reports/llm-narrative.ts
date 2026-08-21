@@ -56,7 +56,8 @@ QUY TẮC:
 1. Không bịa giá/%/điểm.
 2. Mỗi bullet tin PHẢI copy "link" từ mục news trong dữ liệu nếu khớp tiêu đề (để người đọc bấm xem bài gốc).
 3. Bỏ tin nhiễu; ưu tiên tin ảnh hưởng TTCK VN.
-4. Trả JSON thuần:
+4. KHÔNG đưa "danh mục tham khảo", "danh mục phòng thủ", "danh mục ưu tiên" hay liệt kê mã cụ thể (VNM, FPT, VCB…). Chiến lược chỉ nói tỷ trọng, kỷ luật vào lệnh/cắt lỗ, vùng hỗ trợ–kháng cự chỉ số — không gợi ý basket cổ phiếu.
+5. Trả JSON thuần:
 {
   "headline": string,
   "lede": string,
@@ -78,7 +79,9 @@ QUY TẮC:
 }`;
 
 const SUMMARY_SYSTEM = `Bạn là chuyên gia tổng kết cuối phiên ORCA FINANCIAL.
-Dựa CHỈ trên JSON. Mỗi tin marketNews nên kèm link từ dữ liệu. JSON thuần:
+Dựa CHỈ trên JSON. Mỗi tin marketNews nên kèm link từ dữ liệu.
+Không đưa danh mục tham khảo / liệt kê mã cổ phiếu cụ thể.
+JSON thuần:
 {
   "headline": string,
   "lede": string,
@@ -132,12 +135,24 @@ function bullets(raw: unknown, max = 10): NewsBullet[] {
   return out;
 }
 
+const BASKET_RE =
+  /danh\s*mục\s*(phòng\s*thủ|tham\s*khảo|ưu\s*tiên)|\b(VNM|FPT|VCB)\b.*\b(FPT|VCB|VNM)\b/i;
+
 function arrStr(v: unknown, maxItems = 10, maxLen = 400): string[] {
   if (!Array.isArray(v)) return [];
   return v
     .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-    .slice(0, maxItems)
-    .map((x) => x.trim().slice(0, maxLen));
+    .map((x) => x.trim().slice(0, maxLen))
+    .filter((x) => !BASKET_RE.test(x))
+    .slice(0, maxItems);
+}
+
+/** Strip reference-basket wording from free text. */
+function stripBasket(text: string): string {
+  return text
+    .replace(/Danh\s*mục\s*(phòng\s*thủ\s*)?(tham\s*khảo|ưu\s*tiên)[^.]{0,120}\.?/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 /** Attach missing links by fuzzy-matching titles against Data Engine news list. */
@@ -171,8 +186,11 @@ function parseMorning(raw: string): ReportLlmNarrative | null {
     const o = JSON.parse(match[0]) as Record<string, unknown>;
     const headline = str(o.headline, 160) || "Điểm tin đầu ngày & chiến lược thận trọng";
     const lede = str(o.lede, 500);
-    const conclusion = str(o.conclusion, 700);
-    const recommendation = str(o.recommendation, 500);
+    const conclusion = stripBasket(str(o.conclusion, 700));
+    const recommendation = stripBasket(
+      str(o.recommendation, 500) ||
+        "Giữ tỷ trọng 30–45%. Không mua đuổi, không dùng margin cao. Cắt lỗ −5% đến −7%.",
+    );
     if (!lede && !conclusion) return null;
 
     const strategyPoints = arrStr(o.strategyPoints, 8, 420);
@@ -198,16 +216,14 @@ function parseMorning(raw: string): ReportLlmNarrative | null {
       marketIntro: str(o.marketIntro, 900),
       marketNews,
       cryptoLine: str(o.cryptoLine, 280),
-      strategyIntro: str(o.strategyIntro, 600),
+      strategyIntro: stripBasket(str(o.strategyIntro, 600)),
       strategyPoints,
       risks,
       riskWarning: str(o.riskWarning, 500),
       conclusion:
         conclusion ||
         "Phiên hôm nay nghiêng về kịch bản giằng co; ưu tiên quan sát và chọn lọc.",
-      recommendation:
-        recommendation ||
-        "Giữ tỷ trọng 30–45%. Không mua đuổi, không dùng margin cao. Cắt lỗ −5% đến −7%.",
+      recommendation,
       newsInsights: [...macroNews, ...corporateNews, ...marketNews].map((n) => n.title),
       actionPoints: strategyPoints,
       marketCommentary,
@@ -230,8 +246,8 @@ export async function generateReportNarrative(
   const system = kind === "morning" ? MORNING_SYSTEM : SUMMARY_SYSTEM;
   const task =
     kind === "morning"
-      ? "Viết Morning Brief đúng mẫu. Mỗi tin trong macroNews/corporateNews/marketNews phải có link từ dữ liệu news nếu có."
-      : "Viết tổng kết cuối phiên; marketNews kèm link gốc.";
+      ? "Viết Morning Brief đúng mẫu. Mỗi tin kèm link nếu có. Không liệt kê danh mục cổ phiếu tham khảo."
+      : "Viết tổng kết cuối phiên; marketNews kèm link gốc. Không danh mục tham khảo.";
 
   const user = [
     `LOẠI: ${kind}`,
