@@ -2,10 +2,15 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { Bar } from "@/components/candle-chart";
 import { api, changeColor, fmtNum, fmtPct, usePoll } from "@/lib/client";
+import {
+  defaultTimeframe,
+  timeframeLabel,
+  timeframesFor,
+} from "@/lib/forex/timeframes";
 
 const ChartSkeleton = () => (
   <div className="h-[380px] w-full animate-pulse rounded-lg bg-slate-800/40" />
@@ -58,11 +63,10 @@ interface Bundle {
   analysis: Analysis | null;
 }
 
-const TFS = ["1m", "5m", "15m", "1h", "4h", "1d"];
-
 export default function ForexDetail() {
   const symbol = String(useParams().symbol).toUpperCase();
-  const [tf, setTf] = useState("1h");
+  const tfs = useMemo(() => [...timeframesFor(symbol)], [symbol]);
+  const [tf, setTf] = useState(() => defaultTimeframe(symbol));
   const [bundle, setBundle] = useState<Bundle | null>(null);
   const [bars, setBars] = useState<Bar[]>([]);
   const [chartSource, setChartSource] = useState("");
@@ -71,11 +75,17 @@ export default function ForexDetail() {
   const [bundleError, setBundleError] = useState<string | null>(null);
   const initialDone = useRef(false);
 
+  // Reset TF when navigating to a different symbol (e.g. EURUSD → DXY)
+  useEffect(() => {
+    setTf(defaultTimeframe(symbol));
+    initialDone.current = false;
+  }, [symbol]);
+
   useEffect(() => {
     let cancelled = false;
     setBundleLoading(true);
     setBundleError(null);
-    // Prefer OHLCV-only first for sub-3s chart; bundle analysis can follow
+
     api<{ bars: Bar[] }>(`/forex/${symbol}/ohlcv?timeframe=${tf}&limit=120`)
       .then((env) => {
         if (cancelled) return;
@@ -100,12 +110,11 @@ export default function ForexDetail() {
         initialDone.current = true;
       });
 
-    // Meta + analysis in background (does not block chart)
     void api<Bundle>(`/forex/${symbol}/bundle?timeframe=${tf}&limit=120`)
       .then((env) => {
         if (cancelled) return;
         setBundle(env.data);
-        if (!bars.length && env.data.bars?.length) {
+        if (env.data.bars?.length) {
           setBars(env.data.bars);
           setChartSource(env.data.source ?? "");
         }
@@ -115,8 +124,7 @@ export default function ForexDetail() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol]);
+  }, [symbol, tf]);
 
   const loadTf = useCallback(
     async (next: string) => {
@@ -169,7 +177,7 @@ export default function ForexDetail() {
 
       <div className="panel flex flex-wrap items-center gap-4 p-4">
         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#00d4ff]/15 text-lg font-black text-[#00d4ff]">
-          FX
+          {symbol === "DXY" ? "$" : "FX"}
         </div>
         <div>
           <div className="flex items-center gap-2">
@@ -178,6 +186,7 @@ export default function ForexDetail() {
           </div>
           <div className="text-[10px] text-slate-500">
             {(p?.source ?? chartSource) || "multi-source"} · Asia/Ho_Chi_Minh
+            {symbol === "DXY" ? " · khung dài hạn" : ""}
           </div>
         </div>
         <div className="sm:ml-auto">
@@ -203,7 +212,7 @@ export default function ForexDetail() {
               ) : null}
             </h2>
             <div className="flex gap-1 overflow-x-auto">
-              {TFS.map((x) => (
+              {tfs.map((x) => (
                 <button
                   key={x}
                   type="button"
@@ -215,7 +224,7 @@ export default function ForexDetail() {
                       : "bg-slate-800 text-slate-400 hover:bg-slate-700"
                   }`}
                 >
-                  {x}
+                  {timeframeLabel(x)}
                 </button>
               ))}
             </div>
@@ -245,7 +254,9 @@ export default function ForexDetail() {
         </div>
 
         <div className={`panel border p-4 ${style}`}>
-          <div className="text-xs opacity-70">Khuyến nghị · {tf}</div>
+          <div className="text-xs opacity-70">
+            Khuyến nghị · {timeframeLabel(tf)}
+          </div>
           <div className="mt-1 text-3xl font-black">{a?.recommendation ?? "…"}</div>
           <div className="mt-1 text-sm">
             Confidence: {a ? `${Math.round(a.confidence * 100)}%` : "—"}
