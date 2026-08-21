@@ -62,19 +62,20 @@ function pct(n: number | null | undefined): string {
   return `${sign}${n.toFixed(2)}%`;
 }
 
-const HTML_ESC: Record<string, string> = {
-  "\u0026": "\u0026amp;",
-  "\u003c": "\u003clt;".replace("lt;", "lt;"),
-  "\u003e": "\u003egt;".replace("gt;", "gt;"),
-};
-
 function escapeHtml(s: string): string {
+  // Build entities via concatenation so XML/HTML pipelines cannot strip them.
+  const amp = String.fromCharCode(38);
   return s
-    .replace(/\u0026/g, "\u0026amp;")
-    .replace(/\u003c/g, "\u003clt;".replace("lt;", "lt;"))
-    .replace(/\u003e/g, "\u003egt;".replace("gt;", "gt;"))
-    .replace(/"/g, "\u0026quot;")
-    .replace(/'/g, "\u0026#39;");
+    .split(amp)
+    .join(amp + "amp;")
+    .split("<")
+    .join(amp + "lt;")
+    .split(">")
+    .join(amp + "gt;")
+    .split('"')
+    .join(amp + "quot;")
+    .split("'")
+    .join(amp + "#39;");
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -159,9 +160,9 @@ function newsList(
       .slice(0, max)
       .map(
         (it) =>
-          "<li><a href=\"" +
+          '<li><a href="' +
           it.link +
-          "\" target=\"_blank\" rel=\"noreferrer\">" +
+          '" target="_blank" rel="noreferrer">' +
           escapeHtml(it.title) +
           "</a> — " +
           escapeHtml(it.sourceName) +
