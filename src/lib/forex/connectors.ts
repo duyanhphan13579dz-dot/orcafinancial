@@ -169,7 +169,6 @@ export async function fetchForexSnapshot(): Promise<{ quotes: ForexQuote[]; sour
     return { quotes, source: provider };
   };
 
-  // Race both Yahoo hosts — first good result wins
   const attempts = [
     tryHost("https://query1.finance.yahoo.com", YAHOO1),
     tryHost("https://query2.finance.yahoo.com", YAHOO2),
@@ -195,23 +194,28 @@ export async function fetchForexSnapshot(): Promise<{ quotes: ForexQuote[]; sour
   });
 }
 
-const VALID = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
+/** All supported TFs including DXY higher-timeframe set. */
+const VALID = new Set(["1m", "5m", "15m", "1h", "4h", "1d", "1w", "1mo", "12mo"]);
 
-/** Smaller ranges → faster Yahoo response, enough bars for chart + indicators. */
 function yahooParams(tf: string, limit: number) {
   if (tf === "4h") return { interval: "1h", range: limit > 200 ? "3mo" : "1mo" };
-  if (tf === "1d") return { interval: "1d", range: limit > 200 ? "2y" : "1y" };
+  if (tf === "1d") return { interval: "1d", range: limit > 200 ? "5y" : "2y" };
+  if (tf === "1w") return { interval: "1wk", range: "10y" };
+  if (tf === "1mo") return { interval: "1mo", range: "max" };
+  // 12mo yearly bars: pull monthly then aggregate
+  if (tf === "12mo") return { interval: "1mo", range: "max" };
   if (tf === "1h") return { interval: "1h", range: "1mo" };
   if (tf === "15m") return { interval: "15m", range: "10d" };
   if (tf === "5m") return { interval: "5m", range: "5d" };
   return { interval: "1m", range: "2d" };
 }
 
-function aggregate4h(bars: Ohlcv[]): Ohlcv[] {
+function aggregateBars(bars: Ohlcv[], groupSize: number): Ohlcv[] {
   const out: Ohlcv[] = [];
-  for (let i = 0; i < bars.length; i += 4) {
-    const g = bars.slice(i, i + 4);
-    if (g.length < 4) continue;
+  for (let i = 0; i < bars.length; i += groupSize) {
+    const g = bars.slice(i, i + groupSize);
+    if (g.length < Math.min(groupSize, 2) && groupSize > 1) continue;
+    if (g.length === 0) continue;
     out.push({
       time: g[0].time,
       open: g[0].open,
@@ -257,7 +261,11 @@ async function fetchDirectBars(
     );
     if (valid) bars.push(valid);
   }
-  const final = tf === "4h" ? aggregate4h(bars) : bars;
+
+  let final = bars;
+  if (tf === "4h") final = aggregateBars(bars, 4);
+  if (tf === "12mo") final = aggregateBars(bars, 12);
+
   return final.slice(-limit);
 }
 
@@ -302,16 +310,15 @@ async function fetchBarsFrom(
   return result;
 }
 
-/**
- * Race Yahoo query1 + query2 in parallel — first success wins.
- * Hard deadline ~2.5s per host; wall clock typically 0.5–2.5s.
- */
 export async function fetchForexBars(
   symbol: string,
   timeframe: string,
   limit = 120,
 ): Promise<{ bars: Ohlcv[]; source: string }> {
   if (!VALID.has(timeframe)) throw new Error("Invalid timeframe");
+
+  // Higher TF charts need fewer bars; lower threshold for yearly
+  const minBars = timeframe === "12mo" ? 5 : 10;
 
   const attempts: Array<Promise<{ bars: Ohlcv[]; source: string }>> = [
     getBreaker(YAHOO1)
@@ -332,7 +339,7 @@ export async function fetchForexBars(
     let settled = false;
     for (const p of attempts) {
       p.then((v) => {
-        if (!settled && v.bars.length >= 10) {
+        if (!settled && v.bars.length >= minBars) {
           settled = true;
           resolve(v);
         } else if (!settled) {
