@@ -167,7 +167,7 @@ export default function ForexDetail() {
             <span className="h-2 w-2 rounded-full bg-emerald-400 live-dot" />
           </div>
           <div className="text-[10px] text-slate-500">
-            {p?.source ?? chartSource || "multi-source"} · Asia/Ho_Chi_Minh
+            {(p?.source ?? chartSource) || "multi-source"} · Asia/Ho_Chi_Minh
           </div>
         </div>
         <div className="sm:ml-auto">
