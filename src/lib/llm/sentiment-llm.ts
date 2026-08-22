@@ -255,7 +255,7 @@ export async function scoreSentimentHybrid(
 }
 
 /**
- * Main ORCA financial-advisor LLM.
+ * Main ORCA financial-advisor LLM — conversational, human tone.
  */
 export async function agentNarrative(
   userQuestion: string,
@@ -265,38 +265,34 @@ export async function agentNarrative(
     [
       {
         role: "system",
-        content:
-          AGENT_SYSTEM_PROMPT,
+        content: AGENT_SYSTEM_PROMPT,
       },
       {
         role: "user",
-        content: `
-THÔNG TIN PHÂN TÍCH NỘI BỘ:
-
-${contextBlock}
-
-CÂU HỎI KHÁCH HÀNG:
-
-${userQuestion}
-
-Hãy trả lời trực tiếp khách hàng.
-
-QUAN TRỌNG:
-- Không nhắc tới thông tin nội bộ.
-- Không nhắc intent.
-- Không nhắc Data Engine.
-- Không nhắc API/database/provider.
-- Không lặp lại câu hỏi.
-- Nếu thiếu dữ liệu, vẫn đưa ra preliminary advice.
-- Nếu có số liệu có thể tính toán, hãy tính.
-- Trả lời như một financial advisor thực sự.
-`,
+        content: [
+          "Dưới đây là ghi chú nội bộ (chỉ để bạn tham khảo — KHÔNG trích, KHÔNG nhắc tên các nhãn trong đó):",
+          "",
+          contextBlock,
+          "",
+          "---",
+          "",
+          `Khách vừa nhắn: "${userQuestion}"`,
+          "",
+          "Hãy trả lời như một cố vấn đang chat trực tiếp với khách:",
+          "- Mở bằng câu trả lời thẳng, tự nhiên (có thể có một chút đồng cảm ngắn).",
+          "- Dùng số liệu trong ghi chú khi hữu ích; tính toán nếu cần.",
+          "- Đoạn ngắn, dễ đọc; không báo cáo, không bullet markdown.",
+          "- Không lộ intent / Data Engine / API / hồ sơ nội bộ.",
+          "- Kết bằng việc khách có thể làm tiếp + disclaimer ngắn, diễn đạt tự nhiên.",
+        ].join("\n"),
       },
     ],
     {
-      maxTokens: 1800,
-      temperature: 0.25,
-      timeoutMs: 30_000,
+      maxTokens: 2000,
+      // Slightly warmer than report-style (0.25) for natural phrasing,
+      // still low enough to stay factual with numbers.
+      temperature: 0.42,
+      timeoutMs: 32_000,
     },
   );
 }
