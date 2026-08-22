@@ -32,6 +32,7 @@ import {
 } from "@/lib/technical-patterns";
 import { buildPersonalFinanceContext } from "@/lib/personal-finance/context";
 import { buildCorporateFinanceContext } from "@/lib/corporate-finance/context";
+import { retrievePlaybookContext } from "@/lib/rag";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -193,12 +194,16 @@ function composeDeterministicAnswer(
   headlines: string[],
   personalContext: string | null,
   corporateContext: string | null,
+  playbookContext: string | null,
 ): string {
   const parts: string[] = [];
 
-  // Internal notes only — never surface labels to the end user.
   parts.push(`Chủ đề gợi ý (nội bộ): ${intent}`);
   parts.push(`Nội dung khách hỏi: ${message}`);
+
+  if (playbookContext) {
+    parts.push(playbookContext);
+  }
 
   if (intent === "personal_finance") {
     if (personalContext) {
@@ -234,9 +239,7 @@ function composeDeterministicAnswer(
       )
       .join("; ");
 
-    parts.push(
-      `Chỉ số hiện tại: ${idxLine}.`,
-    );
+    parts.push(`Chỉ số hiện tại: ${idxLine}.`);
 
     parts.push(
       `Độ rộng mẫu ${market.breadth.sample} mã: ${market.breadth.advancers} tăng, ${market.breadth.decliners} giảm, ${market.breadth.unchanged} đứng giá.`,
@@ -244,9 +247,7 @@ function composeDeterministicAnswer(
   }
 
   if (headlines.length > 0) {
-    parts.push(
-      `Tin gần đây: ${headlines.slice(0, 5).join("; ")}.`,
-    );
+    parts.push(`Tin gần đây: ${headlines.slice(0, 5).join("; ")}.`);
   }
 
   for (const c of contexts) {
@@ -266,9 +267,7 @@ function composeDeterministicAnswer(
     parts.push(tech);
 
     if (a.reasons.length > 0) {
-      parts.push(
-        `Các lý do chính: ${a.reasons.join("; ")}.`,
-      );
+      parts.push(`Các lý do chính: ${a.reasons.join("; ")}.`);
     }
 
     if (c.fundamental) {
@@ -286,9 +285,7 @@ function composeDeterministicAnswer(
     );
 
     if (c.headlines.length > 0) {
-      parts.push(
-        `Tin liên quan mã: ${c.headlines.join("; ")}.`,
-      );
+      parts.push(`Tin liên quan mã: ${c.headlines.join("; ")}.`);
     }
   }
 
@@ -297,21 +294,17 @@ function composeDeterministicAnswer(
     !market &&
     !personalContext &&
     !corporateContext &&
-    (
-      intent === "personal_finance" ||
+    (intent === "personal_finance" ||
       intent === "corporate_finance" ||
       intent === "wealth" ||
-      intent === "general"
-    )
+      intent === "general")
   ) {
     parts.push(
       "Câu hỏi này không bắt buộc số liệu thị trường. Trả lời theo nguyên tắc tài chính và số liệu khách đã nêu.",
     );
   }
 
-  parts.push(
-    "Cuối cùng nhắc nhẹ: nội dung mang tính tham khảo.",
-  );
+  parts.push("Cuối cùng nhắc nhẹ: nội dung mang tính tham khảo.");
 
   return parts.join("\n\n");
 }
@@ -341,15 +334,11 @@ export async function POST(req: NextRequest) {
       return fail("Message too long", 400);
     }
 
-    const authedUser = await getAuthedUser(req).catch(
-      () => null,
-    );
+    const authedUser = await getAuthedUser(req).catch(() => null);
 
     const candidates = [
       ...new Set(
-        [...message.toUpperCase().matchAll(TICKER_RE)].map(
-          (m) => m[1],
-        ),
+        [...message.toUpperCase().matchAll(TICKER_RE)].map((m) => m[1]),
       ),
     ].slice(0, 3);
 
@@ -363,43 +352,40 @@ export async function POST(req: NextRequest) {
           validated.push(c);
         }
       } catch {
-        // Skip invalid/unavailable candidates.
+        // skip
       }
     }
 
-    const intent = detectIntent(
-      message,
-      validated.length > 0,
-    );
+    const intent = detectIntent(message, validated.length > 0);
 
     const needMarket =
-      intent === "market_ticker" ||
-      intent === "market_overview";
+      intent === "market_ticker" || intent === "market_overview";
+
+    const playbookContext =
+      intent === "personal_finance" ||
+      intent === "corporate_finance" ||
+      intent === "wealth"
+        ? retrievePlaybookContext(message, intent)
+        : null;
 
     const [contexts, market, newsRes, personalContext, corporateContext] =
       await Promise.all([
-        Promise.all(
-          validated.map(buildSymbolContext),
-        ).then((list) =>
-          list.filter(
-            (c): c is SymbolContext => c !== null,
-          ),
+        Promise.all(validated.map(buildSymbolContext)).then((list) =>
+          list.filter((c): c is SymbolContext => c !== null),
         ),
 
         needMarket || intent === "wealth"
           ? getMarketOverview().catch(() => null)
           : Promise.resolve(null),
 
-        intent === "market_overview" ||
-        intent === "market_ticker"
+        intent === "market_overview" || intent === "market_ticker"
           ? getNews({ limit: 6 }).catch(() => null)
           : Promise.resolve(null),
 
-        intent === "personal_finance" ||
-        intent === "wealth"
-          ? buildPersonalFinanceContext(
-              authedUser?.id ?? null,
-            ).catch(() => null)
+        intent === "personal_finance" || intent === "wealth"
+          ? buildPersonalFinanceContext(authedUser?.id ?? null).catch(
+              () => null,
+            )
           : Promise.resolve(null),
 
         intent === "corporate_finance"
@@ -411,14 +397,9 @@ export async function POST(req: NextRequest) {
       ]);
 
     const headlines =
-      newsRes?.items?.map(
-        (n) => `${n.title} (${n.sourceName})`,
-      ) ?? [];
+      newsRes?.items?.map((n) => `${n.title} (${n.sourceName})`) ?? [];
 
-    if (
-      intent === "market_ticker" &&
-      contexts.length === 0
-    ) {
+    if (intent === "market_ticker" && contexts.length === 0) {
       return fail(
         "Không lấy được dữ liệu mã. Thử lại hoặc kiểm tra mã.",
         503,
@@ -433,19 +414,13 @@ export async function POST(req: NextRequest) {
       headlines,
       personalContext,
       corporateContext,
+      playbookContext,
     );
 
-    const llmResult = await agentNarrative(
-      message,
-      deterministic,
-    );
+    const llmResult = await agentNarrative(message, deterministic);
 
     const answer = smoothAgentAnswer(
-      llmResult?.text ??
-        buildAdvisorFallback(
-          message,
-          deterministic,
-        ),
+      llmResult?.text ?? buildAdvisorFallback(message, deterministic),
     );
 
     const model = llmResult
@@ -454,8 +429,7 @@ export async function POST(req: NextRequest) {
 
     const latencyMs = Date.now() - started;
 
-    const sessionId =
-      req.cookies.get("vnstock_session")?.value ?? "";
+    const sessionId = req.cookies.get("vnstock_session")?.value ?? "";
 
     void db
       .insert(agentLogs)
@@ -467,9 +441,7 @@ export async function POST(req: NextRequest) {
         latencyMs,
       })
       .catch((err) =>
-        logger.error("agent_log_failed", {
-          error: String(err),
-        }),
+        logger.error("agent_log_failed", { error: String(err) }),
       );
 
     return ok(
@@ -478,19 +450,16 @@ export async function POST(req: NextRequest) {
         model,
         intent,
         symbols: validated,
-        personalized: Boolean(
-          personalContext || corporateContext,
-        ),
-        providersConfigured:
-          listConfiguredProviders().map(
-            (p) => p.id,
-          ),
+        personalized: Boolean(personalContext || corporateContext),
+        rag: Boolean(playbookContext),
+        providersConfigured: listConfiguredProviders().map((p) => p.id),
       },
       {
         latencyMs,
-        source: "data-engine+intent+llm",
-        confidence:
-          contexts[0]?.analysis.confidence ?? 0.85,
+        source: playbookContext
+          ? "rag-playbook+data-engine+llm"
+          : "data-engine+intent+llm",
+        confidence: contexts[0]?.analysis.confidence ?? 0.85,
         llmProvider: llmResult?.provider ?? null,
       },
     );
