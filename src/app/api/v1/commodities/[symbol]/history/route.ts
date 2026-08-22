@@ -6,8 +6,6 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /api/v1/commodities/:symbol/history?from=YYYY-MM-DD&to=YYYY-MM-DD
- *
- * Returns price history for a commodity in date range.
  */
 export async function GET(
   req: NextRequest,
@@ -40,10 +38,7 @@ export async function GET(
       sourceParam &&
       !["simplize", "vietnambiz"].includes(sourceParam)
     ) {
-      return fail(
-        "source phải là 'simplize' hoặc 'vietnambiz'",
-        400,
-      );
+      return fail("source phải là 'simplize' hoặc 'vietnambiz'", 400);
     }
 
     const history = await getCommodityHistory(
@@ -62,9 +57,8 @@ export async function GET(
         history,
         count: history.length,
       },
-      {
-        cacheSeconds: 300,
-      },
+      { source: "commodities-history" },
+      { cacheSeconds: 300 },
     );
   } catch (err) {
     return handleError(err, `commodity_history:${symbol}`);
