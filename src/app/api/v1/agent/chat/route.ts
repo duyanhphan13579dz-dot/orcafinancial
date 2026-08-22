@@ -47,15 +47,6 @@ type AgentIntent =
   | "wealth"
   | "general";
 
-/**
- * Detect the user's intent from natural Vietnamese language.
- *
- * Important:
- * - Do not rely on exact phrases only.
- * - Personal finance questions are often written in very casual language:
- *   "còn 150k sống đến tuần sau", "thiếu tiền", "tiêu thế nào", etc.
- * - General questions must NOT automatically trigger market/news context.
- */
 function detectIntent(message: string, hasTickers: boolean): AgentIntent {
   const m = message
     .toLowerCase()
@@ -63,23 +54,10 @@ function detectIntent(message: string, hasTickers: boolean): AgentIntent {
     .replace(/\s+/g, " ")
     .trim();
 
-  /**
-   * A validated ticker is the strongest signal.
-   *
-   * We only pass hasTickers=true after validating the candidate through
-   * searchSymbols(), so normal uppercase words should not accidentally
-   * become market_ticker.
-   */
   if (hasTickers) {
     return "market_ticker";
   }
 
-  /**
-   * CORPORATE FINANCE
-   *
-   * Check this before personal finance because a company/business question
-   * can contain words such as "lương", "nợ", "dòng tiền", etc.
-   */
   const corporateFinancePattern =
     /doanh\s*nghiệp|công\s*ty|báo\s*cáo\s*tài\s*chính|bctc|vốn\s*lưu\s*động|vốn\s*working|cấu\s*trúc\s*vốn|dòng\s*tiền\s*(dn|doanh\s*nghiệp|công\s*ty)|dòng\s*tiền\s*doanh\s*nghiệp|ebitda|ebit|đòn\s*bẩy|nợ\s*doanh\s*nghiệp|khả\s*năng\s*trả\s*lãi|biên\s*lợi\s*nhuận|roa|roe|capex|opex|working\s*capital|corporate\s*finance|financial\s*statement|cash\s*flow|capital\s*structure/.test(
       m,
@@ -89,12 +67,6 @@ function detectIntent(message: string, hasTickers: boolean): AgentIntent {
     return "corporate_finance";
   }
 
-  /**
-   * WEALTH MANAGEMENT
-   *
-   * Focus on asset allocation, portfolio construction, retirement,
-   * diversification and long-term wealth planning.
-   */
   const wealthPattern =
     /wealth|quản\s*lý\s*gia\s*sản|quản\s*lý\s*tài\s*sản|tài\s*sản\s*ròng|net\s*worth|phân\s*bổ\s*tài\s*sản|phân\s*bổ\s*danh\s*mục|asset\s*allocation|danh\s*mục\s*dài\s*hạn|danh\s*mục\s*đầu\s*tư|hưu\s*trí|nghỉ\s*hưu|khẩu\s*vị\s*rủi\s*ro|mức\s*chịu\s*rủi\s*ro|đa\s*dạng\s*hóa|đa\s*dạng\s*danh\s*mục|tái\s*cân\s*bằng|rebalancing|retirement|portfolio\s*management|wealth\s*management/.test(
       m,
@@ -104,38 +76,11 @@ function detectIntent(message: string, hasTickers: boolean): AgentIntent {
     return "wealth";
   }
 
-  /**
-   * PERSONAL FINANCE
-   *
-   * This is deliberately broader than the old keyword list.
-   *
-   * Examples now recognised:
-   * - "còn 150k sống đến tuần sau"
-   * - "còn 500 nghìn làm sao tiêu đến cuối tháng"
-   * - "tháng này thiếu tiền"
-   * - "tiền ăn còn ít"
-   * - "lương 15 triệu chia thế nào"
-   * - "đang nợ 20 triệu"
-   * - "bao giờ đủ tiền mua nhà"
-   * - "có 100 triệu nên làm gì"
-   */
   const personalFinancePattern =
     /ngân\s*sách|budget|lập\s*budget|tiết\s*kiệm|saving|quỹ\s*khẩn|emergency\s*fund|chi\s*tiêu|tiêu\s*thế\s*nào|tiêu\s*bao\s*nhiêu|tiêu\s*đến|sống\s*đến|sống\s*qua|còn\s*(bao\s*nhiêu|ít|tiền)|thiếu\s*tiền|hết\s*tiền|tiền\s*ăn|tiền\s*nhà|tiền\s*thuê|tiền\s*điện|tiền\s*xăng|tiền\s*đi\s*lại|sinh\s*hoạt|lương|thu\s*nhập|income|nợ\s*cá\s*nhân|đang\s*nợ|mắc\s*nợ|trả\s*nợ|nợ\s*thẻ|vay\s*cá\s*nhân|khoản\s*vay|bảo\s*hiểm\s*nhân\s*thọ|bảo\s*hiểm\s*cá\s*nhân|mục\s*tiêu\s*tài\s*chính|mua\s*nhà|mua\s*xe|đám\s*cưới|du\s*lịch|học\s*phí|tài\s*chính\s*cá\s*nhân|personal\s*finance|personal\s*budget|cash\s*flow\s*cá\s*nhân/.test(
       m,
     );
 
-  /**
-   * Money + time is an especially strong personal-finance signal.
-   *
-   * This catches natural sentences even when they do not contain
-   * conventional finance vocabulary.
-   *
-   * Examples:
-   * "150k đến tuần sau"
-   * "500 nghìn đến cuối tháng"
-   * "2 triệu dùng 10 ngày"
-   * "còn 3tr sống 2 tuần"
-   */
   const hasMoneyAmount =
     /(?:\d+(?:[.,]\d+)?)\s*(?:k|nghìn|ngàn|triệu|tr|tỷ|tỉ|đ|vnđ|vnd|đồng)\b/.test(
       m,
@@ -159,11 +104,6 @@ function detectIntent(message: string, hasTickers: boolean): AgentIntent {
     return "personal_finance";
   }
 
-  /**
-   * MARKET OVERVIEW
-   *
-   * Only explicit market-related language should trigger market context.
-   */
   const marketPattern =
     /thị\s*trường|vn-?index|vn30|hnx|upcom|tổng\s*quan\s*thị\s*trường|diễn\s*biến\s*thị\s*trường|hôm\s*nay\s*thị\s*trường|phiên\s*hôm\s*nay|phiên\s*giao\s*dịch|chỉ\s*số|chứng\s*khoán|cổ\s*phiếu|crypto|tiền\s*điện\s*tử|bitcoin|btc|ethereum|eth|forex|ngoại\s*hối|vàng|dầu|hàng\s*hóa|commodity|market|market\s*overview/.test(
       m,
@@ -256,15 +196,16 @@ function composeDeterministicAnswer(
 ): string {
   const parts: string[] = [];
 
-  parts.push(`Câu hỏi người dùng: ${message}`);
-  parts.push(`Phân loại intent: ${intent}`);
+  // Internal notes only — never surface labels to the end user.
+  parts.push(`Chủ đề gợi ý (nội bộ): ${intent}`);
+  parts.push(`Nội dung khách hỏi: ${message}`);
 
   if (intent === "personal_finance") {
     if (personalContext) {
       parts.push(personalContext);
     } else {
       parts.push(
-        "Người dùng CHƯA khai báo hồ sơ tài chính cá nhân (thu nhập/chi tiêu/nợ/mục tiêu) tại /api/v1/personal-finance/profile. Gợi ý khung trả lời tổng quát: làm rõ mục tiêu và chân trời thời gian; quỹ khẩn cấp 3–6 tháng chi tiêu; tỷ lệ chi tiêu/tiết kiệm tham khảo (vd 50/30/20); ưu tiên trả nợ lãi cao; bảo hiểm rủi ro cơ bản trước khi đầu tư. Chủ động gợi ý người dùng khai báo hồ sơ để nhận tư vấn cá nhân hóa với số liệu thật.",
+        "Chưa có hồ sơ thu nhập/chi tiêu đầy đủ. Vẫn tư vấn ngay từ số liệu trong câu hỏi; nếu thiếu thì hỏi thêm tối đa 1–3 ý (thu nhập, chi cố định, nợ). Có thể gợi ý nhẹ việc lưu hồ sơ sau, nhưng đừng mở đầu bằng \"bạn chưa khai báo\".",
       );
     }
   } else if (intent === "corporate_finance") {
@@ -272,12 +213,12 @@ function composeDeterministicAnswer(
       parts.push(corporateContext);
     } else {
       parts.push(
-        "Người dùng CHƯA nhập số liệu tài chính doanh nghiệp tại /api/v1/corporate-finance/statements. Gợi ý khung trả lời tổng quát: dòng tiền hoạt động vs đầu tư vs tài chính; vốn lưu động; đòn bẩy và khả năng trả lãi; đọc nhanh ROE/ROA/biên lợi nhuận; rủi ro thanh khoản. Chủ động gợi ý người dùng nhập số liệu BCTC để nhận phân tích chính xác với số liệu thật thay vì lý thuyết chung.",
+        "Chưa có BCTC đầy đủ. Đưa khung phân tích (dòng tiền, vốn lưu động, đòn bẩy, ROE/ROA) và hỏi số liệu then chốt — không đổ lỗi thiếu form/API.",
       );
     }
   } else if (intent === "wealth") {
     parts.push(
-      "Gợi ý khung trả lời (wealth): khẩu vị rủi ro, chân trời, đa dạng hóa theo nhóm tài sản, tái cân bằng định kỳ, tránh tập trung quá mức một mã/ngành. Không liệt kê basket mã cố định.",
+      "Wealth: bám khẩu vị rủi ro, chân trời, đa dạng hóa, tái cân bằng. Không gợi ý basket mã cố định.",
     );
 
     if (personalContext) {
@@ -294,7 +235,7 @@ function composeDeterministicAnswer(
       .join("; ");
 
     parts.push(
-      `Tổng quan thị trường (Data Engine): ${idxLine}.`,
+      `Chỉ số hiện tại: ${idxLine}.`,
     );
 
     parts.push(
@@ -364,12 +305,12 @@ function composeDeterministicAnswer(
     )
   ) {
     parts.push(
-      "Không có snapshot thị trường bắt buộc cho câu hỏi này. Hãy trả lời dựa trên nguyên tắc tài chính chuẩn và hỏi thêm thông tin nếu thiếu.",
+      "Câu hỏi này không bắt buộc số liệu thị trường. Trả lời theo nguyên tắc tài chính và số liệu khách đã nêu.",
     );
   }
 
   parts.push(
-    "Nhắc cuối: phân tích mang tính tham khảo, không phải lời khuyên đầu tư cá nhân hóa.",
+    "Cuối cùng nhắc nhẹ: nội dung mang tính tham khảo.",
   );
 
   return parts.join("\n\n");
@@ -404,12 +345,6 @@ export async function POST(req: NextRequest) {
       () => null,
     );
 
-    /**
-     * Detect possible ticker candidates.
-     *
-     * We still validate every candidate with searchSymbols()
-     * before treating it as a market ticker.
-     */
     const candidates = [
       ...new Set(
         [...message.toUpperCase().matchAll(TICKER_RE)].map(
@@ -437,19 +372,6 @@ export async function POST(req: NextRequest) {
       validated.length > 0,
     );
 
-    /**
-     * IMPORTANT:
-     *
-     * "general" no longer triggers Market Data.
-     *
-     * Previously:
-     *   general -> market + news
-     *
-     * That caused questions such as:
-     *   "còn 150k làm sao sống đến tuần sau?"
-     *
-     * to receive VN-Index/HNX/UPCOM/news context.
-     */
     const needMarket =
       intent === "market_ticker" ||
       intent === "market_overview";
@@ -464,31 +386,15 @@ export async function POST(req: NextRequest) {
           ),
         ),
 
-        /**
-         * Wealth can use market context when relevant because
-         * wealth-management decisions may involve the current
-         * market environment.
-         *
-         * Personal Finance does NOT automatically get market data.
-         */
         needMarket || intent === "wealth"
           ? getMarketOverview().catch(() => null)
           : Promise.resolve(null),
 
-        /**
-         * News is only loaded when the user explicitly asks
-         * about market-related information.
-         *
-         * General chat must stay general.
-         */
         intent === "market_overview" ||
         intent === "market_ticker"
           ? getNews({ limit: 6 }).catch(() => null)
           : Promise.resolve(null),
 
-        /**
-         * Personal Finance context.
-         */
         intent === "personal_finance" ||
         intent === "wealth"
           ? buildPersonalFinanceContext(
@@ -496,9 +402,6 @@ export async function POST(req: NextRequest) {
             ).catch(() => null)
           : Promise.resolve(null),
 
-        /**
-         * Corporate Finance context.
-         */
         intent === "corporate_finance"
           ? buildCorporateFinanceContext(
               authedUser?.id ?? null,
@@ -512,11 +415,6 @@ export async function POST(req: NextRequest) {
         (n) => `${n.title} (${n.sourceName})`,
       ) ?? [];
 
-    /**
-     * Only hard-fail when the user clearly asked for
-     * market/ticker data and the requested symbol cannot
-     * be resolved.
-     */
     if (
       intent === "market_ticker" &&
       contexts.length === 0
@@ -527,9 +425,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    /**
-     * Build structured context for the LLM.
-     */
     const deterministic = composeDeterministicAnswer(
       message,
       intent,
@@ -540,27 +435,18 @@ export async function POST(req: NextRequest) {
       corporateContext,
     );
 
-    /**
-     * Let the configured LLM turn the structured context
-     * into a natural answer.
-     *
-     * If no LLM provider is available, the existing
-     * deterministic fallback is retained for now.
-     *
-     * We will improve this fallback in Part 3.
-     */
     const llmResult = await agentNarrative(
       message,
       deterministic,
     );
 
     const answer = smoothAgentAnswer(
-  llmResult?.text ??
-    buildAdvisorFallback(
-      message,
-      deterministic,
-    ),
-);
+      llmResult?.text ??
+        buildAdvisorFallback(
+          message,
+          deterministic,
+        ),
+    );
 
     const model = llmResult
       ? `${llmResult.provider}/${llmResult.model}`
