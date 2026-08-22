@@ -1,8 +1,13 @@
 import { DN_PLAYBOOK } from "./playbooks/dn";
 import { PF_PLAYBOOK } from "./playbooks/pf";
+import { WEALTH_PLAYBOOK } from "./playbooks/wealth";
 import type { PlaybookChunk, PlaybookDomain, RetrievedChunk } from "./types";
 
-const ALL: PlaybookChunk[] = [...PF_PLAYBOOK, ...DN_PLAYBOOK];
+const ALL: PlaybookChunk[] = [
+  ...PF_PLAYBOOK,
+  ...DN_PLAYBOOK,
+  ...WEALTH_PLAYBOOK,
+];
 
 function normalize(text: string): string {
   return text
@@ -15,7 +20,9 @@ function normalize(text: string): string {
 /** Simple token set for overlap scoring (no embedding dependency). */
 function tokens(text: string): Set<string> {
   const n = normalize(text);
-  const parts = n.split(/[^a-z0-9àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]+/i);
+  const parts = n.split(
+    /[^a-z0-9àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]+/i,
+  );
   const out = new Set<string>();
   for (const p of parts) {
     if (p.length >= 2) out.add(p);
@@ -32,12 +39,14 @@ function scoreChunk(query: string, chunk: PlaybookChunk): number {
     const k = normalize(kw);
     if (!k) continue;
     if (q.includes(k)) score += 3;
-    else if (k.length >= 3 && [...qTokens].some((t) => t.includes(k) || k.includes(t))) {
+    else if (
+      k.length >= 3 &&
+      [...qTokens].some((t) => t.includes(k) || k.includes(t))
+    ) {
       score += 1.5;
     }
   }
 
-  // Title soft boost
   for (const t of tokens(chunk.title)) {
     if (qTokens.has(t)) score += 0.5;
   }
@@ -71,15 +80,19 @@ export function retrievePlaybook(
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);
 
-  // Always ensure at least one domain default when intent is clear but score low
-  if (ranked.length === 0 && domains && domains.length === 1) {
+  if (ranked.length === 0 && domains && domains.length >= 1) {
+    const primary = domains[0];
     const fallbackId =
-      domains[0] === "pf"
+      primary === "pf"
         ? "pf-short-cash"
-        : domains[0] === "dn"
+        : primary === "dn"
           ? "dn-read-bctc"
-          : null;
-    const fb = fallbackId ? pool.find((c) => c.id === fallbackId) : pool[0];
+          : primary === "wealth"
+            ? "wm-allocation"
+            : null;
+    const fb = fallbackId
+      ? pool.find((c) => c.id === fallbackId) ?? pool[0]
+      : pool[0];
     if (fb) return [{ chunk: fb, score: 0.5 }];
   }
 
@@ -91,8 +104,7 @@ export function formatPlaybookForLlm(retrieved: RetrievedChunk[]): string {
   if (retrieved.length === 0) return "";
 
   const blocks = retrieved.map(
-    (r, i) =>
-      `(${i + 1}) ${r.chunk.title}\n${r.chunk.body}`,
+    (r, i) => `(${i + 1}) ${r.chunk.title}\n${r.chunk.body}`,
   );
 
   return [
@@ -116,10 +128,21 @@ export function retrievePlaybookContext(
     );
   }
   if (intent === "wealth") {
-    // Wealth often overlaps PF cash layers
-    return formatPlaybookForLlm(
-      retrievePlaybook(query, { domain: "pf", topK: 2, minScore: 1.5 }),
-    );
+    // Prefer wealth chunks; allow light PF overlap (liquidity / emergency)
+    const wealthHits = retrievePlaybook(query, {
+      domain: "wealth",
+      topK: 3,
+      minScore: 1.5,
+    });
+    if (wealthHits.length >= 2) {
+      return formatPlaybookForLlm(wealthHits);
+    }
+    const pfSupport = retrievePlaybook(query, {
+      domain: "pf",
+      topK: 1,
+      minScore: 2,
+    });
+    return formatPlaybookForLlm([...wealthHits, ...pfSupport].slice(0, 3));
   }
   return "";
 }
