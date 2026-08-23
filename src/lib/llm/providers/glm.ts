@@ -1,10 +1,5 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
-/**
- * Z.AI / Zhipu GLM.
- * Keys: ZAI_API_KEY | ZHIPU_API_KEY | GLM_API_KEY | BIGMODEL_API_KEY
- * Model: GLM_MODEL (default glm-4.7-flash only — avoid multi-model cascade timeouts)
- */
 function resolveApiKey(): string | undefined {
   return (
     process.env.ZAI_API_KEY?.trim() ||
@@ -24,9 +19,8 @@ function baseUrl(): string {
 }
 
 function modelCandidates(): string[] {
-  const primary = process.env.GLM_MODEL?.trim() || "glm-4.7-flash";
-  // Only one primary + one backup to avoid 30s+ cascade
-  const backup = primary === "glm-4.7-flash" ? "glm-4.5-flash" : "glm-4.7-flash";
+  const primary = process.env.GLM_MODEL?.trim() || "glm-4.5-flash";
+  const backup = primary.includes("4.5") ? "glm-4.7-flash" : "glm-4.5-flash";
   return [...new Set([primary, backup])];
 }
 
@@ -34,15 +28,21 @@ function isConfigured() {
   return Boolean(resolveApiKey());
 }
 
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 async function chatOne(
   apiKey: string,
   model: string,
   messages: LlmMessage[],
   opts: LlmChatOptions,
+  attempt: number,
 ): Promise<LlmChatResult> {
   const started = Date.now();
+  const timeoutMs = opts.timeoutMs ?? 16_000;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 20_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(`${baseUrl()}/chat/completions`, {
@@ -54,15 +54,28 @@ async function chatOne(
       body: JSON.stringify({
         model,
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
-        max_tokens: opts.maxTokens ?? 2200,
-        temperature: opts.temperature ?? 0.45,
+        max_tokens: opts.maxTokens ?? 1600,
+        temperature: opts.temperature ?? 0.4,
+        // Faster decoding on supported APIs
+        stream: false,
       }),
       signal: controller.signal,
     });
+
+    if (res.status === 429 || res.status === 503) {
+      const errText = await res.text().catch(() => "");
+      if (attempt === 0) {
+        await sleep(800);
+        return chatOne(apiKey, model, messages, opts, 1);
+      }
+      throw new Error(`GLM HTTP ${res.status} rate_limited (${model}): ${errText.slice(0, 160)}`);
+    }
+
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       throw new Error(`GLM HTTP ${res.status} (${model}): ${errText.slice(0, 240)}`);
     }
+
     const data = (await res.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
       error?: { message?: string };
@@ -90,7 +103,7 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
   const errors: string[] = [];
   for (const model of modelCandidates()) {
     try {
-      return await chatOne(apiKey, model, messages, opts);
+      return await chatOne(apiKey, model, messages, opts, 0);
     } catch (err) {
       errors.push(err instanceof Error ? err.message : String(err));
     }

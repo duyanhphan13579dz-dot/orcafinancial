@@ -3,7 +3,6 @@ import { glmProvider } from "./providers/glm";
 import { openrouterProvider } from "./providers/openrouter";
 import type { LlmChatOptions, LlmMessage, LlmChatResult, LlmProvider, LlmProviderId } from "./types";
 
-/** Fixed stack: GLM primary, OpenRouter secondary. No other providers. */
 const ALL: LlmProvider[] = [glmProvider, openrouterProvider];
 
 function orderedProviders(prefer?: LlmProviderId): LlmProvider[] {
@@ -51,13 +50,19 @@ export function llmEnvDiagnostics(): {
   return { keysPresent, configured, order: configured };
 }
 
-/** When true (default in production), agent must not silently use rule-engine if keys exist. */
 export function isLlmStrict(): boolean {
   const raw = process.env.LLM_STRICT;
   if (raw !== undefined && raw !== "") {
     return !/^(0|false|no|off)$/i.test(raw);
   }
   return process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
+}
+
+/** Transient errors: safe to soft-degrade with data-engine answer. */
+export function isTransientLlmError(msg: string): boolean {
+  return /\b(429|503|rate.?limit|timeout|abort|ECONNRESET|ETIMEDOUT|fetch failed|network|overloaded|capacity)\b/i.test(
+    msg,
+  );
 }
 
 function isHardAuthError(msg: string): boolean {
@@ -70,6 +75,7 @@ export type ChatWithFallbackResult = {
   result: LlmChatResult | null;
   errors: string[];
   attempted: LlmProviderId[];
+  transient: boolean;
 };
 
 export async function chatWithFallbackDetailed(
@@ -78,19 +84,19 @@ export async function chatWithFallbackDetailed(
 ): Promise<ChatWithFallbackResult> {
   const providers = orderedProviders(opts.prefer);
   if (providers.length === 0) {
-    logger.debug("llm_no_provider_configured");
     return {
       result: null,
       errors: [
         "No LLM provider configured. Set ZAI_API_KEY (GLM) and/or OPENROUTER_API_KEY on Vercel Production.",
       ],
       attempted: [],
+      transient: false,
     };
   }
 
   const errors: string[] = [];
   const attempted: LlmProviderId[] = [];
-  const baseTimeout = opts.timeoutMs ?? 20_000;
+  const baseTimeout = opts.timeoutMs ?? 16_000;
 
   for (let i = 0; i < providers.length; i++) {
     const provider = providers[i];
@@ -98,7 +104,7 @@ export async function chatWithFallbackDetailed(
     try {
       const result = await provider.chat(messages, {
         ...opts,
-        timeoutMs: Math.max(12_000, baseTimeout - i * 2_000),
+        timeoutMs: Math.max(10_000, baseTimeout - i * 2_000),
       });
       logger.info("llm_ok", {
         provider: provider.id,
@@ -106,7 +112,7 @@ export async function chatWithFallbackDetailed(
         latencyMs: result.latencyMs,
         attempt: i + 1,
       });
-      return { result, errors, attempted };
+      return { result, errors, attempted, transient: false };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`${provider.id}: ${msg.slice(0, 220)}`);
@@ -115,8 +121,9 @@ export async function chatWithFallbackDetailed(
     }
   }
 
-  logger.warn("llm_all_providers_failed", { errors });
-  return { result: null, errors, attempted };
+  const transient = errors.some((e) => isTransientLlmError(e));
+  logger.warn("llm_all_providers_failed", { errors, transient });
+  return { result: null, errors, attempted, transient };
 }
 
 export async function chatWithFallback(

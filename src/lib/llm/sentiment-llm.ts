@@ -41,12 +41,7 @@ export async function scoreSentimentHybrid(
   const ruleScore = analyzeSentiment(combined);
   const ruleLabel = sentimentLabel(ruleScore);
 
-  // Agent path / env: skip nested LLM to save time for main narrative
-  if (
-    opts.forceRuleOnly ||
-    texts.length === 0 ||
-    process.env.LLM_SENTIMENT_DISABLED === "1"
-  ) {
+  if (opts.forceRuleOnly || texts.length === 0 || process.env.LLM_SENTIMENT_DISABLED === "1") {
     return {
       score: Number(ruleScore.toFixed(3)),
       label: ruleLabel,
@@ -62,7 +57,7 @@ export async function scoreSentimentHybrid(
         { role: "system", content: SENTIMENT_SYSTEM_PROMPT },
         { role: "user", content: buildSentimentUserPrompt(symbol, texts) },
       ],
-      { maxTokens: 400, temperature: 0.1, timeoutMs: 10_000 },
+      { maxTokens: 300, temperature: 0.1, timeoutMs: 8_000 },
     );
 
     if (!llm) {
@@ -114,6 +109,7 @@ export type AgentNarrativeMeta = {
   result: LlmChatResult | null;
   errors: string[];
   attempted: string[];
+  transient: boolean;
 };
 
 export async function agentNarrative(
@@ -124,39 +120,46 @@ export async function agentNarrative(
   return result;
 }
 
+/** Compact prompt for follow-up turns (lower latency). */
 export async function agentNarrativeDetailed(
   userQuestion: string,
   contextBlock: string,
+  opts: { followUp?: boolean } = {},
 ): Promise<AgentNarrativeMeta> {
+  const followUp = Boolean(opts.followUp);
+  // Cap context size to cut tokens/latency on continuous chat
+  const ctx = contextBlock.length > 3500 ? contextBlock.slice(0, 3500) + "\n…" : contextBlock;
+
   const detailed = await chatWithFallbackDetailed(
     [
       { role: "system", content: AGENT_SYSTEM_PROMPT },
       {
         role: "user",
-        content: [
-          "Ghi chú nội bộ (chỉ để bạn tham khảo — KHÔNG trích nguyên văn, KHÔNG nhắc tên nhãn):",
-          "",
-          contextBlock,
-          "",
-          "---",
-          "",
-          `Khách vừa nhắn: "${userQuestion}"`,
-          "",
-          "Hãy trả lời như cố vấn đang chat trực tiếp:",
-          "- Mở bằng câu trả lời thẳng, tự nhiên (có thể đồng cảm ngắn).",
-          "- Thân bài đầy đủ: giải thích rõ, tính số nếu có số liệu, thứ tự ưu tiên cụ thể.",
-          "- Đưa 1–3 việc khách làm được ngay (hôm nay / tuần này).",
-          "- Độ dài khoảng 180–450 chữ với câu hỏi thường; đủ mạch lạc, không cụt, không lan man.",
-          "- Không markdown (#, bullet -, *). Xuống dòng giữa các ý.",
-          "- Không lộ intent / Data Engine / API / playbook / hồ sơ nội bộ.",
-          "- Kết bằng gợi ý tiếp theo + disclaimer ngắn, diễn đạt tự nhiên.",
-        ].join("\n"),
+        content: followUp
+          ? [
+              "Ngữ cảnh số liệu (nội bộ, không trích nhãn):",
+              ctx,
+              "",
+              `Câu hỏi tiếp: "${userQuestion}"`,
+              "",
+              "Trả lời ngắn–vừa (120–280 chữ), thẳng ý, có số nếu có, 1–2 việc làm ngay. Không markdown. Disclaimer ngắn.",
+            ].join("\n")
+          : [
+              "Ghi chú nội bộ (chỉ tham khảo — KHÔNG trích nhãn):",
+              "",
+              ctx,
+              "",
+              "---",
+              `Khách vừa nhắn: "${userQuestion}"`,
+              "",
+              "Trả lời như cố vấn chat trực tiếp: mở thẳng ý, thân bài rõ có số liệu, 1–3 việc làm ngay, 150–350 chữ, không markdown, disclaimer ngắn.",
+            ].join("\n"),
       },
     ],
     {
-      maxTokens: 2800,
-      temperature: 0.48,
-      timeoutMs: 22_000,
+      maxTokens: followUp ? 1200 : 1800,
+      temperature: 0.4,
+      timeoutMs: followUp ? 14_000 : 16_000,
     },
   );
 
@@ -164,5 +167,6 @@ export async function agentNarrativeDetailed(
     result: detailed.result,
     errors: detailed.errors,
     attempted: detailed.attempted,
+    transient: detailed.transient,
   };
 }

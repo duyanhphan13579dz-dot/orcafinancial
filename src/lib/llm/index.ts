@@ -13,6 +13,7 @@ export {
   listConfiguredProviders,
   llmEnvDiagnostics,
   isLlmStrict,
+  isTransientLlmError,
 } from "./router";
 export {
   scoreSentimentHybrid,
