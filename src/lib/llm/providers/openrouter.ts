@@ -1,20 +1,30 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
 /** Prefer free models on OpenRouter; override via OPENROUTER_MODEL. */
-const DEFAULT_MODEL = process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.3-70b-instruct:free";
+const DEFAULT_MODEL =
+  process.env.OPENROUTER_MODEL?.trim() || "meta-llama/llama-3.3-70b-instruct:free";
+
+function resolveApiKey(): string | undefined {
+  // Support common typo OPENROUTES_API_KEY from dashboard paste
+  return (
+    process.env.OPENROUTER_API_KEY?.trim() ||
+    process.env.OPENROUTES_API_KEY?.trim() ||
+    undefined
+  );
+}
 
 function isConfigured() {
-  return Boolean(process.env.OPENROUTER_API_KEY?.trim());
+  return Boolean(resolveApiKey());
 }
 
 async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<LlmChatResult> {
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  const apiKey = resolveApiKey();
   if (!apiKey) throw new Error("OPENROUTER_API_KEY missing");
 
   const model = DEFAULT_MODEL;
   const started = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 25_000);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 22_000);
 
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -22,14 +32,14 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${apiKey}`,
-        "http-referer": process.env.OPENROUTER_SITE_URL ?? "https://orcafinancial.local",
-        "x-title": process.env.OPENROUTER_APP_NAME ?? "VNStock Terminal",
+        "http-referer": process.env.OPENROUTER_SITE_URL ?? process.env.APP_URL ?? "https://orcafinancial.vercel.app",
+        "x-title": process.env.OPENROUTER_APP_NAME ?? "ORCA Financial",
       },
       body: JSON.stringify({
         model,
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
-        max_tokens: opts.maxTokens ?? 1500,
-        temperature: opts.temperature ?? 0.3,
+        max_tokens: opts.maxTokens ?? 2200,
+        temperature: opts.temperature ?? 0.45,
       }),
       signal: controller.signal,
     });
@@ -50,7 +60,7 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
 
 export const openrouterProvider: LlmProvider = {
   id: "openrouter",
-  label: "OpenRouter (free models)",
+  label: "OpenRouter",
   isConfigured,
   chat,
 };

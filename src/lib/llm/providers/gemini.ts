@@ -4,7 +4,7 @@ import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../
  * Default model for free-tier keys.
  * Google shut down gemini-2.0-flash (and 2.0-flash-lite) on 2026-06-01.
  * gemini-2.5-flash remains available on free tier until ~Oct 2026.
- * Override via GEMINI_MODEL if needed (e.g. gemini-2.5-flash-lite, gemini-3.1-flash-lite, gemini-3.5-flash-lite).
+ * Override via GEMINI_MODEL if needed.
  */
 const DEFAULT_MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
 
@@ -28,8 +28,8 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
   const body: Record<string, unknown> = {
     contents,
     generationConfig: {
-      maxOutputTokens: opts.maxTokens ?? 1500,
-      temperature: opts.temperature ?? 0.3,
+      maxOutputTokens: opts.maxTokens ?? 2200,
+      temperature: opts.temperature ?? 0.45,
     },
   };
   if (system) {
@@ -38,7 +38,7 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
 
   const started = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 25_000);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 22_000);
 
   try {
     const res = await fetch(

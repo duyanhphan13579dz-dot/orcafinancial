@@ -150,7 +150,7 @@ export async function scoreSentimentHybrid(
         {
           maxTokens: 400,
           temperature: 0.1,
-          timeoutMs: 18_000,
+          timeoutMs: 14_000,
         },
       );
 
@@ -255,7 +255,7 @@ export async function scoreSentimentHybrid(
 }
 
 /**
- * Main ORCA financial-advisor LLM — conversational, human tone.
+ * Main ORCA financial-advisor LLM — detailed, coherent, human tone.
  */
 export async function agentNarrative(
   userQuestion: string,
@@ -270,7 +270,7 @@ export async function agentNarrative(
       {
         role: "user",
         content: [
-          "Dưới đây là ghi chú nội bộ (chỉ để bạn tham khảo — KHÔNG trích, KHÔNG nhắc tên các nhãn trong đó):",
+          "Ghi chú nội bộ (chỉ để bạn tham khảo — KHÔNG trích nguyên văn, KHÔNG nhắc tên nhãn):",
           "",
           contextBlock,
           "",
@@ -278,21 +278,21 @@ export async function agentNarrative(
           "",
           `Khách vừa nhắn: "${userQuestion}"`,
           "",
-          "Hãy trả lời như một cố vấn đang chat trực tiếp với khách:",
-          "- Mở bằng câu trả lời thẳng, tự nhiên (có thể có một chút đồng cảm ngắn).",
-          "- Dùng số liệu trong ghi chú khi hữu ích; tính toán nếu cần.",
-          "- Đoạn ngắn, dễ đọc; không báo cáo, không bullet markdown.",
-          "- Không lộ intent / Data Engine / API / hồ sơ nội bộ.",
-          "- Kết bằng việc khách có thể làm tiếp + disclaimer ngắn, diễn đạt tự nhiên.",
+          "Hãy trả lời như cố vấn đang chat trực tiếp:",
+          "- Mở bằng câu trả lời thẳng, tự nhiên (có thể đồng cảm ngắn).",
+          "- Thân bài đầy đủ: giải thích rõ, tính số nếu có số liệu, thứ tự ưu tiên cụ thể.",
+          "- Đưa 1–3 việc khách làm được ngay (hôm nay / tuần này).",
+          "- Độ dài khoảng 180–450 chữ với câu hỏi thường; đủ mạch lạc, không cụt, không lan man.",
+          "- Không markdown (#, bullet -, *). Xuống dòng giữa các ý.",
+          "- Không lộ intent / Data Engine / API / playbook / hồ sơ nội bộ.",
+          "- Kết bằng gợi ý tiếp theo + disclaimer ngắn, diễn đạt tự nhiên.",
         ].join("\n"),
       },
     ],
     {
-      maxTokens: 2000,
-      // Slightly warmer than report-style (0.25) for natural phrasing,
-      // still low enough to stay factual with numbers.
-      temperature: 0.42,
-      timeoutMs: 32_000,
+      maxTokens: 2800,
+      temperature: 0.48,
+      timeoutMs: 28_000,
     },
   );
 }

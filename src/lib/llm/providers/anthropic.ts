@@ -1,6 +1,6 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
-const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5";
+const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL?.trim() || "claude-haiku-4-5";
 
 function isConfigured() {
   return Boolean(process.env.ANTHROPIC_API_KEY?.trim());
@@ -18,7 +18,7 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
 
   const started = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 25_000);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 22_000);
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -30,8 +30,8 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
       },
       body: JSON.stringify({
         model,
-        max_tokens: opts.maxTokens ?? 1500,
-        temperature: opts.temperature ?? 0.3,
+        max_tokens: opts.maxTokens ?? 2200,
+        temperature: opts.temperature ?? 0.45,
         system: system || undefined,
         messages: userMessages,
       }),
