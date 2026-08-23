@@ -1,7 +1,14 @@
-import { desc, eq, ilike, or, sql, and, gte } from "drizzle-orm";
+import { desc, eq, ilike, or, sql, and, gte, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { companies, jobLogs, news, priceSnapshots } from "@/db/schema";
-import { cached, type Ohlcv, type Quote, type SymbolInfo, type Timeframe } from "@/lib/connectors/core";
+import {
+  cached,
+  mapPool,
+  type Ohlcv,
+  type Quote,
+  type SymbolInfo,
+  type Timeframe,
+} from "@/lib/connectors/core";
 import {
   cryptoPricesWithFallback,
   fetchAllRssNews,
@@ -15,7 +22,6 @@ import { scoreSentimentHybrid } from "@/lib/llm";
 import { logger } from "@/lib/logger";
 import { analyzeSentiment } from "@/lib/sentiment";
 
-/** Featured liquid VN tickers used for dashboard/breadth (symbols are identifiers; all data is fetched live). */
 export const FEATURED_SYMBOLS = [
   "VNM", "VIC", "VHM", "HPG", "FPT", "MWG", "VCB", "TCB", "BID", "CTG",
   "SSI", "VND", "MSN", "GAS", "VRE", "MBB", "STB", "HDB", "POW", "GVR",
@@ -27,6 +33,9 @@ export const INDICES = [
   { code: "UPCOM", name: "UPCOM-Index", exchange: "UPCOM" },
 ];
 
+/** Prefer DB snapshot if newer than this (ms). */
+const SNAPSHOT_FRESH_MS = 25_000;
+
 async function logJob(job: string, status: "ok" | "error", detail: string, durationMs: number) {
   try {
     await db.insert(jobLogs).values({ job, status, detail, durationMs });
@@ -35,15 +44,55 @@ async function logJob(job: string, status: "ok" | "error", detail: string, durat
   }
 }
 
+function snapshotToQuote(row: typeof priceSnapshots.$inferSelect): Quote {
+  return {
+    symbol: row.symbol,
+    time: Math.floor(row.time.getTime() / 1000),
+    open: Number(row.open),
+    high: Number(row.high),
+    low: Number(row.low),
+    close: Number(row.close),
+    volume: Number(row.volume),
+    prevClose: null,
+    changePct: row.changePct != null ? Number(row.changePct) : null,
+    source: `${row.source}-snapshot`,
+    confidence: Number(row.confidence ?? 0.9),
+  };
+}
+
+async function loadFreshSnapshots(symbols: string[]): Promise<Map<string, Quote>> {
+  const out = new Map<string, Quote>();
+  if (symbols.length === 0) return out;
+  try {
+    const cutoff = new Date(Date.now() - SNAPSHOT_FRESH_MS);
+    const rows = await db
+      .select()
+      .from(priceSnapshots)
+      .where(and(inArray(priceSnapshots.symbol, symbols), gte(priceSnapshots.updatedAt, cutoff)));
+    for (const row of rows) out.set(row.symbol, snapshotToQuote(row));
+  } catch (err) {
+    logger.warn("snapshot_batch_read_failed", { error: String(err) });
+  }
+  return out;
+}
+
 /* ----------------------- History with fallback chain ----------------------- */
-export async function getHistory(symbol: string, from: number, to: number, timeframe: Timeframe): Promise<{ bars: Ohlcv[]; source: string; confidence: number }> {
+export async function getHistory(
+  symbol: string,
+  from: number,
+  to: number,
+  timeframe: Timeframe,
+): Promise<{ bars: Ohlcv[]; source: string; confidence: number }> {
   const key = `hist:${symbol}:${timeframe}:${Math.floor(from / 300)}:${Math.floor(to / 300)}`;
-  return cached(key, timeframe === "D" ? 60_000 : 20_000, async () => {
+  return cached(key, timeframe === "D" ? 90_000 : 25_000, async () => {
     try {
       const bars = await vndirectHistory(symbol, from, to, timeframe);
       return { bars, source: "vndirect-dchart", confidence: 0.95 };
     } catch (primaryErr) {
-      logger.warn("history_primary_failed", { symbol, error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr) });
+      logger.warn("history_primary_failed", {
+        symbol,
+        error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
+      });
       const bars = await yahooHistory(symbol, from, to, timeframe);
       return { bars, source: "yahoo-finance", confidence: 0.85 };
     }
@@ -53,11 +102,19 @@ export async function getHistory(symbol: string, from: number, to: number, timef
 /* ----------------------------- Validated quote ----------------------------- */
 export async function getQuote(symbol: string): Promise<Quote> {
   const key = `quote:${symbol}`;
-  const quote = await cached(key, 10_000, async () => {
+  const quote = await cached(key, 12_000, async () => {
+    // Fast path: fresh DB snapshot
+    const snaps = await loadFreshSnapshots([symbol]);
+    const snap = snaps.get(symbol);
+    if (snap) return snap;
+
     try {
       return await vndirectQuote(symbol);
     } catch (primaryErr) {
-      logger.warn("quote_primary_failed", { symbol, error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr) });
+      logger.warn("quote_primary_failed", {
+        symbol,
+        error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
+      });
       const to = Math.floor(Date.now() / 1000);
       const bars = await yahooHistory(symbol, to - 86400 * 14, to, "D");
       const last = bars[bars.length - 1];
@@ -89,7 +146,7 @@ export async function getQuote(symbol: string): Promise<Quote> {
       close: quote.close,
       volume: quote.volume,
       changePct: quote.changePct ?? 0,
-      source: quote.source,
+      source: quote.source.replace(/-snapshot$/, ""),
       confidence: quote.confidence,
     })
     .onConflictDoUpdate({
@@ -102,7 +159,7 @@ export async function getQuote(symbol: string): Promise<Quote> {
         close: quote.close,
         volume: quote.volume,
         changePct: quote.changePct ?? 0,
-        source: quote.source,
+        source: quote.source.replace(/-snapshot$/, ""),
         confidence: quote.confidence,
         updatedAt: new Date(),
       },
@@ -113,16 +170,31 @@ export async function getQuote(symbol: string): Promise<Quote> {
 }
 
 export async function getQuotes(symbols: string[]): Promise<Quote[]> {
-  const results = await Promise.allSettled(symbols.map((s) => getQuote(s)));
-  return results.filter((r): r is PromiseFulfilledResult<Quote> => r.status === "fulfilled").map((r) => r.value);
+  if (symbols.length === 0) return [];
+
+  // 1) Batch-read fresh snapshots
+  const snaps = await loadFreshSnapshots(symbols);
+  const missing = symbols.filter((s) => !snaps.has(s));
+
+  // 2) Upstream only for missing — limited concurrency
+  if (missing.length > 0) {
+    const settled = await mapPool(missing, 6, (s) => getQuote(s));
+    for (const r of settled) {
+      if (r.status === "fulfilled") snaps.set(r.value.symbol, r.value);
+    }
+  }
+
+  return symbols.map((s) => snaps.get(s)).filter((q): q is Quote => Boolean(q));
 }
 
 /* ------------------------------ Market overview ---------------------------- */
 export async function getMarketOverview() {
-  return cached("market:overview", 15_000, async () => {
+  return cached("market:overview", 18_000, async () => {
     const started = Date.now();
-    const [indexResults, quotes, cryptoResult] = await Promise.all([
-      Promise.allSettled(INDICES.map((idx) => getQuote(idx.code))),
+    const indexCodes = INDICES.map((i) => i.code);
+
+    const [indexQuotes, quotes, cryptoResult] = await Promise.all([
+      getQuotes(indexCodes),
       getQuotes(FEATURED_SYMBOLS),
       cryptoPricesWithFallback().catch((err) => {
         logger.warn("crypto_failed", { error: String(err) });
@@ -130,16 +202,23 @@ export async function getMarketOverview() {
       }),
     ]);
 
-    const indices = indexResults
-      .map((r, i) => (r.status === "fulfilled" ? { ...INDICES[i], ...r.value } : null))
-      .filter((x): x is NonNullable<typeof x> => x !== null);
+    const indexByCode = new Map(indexQuotes.map((q) => [q.symbol, q]));
+    const indices = INDICES.map((idx) => {
+      const q = indexByCode.get(idx.code);
+      return q ? { ...idx, ...q } : null;
+    }).filter((x): x is NonNullable<typeof x> => x !== null);
 
     const advancers = quotes.filter((q) => (q.changePct ?? 0) > 0.01).length;
     const decliners = quotes.filter((q) => (q.changePct ?? 0) < -0.01).length;
     const unchanged = quotes.length - advancers - decliners;
     const sorted = [...quotes].sort((a, b) => (b.changePct ?? 0) - (a.changePct ?? 0));
 
-    await logJob("market_overview", "ok", `indices=${indices.length} quotes=${quotes.length}`, Date.now() - started);
+    await logJob(
+      "market_overview",
+      "ok",
+      `indices=${indices.length} quotes=${quotes.length}`,
+      Date.now() - started,
+    );
 
     return {
       indices,
@@ -158,40 +237,77 @@ export async function searchSymbols(query: string): Promise<SymbolInfo[]> {
   const q = query.trim();
   if (!q) return [];
 
-  const local = await db
-    .select()
-    .from(companies)
-    .where(or(ilike(companies.symbol, `${q}%`), ilike(companies.name, `%${q}%`)))
-    .limit(15);
+  return cached(`search:v2:${q.toUpperCase()}`, 180_000, async () => {
+    const local = await db
+      .select()
+      .from(companies)
+      .where(or(ilike(companies.symbol, `${q}%`), ilike(companies.name, `%${q}%`)))
+      .limit(15);
 
-  let remote: SymbolInfo[] = [];
-  try {
-    remote = await cached(`search:${q.toUpperCase()}`, 300_000, () => vndirectSearch(q));
-    for (const r of remote.slice(0, 20)) {
-      void db
-        .insert(companies)
-        .values({ symbol: r.symbol, name: r.name, exchange: r.exchange, type: r.type, source: r.source })
-        .onConflictDoUpdate({
-          target: companies.symbol,
-          set: { name: r.name, exchange: r.exchange, type: r.type, updatedAt: new Date() },
-        })
-        .catch(() => undefined);
+    // Exact symbol hit in local DB → skip remote (fast path for ticker validation)
+    const exact = local.find((c) => c.symbol.toUpperCase() === q.toUpperCase());
+    if (exact && q.length <= 4) {
+      return [
+        {
+          symbol: exact.symbol,
+          name: exact.name,
+          exchange: exact.exchange,
+          type: exact.type,
+          source: exact.source,
+        },
+        ...local
+          .filter((c) => c.symbol !== exact.symbol)
+          .map((c) => ({
+            symbol: c.symbol,
+            name: c.name,
+            exchange: c.exchange,
+            type: c.type,
+            source: c.source,
+          })),
+      ].slice(0, 20);
     }
-  } catch (err) {
-    logger.warn("search_remote_failed", { q, error: String(err) });
-  }
 
-  const seen = new Set<string>();
-  const merged: SymbolInfo[] = [];
-  for (const item of [
-    ...local.map((c) => ({ symbol: c.symbol, name: c.name, exchange: c.exchange, type: c.type, source: c.source })),
-    ...remote,
-  ]) {
-    if (seen.has(item.symbol)) continue;
-    seen.add(item.symbol);
-    merged.push(item);
-  }
-  return merged.slice(0, 20);
+    let remote: SymbolInfo[] = [];
+    try {
+      remote = await vndirectSearch(q);
+      for (const r of remote.slice(0, 20)) {
+        void db
+          .insert(companies)
+          .values({
+            symbol: r.symbol,
+            name: r.name,
+            exchange: r.exchange,
+            type: r.type,
+            source: r.source,
+          })
+          .onConflictDoUpdate({
+            target: companies.symbol,
+            set: { name: r.name, exchange: r.exchange, type: r.type, updatedAt: new Date() },
+          })
+          .catch(() => undefined);
+      }
+    } catch (err) {
+      logger.warn("search_remote_failed", { q, error: String(err) });
+    }
+
+    const seen = new Set<string>();
+    const merged: SymbolInfo[] = [];
+    for (const item of [
+      ...local.map((c) => ({
+        symbol: c.symbol,
+        name: c.name,
+        exchange: c.exchange,
+        type: c.type,
+        source: c.source,
+      })),
+      ...remote,
+    ]) {
+      if (seen.has(item.symbol)) continue;
+      seen.add(item.symbol);
+      merged.push(item);
+    }
+    return merged.slice(0, 20);
+  });
 }
 
 export async function getCompany(symbol: string): Promise<SymbolInfo | null> {
@@ -210,10 +326,7 @@ export async function getCompany(symbol: string): Promise<SymbolInfo | null> {
 
 /* ----------------------------------- News ---------------------------------- */
 const TICKER_RE = /\b([A-Z]{3})\b/g;
-
-/** How often we kick a background RSS refresh (do not block the API). */
 const NEWS_SYNC_INTERVAL_MS = 120_000;
-/** Soft TTL for in-memory list responses — first paint from RAM. */
 const NEWS_LIST_CACHE_MS = 20_000;
 
 let lastNewsSync = 0;
@@ -238,10 +351,9 @@ export async function syncNews(): Promise<{ inserted: number; errors: string[] }
     const rows = await db.select({ symbol: companies.symbol }).from(companies);
     knownSymbols = new Set([...FEATURED_SYMBOLS, ...rows.map((r) => r.symbol)]);
   } catch {
-    // DB down — still score with featured set only
+    // DB down
   }
 
-  // Batch inserts in chunks to cut round-trips
   const chunkSize = 25;
   for (let i = 0; i < items.length; i += chunkSize) {
     const chunk = items.slice(i, i + chunkSize);
@@ -276,7 +388,6 @@ export async function syncNews(): Promise<{ inserted: number; errors: string[] }
     );
   }
 
-  // Invalidate list cache after successful ingest
   newsListCache.clear();
 
   await logJob(
@@ -288,7 +399,6 @@ export async function syncNews(): Promise<{ inserted: number; errors: string[] }
   return { inserted, errors };
 }
 
-/** Kick RSS sync without blocking the caller (deduped). */
 function scheduleNewsSync(): void {
   if (newsSyncInFlight) return;
   if (Date.now() - lastNewsSync < NEWS_SYNC_INTERVAL_MS) return;
@@ -309,21 +419,18 @@ export async function getNews(opts: { page?: number; limit?: number; symbol?: st
   const symbolKey = opts.symbol?.toUpperCase() ?? "";
   const cacheKey = `news:${page}:${limit}:${symbolKey}`;
 
-  // 1) In-memory SWR — return immediately if fresh
   const hit = newsListCache.get(cacheKey);
   if (hit && Date.now() - hit.at < NEWS_LIST_CACHE_MS) {
-    scheduleNewsSync(); // refresh RSS in background
+    scheduleNewsSync();
     return hit.value;
   }
 
-  // 2) Never await RSS on the request path — serve DB first
   scheduleNewsSync();
 
   const where = opts.symbol
     ? or(ilike(news.symbols, `%${opts.symbol}%`), ilike(news.title, `%${opts.symbol}%`))
     : undefined;
 
-  // 3) Parallel count + page query
   let rows: (typeof news.$inferSelect)[] = [];
   let count = 0;
   try {
@@ -344,12 +451,10 @@ export async function getNews(opts: { page?: number; limit?: number; symbol?: st
     count = countResult[0]?.count ?? 0;
   } catch (err) {
     logger.error("get_news_db_failed", { error: String(err) });
-    // If DB is empty/down and we still have a stale cache, serve it
     if (hit) return hit.value;
     throw err;
   }
 
-  // Cold DB (no rows yet): wait once for first sync so UI is not empty
   if (rows.length === 0 && count === 0 && !opts.symbol) {
     try {
       if (newsSyncInFlight) {
@@ -359,12 +464,7 @@ export async function getNews(opts: { page?: number; limit?: number; symbol?: st
         await syncNews();
       }
       const [rowResult, countResult] = await Promise.all([
-        db
-          .select()
-          .from(news)
-          .orderBy(desc(news.publishedAt))
-          .limit(limit)
-          .offset((page - 1) * limit),
+        db.select().from(news).orderBy(desc(news.publishedAt)).limit(limit).offset((page - 1) * limit),
         db.select({ count: sql<number>`count(*)::int` }).from(news),
       ]);
       rows = rowResult;
@@ -376,7 +476,6 @@ export async function getNews(opts: { page?: number; limit?: number; symbol?: st
 
   const payload: NewsListPayload = { items: rows, total: count, page, limit };
   newsListCache.set(cacheKey, { at: Date.now(), value: payload });
-  // Cap cache size
   if (newsListCache.size > 40) {
     const oldest = newsListCache.keys().next().value;
     if (oldest) newsListCache.delete(oldest);
@@ -387,32 +486,32 @@ export async function getNews(opts: { page?: number; limit?: number; symbol?: st
 /* ----------------------------- Sentiment API ------------------------------ */
 export async function getNewsSentiment(symbol: string) {
   return cached(`sentiment:${symbol}`, 60_000, async () => {
-    // Background only — do not block sentiment behind full RSS ingest
     scheduleNewsSync();
 
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const rows = await db
-      .select({ sentiment: news.sentiment, title: news.title, publishedAt: news.publishedAt })
-      .from(news)
-      .where(
-        and(
-          gte(news.publishedAt, cutoff),
-          or(ilike(news.symbols, `%${symbol}%`), ilike(news.title, `%${symbol}%`)),
-        ),
-      )
-      .orderBy(desc(news.publishedAt))
-      .limit(20);
-
-    const allRows = await db
-      .select({ sentiment: news.sentiment })
-      .from(news)
-      .where(gte(news.publishedAt, cutoff))
-      .limit(100);
+    const [rows, allRows] = await Promise.all([
+      db
+        .select({ sentiment: news.sentiment, title: news.title, publishedAt: news.publishedAt })
+        .from(news)
+        .where(
+          and(
+            gte(news.publishedAt, cutoff),
+            or(ilike(news.symbols, `%${symbol}%`), ilike(news.title, `%${symbol}%`)),
+          ),
+        )
+        .orderBy(desc(news.publishedAt))
+        .limit(20),
+      db
+        .select({ sentiment: news.sentiment })
+        .from(news)
+        .where(gte(news.publishedAt, cutoff))
+        .limit(100),
+    ]);
 
     const headlines = rows.map((r) => r.title);
     const hybrid = await scoreSentimentHybrid(symbol, headlines);
-
-    const marketAvg = allRows.length > 0 ? allRows.reduce((s, r) => s + r.sentiment, 0) / allRows.length : 0;
+    const marketAvg =
+      allRows.length > 0 ? allRows.reduce((s, r) => s + r.sentiment, 0) / allRows.length : 0;
 
     return {
       symbol,
