@@ -33,6 +33,12 @@ import { buildPersonalFinanceContext } from "@/lib/personal-finance/context";
 import { buildCorporateFinanceContext } from "@/lib/corporate-finance/context";
 import { retrievePlaybookContext } from "@/lib/rag";
 import { appendChatTurn } from "@/lib/agent/history";
+import {
+  getCachedAgentAnswer,
+  setCachedAgentAnswer,
+  shouldCacheAgentAnswer,
+  withAgentSingleFlight,
+} from "@/lib/agent/response-cache";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -112,7 +118,6 @@ interface SymbolContext {
 async function buildSymbolContext(symbol: string): Promise<SymbolContext | null> {
   try {
     const to = Math.floor(Date.now() / 1000);
-    // Shorter history window (180d) for faster continuous turns
     const [quote, hist, newsRes] = await Promise.all([
       getQuote(symbol),
       getHistory(symbol, to - 86400 * 180, to, "D"),
@@ -259,6 +264,44 @@ export async function POST(req: NextRequest) {
       ...new Set([...message.toUpperCase().matchAll(TICKER_RE)].map((m) => m[1])),
     ].slice(0, 2);
 
+    // Early cache probe (symbols unknown yet → try message-only key first)
+    const earlyCache = await getCachedAgentAnswer(message, candidates);
+    if (earlyCache) {
+      const latencyMs = Date.now() - started;
+      const sessionId =
+        req.cookies.get("vnstock_session")?.value ??
+        req.cookies.get("refreshToken")?.value?.slice(0, 64) ??
+        authedUser.id.slice(0, 64);
+      const saved = await appendChatTurn({
+        userId: authedUser.id,
+        conversationId: requestedConversationId,
+        sessionId,
+        prompt: message,
+        response: earlyCache.answer,
+        model: `${earlyCache.model}+cache`,
+        latencyMs,
+      });
+      return ok(
+        {
+          answer: earlyCache.answer,
+          model: `${earlyCache.model}+cache`,
+          intent: earlyCache.intent,
+          symbols: earlyCache.symbols,
+          conversationId: saved.conversationId,
+          historySaved: saved.saved,
+          historyError: saved.error ?? null,
+          cacheHit: true,
+          providersConfigured: providers.map((p) => p.id),
+        },
+        {
+          latencyMs,
+          source: "redis-agent-cache",
+          confidence: 0.9,
+          llmProvider: null,
+        },
+      );
+    }
+
     const validateSettled = await mapPool(
       candidates,
       CONNECTOR_CONFIG.searchConcurrency,
@@ -295,6 +338,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     const headlines = newsRes?.items?.map((n) => `${n.title} (${n.sourceName})`) ?? [];
+    const personalized = Boolean(personalContext || corporateContext);
 
     if (intent === "market_ticker" && contexts.length === 0 && validated.length > 0) {
       return fail("Không lấy được dữ liệu mã. Thử lại sau vài giây.", 503);
@@ -311,47 +355,81 @@ export async function POST(req: NextRequest) {
       playbookContext,
     );
 
-    const narrative = await agentNarrativeDetailed(message, deterministic, {
-      followUp: isFollowUp,
-    });
-    const llmResult = narrative.result;
+    const produced = await withAgentSingleFlight(message, validated, async () => {
+      const narrative = await agentNarrativeDetailed(message, deterministic, {
+        followUp: isFollowUp,
+      });
+      const llmResult = narrative.result;
 
-    // Continuous chat: rate-limit / timeout → soft answer from data (không 503 cứng)
-    if (!llmResult) {
-      const softOk = narrative.transient || isFollowUp;
-      if (isLlmStrict() && !softOk) {
-        logger.error("agent_llm_strict_failed", {
-          errors: narrative.errors,
-          attempted: narrative.attempted,
-        });
-        return fail(
-          "LLM (GLM/OpenRouter) không phản hồi. Kiểm tra API key, model và quota trên Vercel Production.",
-          503,
-          {
-            code: "LLM_FAILED",
-            llmErrors: narrative.errors.slice(0, 6),
+      if (!llmResult) {
+        const softOk = narrative.transient || isFollowUp;
+        if (isLlmStrict() && !softOk) {
+          throw Object.assign(new Error("LLM_FAILED"), {
+            llmErrors: narrative.errors,
             llmAttempted: narrative.attempted,
             keysPresent: envDiag.keysPresent,
-            providersConfigured: providers.map((p) => p.id),
-          },
-        );
+          });
+        }
+        logger.warn("agent_llm_soft_degrade", {
+          transient: narrative.transient,
+          followUp: isFollowUp,
+          errors: narrative.errors.slice(0, 3),
+        });
       }
-      logger.warn("agent_llm_soft_degrade", {
-        transient: narrative.transient,
-        followUp: isFollowUp,
-        errors: narrative.errors.slice(0, 3),
-      });
+
+      const answer = smoothAgentAnswer(
+        llmResult?.text ?? buildAdvisorFallback(message, deterministic),
+      );
+      const model = llmResult
+        ? `${llmResult.provider}/${llmResult.model}`
+        : narrative.transient
+          ? "data-engine/soft"
+          : "rule-engine";
+
+      return {
+        answer,
+        model,
+        intent,
+        symbols: validated,
+        cachedAt: Date.now(),
+        _llmErrors: llmResult ? undefined : narrative.errors.slice(0, 6),
+        _llmAttempted: narrative.attempted,
+        _llmSoft: !llmResult && (narrative.transient || isFollowUp),
+        _llmProvider: llmResult?.provider ?? null,
+      } as const;
+    }).catch((err: unknown) => {
+      if (err instanceof Error && err.message === "LLM_FAILED") {
+        const e = err as Error & {
+          llmErrors?: string[];
+          llmAttempted?: string[];
+          keysPresent?: Record<string, boolean>;
+        };
+        throw e;
+      }
+      throw err;
+    });
+
+    // Handle strict LLM failure
+    if (
+      produced &&
+      "message" in (produced as object) &&
+      (produced as { message?: string }).message === "LLM_FAILED"
+    ) {
+      // unreachable — throw above
     }
 
-    const answer = smoothAgentAnswer(
-      llmResult?.text ?? buildAdvisorFallback(message, deterministic),
-    );
-    const model = llmResult
-      ? `${llmResult.provider}/${llmResult.model}`
-      : narrative.transient
-        ? "data-engine/soft"
-        : "rule-engine";
+    const answer = produced.answer;
+    const model = produced.model;
     const latencyMs = Date.now() - started;
+
+    if (shouldCacheAgentAnswer(intent, personalized, message) && answer.length > 40) {
+      void setCachedAgentAnswer(message, validated, {
+        answer,
+        model,
+        intent,
+        symbols: validated,
+      });
+    }
 
     const sessionId =
       req.cookies.get("vnstock_session")?.value ??
@@ -384,26 +462,40 @@ export async function POST(req: NextRequest) {
         conversationId: saved.conversationId,
         historySaved: saved.saved,
         historyError: saved.error ?? null,
-        personalized: Boolean(personalContext || corporateContext),
+        cacheHit: false,
+        personalized,
         rag: Boolean(playbookContext),
         providersConfigured: providers.map((p) => p.id),
-        llmAttempted: narrative.attempted,
-        llmErrors: llmResult ? undefined : narrative.errors.slice(0, 6),
-        llmSoft: !llmResult && (narrative.transient || isFollowUp),
+        llmAttempted: (produced as { _llmAttempted?: string[] })._llmAttempted,
+        llmErrors: (produced as { _llmErrors?: string[] })._llmErrors,
+        llmSoft: (produced as { _llmSoft?: boolean })._llmSoft,
         llmKeysPresent: envDiag.keysPresent,
       },
       {
         latencyMs,
-        source: llmResult
-          ? playbookContext
-            ? "rag-playbook+data-engine+llm"
-            : "data-engine+intent+llm"
-          : "data-engine-soft",
+        source: playbookContext ? "rag-playbook+data-engine+llm" : "data-engine+intent+llm",
         confidence: contexts[0]?.analysis.confidence ?? 0.85,
-        llmProvider: llmResult?.provider ?? null,
+        llmProvider: (produced as { _llmProvider?: string | null })._llmProvider ?? null,
       },
     );
   } catch (err) {
+    if (err instanceof Error && err.message === "LLM_FAILED") {
+      const e = err as Error & {
+        llmErrors?: string[];
+        llmAttempted?: string[];
+        keysPresent?: Record<string, boolean>;
+      };
+      return fail(
+        "LLM (GLM/OpenRouter) không phản hồi. Kiểm tra API key, model và quota trên Vercel Production.",
+        503,
+        {
+          code: "LLM_FAILED",
+          llmErrors: e.llmErrors?.slice(0, 6),
+          llmAttempted: e.llmAttempted,
+          keysPresent: e.keysPresent,
+        },
+      );
+    }
     return handleError(err, "agent_chat");
   }
 }
