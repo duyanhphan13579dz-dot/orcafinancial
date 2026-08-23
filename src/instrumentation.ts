@@ -5,6 +5,24 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
   try {
+    const { assertRedisForProduction } = await import("@/lib/connectors/redis-cache");
+    const redis = assertRedisForProduction();
+    console.log(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        level: redis.ok ? "info" : "error",
+        provider: "redis",
+        msg: redis.ok ? "redis_cache_ok" : "redis_required_missing",
+        mode: redis.mode,
+        required: redis.required,
+        configured: redis.configured,
+      }),
+    );
+  } catch (err) {
+    console.error("[instrumentation] redis assert failed:", err);
+  }
+
+  try {
     const { waitForDatabaseReady, startDbSelfPing } = await import("@/db");
     void waitForDatabaseReady().then(async (ready) => {
       console.log(
