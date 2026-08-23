@@ -11,6 +11,7 @@ import {
   buildAdvisorFallback,
   listConfiguredProviders,
   llmEnvDiagnostics,
+  isLlmStrict,
   smoothAgentAnswer,
   agentNarrativeDetailed,
 } from "@/lib/llm";
@@ -18,11 +19,10 @@ import {
   getHistory,
   getMarketOverview,
   getNews,
-  getNewsSentiment,
   getQuote,
   searchSymbols,
 } from "@/lib/market";
-import { sentimentLabel } from "@/lib/sentiment";
+import { analyzeSentiment, sentimentLabel } from "@/lib/sentiment";
 import {
   detectCandlestickPatterns,
   detectChartPatterns,
@@ -83,7 +83,7 @@ function detectIntent(message: string, hasTickers: boolean): AgentIntent {
   }
 
   if (
-    /thị\s*trường|vn-?index|vn30|chứng\s*khoán|cổ\s*phiếu|crypto|bitcoin|forex|vàng|dầu|commodity|market/.test(
+    /thị\s*trường|vn-?index|vn30|chứng\s*khoán|cổ\s*phiếu|crypto|bitcoin|forex|vàng|dầu|commodity|market|phân\s*tích/.test(
       m,
     )
   ) {
@@ -112,11 +112,11 @@ interface SymbolContext {
 async function buildSymbolContext(symbol: string): Promise<SymbolContext | null> {
   try {
     const to = Math.floor(Date.now() / 1000);
-    const [quote, hist, newsRes, sentimentRes] = await Promise.all([
+    // Skip getNewsSentiment (nested LLM) — use rule NLP only for speed
+    const [quote, hist, newsRes] = await Promise.all([
       getQuote(symbol),
-      getHistory(symbol, to - 86400 * 1100, to, "D"),
+      getHistory(symbol, to - 86400 * 400, to, "D"),
       getNews({ symbol, limit: 3 }).catch(() => null),
-      getNewsSentiment(symbol).catch(() => null),
     ]);
     const bars = hist.bars;
     const fundamental = bars.length >= 60 ? generateFundamentalReport(symbol, bars) : null;
@@ -124,7 +124,8 @@ async function buildSymbolContext(symbol: string): Promise<SymbolContext | null>
       (p) => p.barIndex >= bars.length - 10,
     );
     const chartPats = detectChartPatterns(bars);
-    const sScore = sentimentRes?.sentimentScore ?? 0;
+    const headlineText = (newsRes?.items ?? []).map((n) => n.title).join(" ");
+    const sScore = analyzeSentiment(headlineText);
     return {
       symbol,
       quote,
@@ -237,6 +238,17 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const envDiag = llmEnvDiagnostics();
+    const providers = listConfiguredProviders();
+
+    if (providers.length === 0) {
+      return fail(
+        "Chưa cấu hình LLM. Thêm ZAI_API_KEY (hoặc GLM_API_KEY) và/hoặc OPENROUTER_API_KEY trên Vercel Production rồi redeploy.",
+        503,
+        { code: "LLM_NOT_CONFIGURED", keysPresent: envDiag.keysPresent },
+      );
+    }
+
     const requestedConversationId =
       typeof body.conversationId === "string" && body.conversationId.trim()
         ? body.conversationId.trim()
@@ -283,8 +295,8 @@ export async function POST(req: NextRequest) {
 
     const headlines = newsRes?.items?.map((n) => `${n.title} (${n.sourceName})`) ?? [];
 
-    if (intent === "market_ticker" && contexts.length === 0) {
-      return fail("Không lấy được dữ liệu mã. Thử lại hoặc kiểm tra mã.", 503);
+    if (intent === "market_ticker" && contexts.length === 0 && validated.length > 0) {
+      return fail("Không lấy được dữ liệu mã. Thử lại sau vài giây.", 503);
     }
 
     const deterministic = composeDeterministicAnswer(
@@ -300,12 +312,32 @@ export async function POST(req: NextRequest) {
 
     const narrative = await agentNarrativeDetailed(message, deterministic);
     const llmResult = narrative.result;
+
+    // Strict mode: keys present → must use GLM/OpenRouter, not silent rule-engine
+    if (!llmResult && isLlmStrict()) {
+      logger.error("agent_llm_strict_failed", {
+        errors: narrative.errors,
+        attempted: narrative.attempted,
+        keysPresent: envDiag.keysPresent,
+      });
+      return fail(
+        "LLM (GLM/OpenRouter) không phản hồi. Kiểm tra API key, model và quota trên Vercel Production.",
+        503,
+        {
+          code: "LLM_FAILED",
+          llmErrors: narrative.errors.slice(0, 6),
+          llmAttempted: narrative.attempted,
+          keysPresent: envDiag.keysPresent,
+          providersConfigured: providers.map((p) => p.id),
+        },
+      );
+    }
+
     const answer = smoothAgentAnswer(
       llmResult?.text ?? buildAdvisorFallback(message, deterministic),
     );
     const model = llmResult ? `${llmResult.provider}/${llmResult.model}` : "rule-engine";
     const latencyMs = Date.now() - started;
-    const envDiag = llmEnvDiagnostics();
 
     const sessionId =
       req.cookies.get("vnstock_session")?.value ??
@@ -340,7 +372,7 @@ export async function POST(req: NextRequest) {
         historyError: saved.error ?? null,
         personalized: Boolean(personalContext || corporateContext),
         rag: Boolean(playbookContext),
-        providersConfigured: listConfiguredProviders().map((p) => p.id),
+        providersConfigured: providers.map((p) => p.id),
         llmAttempted: narrative.attempted,
         llmErrors: llmResult ? undefined : narrative.errors.slice(0, 6),
         llmKeysPresent: envDiag.keysPresent,
