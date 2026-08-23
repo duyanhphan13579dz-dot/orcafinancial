@@ -83,7 +83,7 @@ function detectIntent(message: string, hasTickers: boolean): AgentIntent {
   }
 
   if (
-    /thị\s*trường|vn-?index|vn30|chứng\s*khoán|cổ\s*phiếu|crypto|bitcoin|forex|vàng|dầu|commodity|market|phân\s*tích/.test(
+    /thị\s*trường|vn-?index|vn30|chứng\s*khoán|cổ\s*phiếu|crypto|bitcoin|forex|vàng|dầu|commodity|market|phân\s*tích|kết\s*quả\s*kinh\s*doanh|quý\s*\d/.test(
       m,
     )
   ) {
@@ -112,10 +112,10 @@ interface SymbolContext {
 async function buildSymbolContext(symbol: string): Promise<SymbolContext | null> {
   try {
     const to = Math.floor(Date.now() / 1000);
-    // Skip getNewsSentiment (nested LLM) — use rule NLP only for speed
+    // Shorter history window (180d) for faster continuous turns
     const [quote, hist, newsRes] = await Promise.all([
       getQuote(symbol),
-      getHistory(symbol, to - 86400 * 400, to, "D"),
+      getHistory(symbol, to - 86400 * 180, to, "D"),
       getNews({ symbol, limit: 3 }).catch(() => null),
     ]);
     const bars = hist.bars;
@@ -215,7 +215,7 @@ function composeDeterministicAnswer(
 }
 
 export async function POST(req: NextRequest) {
-  const limited = checkRateLimit(req, 60);
+  const limited = checkRateLimit(req, 90);
   if (limited) return limited;
 
   const started = Date.now();
@@ -253,10 +253,11 @@ export async function POST(req: NextRequest) {
       typeof body.conversationId === "string" && body.conversationId.trim()
         ? body.conversationId.trim()
         : null;
+    const isFollowUp = Boolean(requestedConversationId);
 
     const candidates = [
       ...new Set([...message.toUpperCase().matchAll(TICKER_RE)].map((m) => m[1])),
-    ].slice(0, 3);
+    ].slice(0, 2);
 
     const validateSettled = await mapPool(
       candidates,
@@ -283,7 +284,7 @@ export async function POST(req: NextRequest) {
         ? getMarketOverview().catch(() => null)
         : Promise.resolve(null),
       intent === "market_overview" || intent === "market_ticker"
-        ? getNews({ limit: 6 }).catch(() => null)
+        ? getNews({ limit: 4 }).catch(() => null)
         : Promise.resolve(null),
       intent === "personal_finance" || intent === "wealth"
         ? buildPersonalFinanceContext(authedUser.id).catch(() => null)
@@ -310,33 +311,46 @@ export async function POST(req: NextRequest) {
       playbookContext,
     );
 
-    const narrative = await agentNarrativeDetailed(message, deterministic);
+    const narrative = await agentNarrativeDetailed(message, deterministic, {
+      followUp: isFollowUp,
+    });
     const llmResult = narrative.result;
 
-    // Strict mode: keys present → must use GLM/OpenRouter, not silent rule-engine
-    if (!llmResult && isLlmStrict()) {
-      logger.error("agent_llm_strict_failed", {
-        errors: narrative.errors,
-        attempted: narrative.attempted,
-        keysPresent: envDiag.keysPresent,
+    // Continuous chat: rate-limit / timeout → soft answer from data (không 503 cứng)
+    if (!llmResult) {
+      const softOk = narrative.transient || isFollowUp;
+      if (isLlmStrict() && !softOk) {
+        logger.error("agent_llm_strict_failed", {
+          errors: narrative.errors,
+          attempted: narrative.attempted,
+        });
+        return fail(
+          "LLM (GLM/OpenRouter) không phản hồi. Kiểm tra API key, model và quota trên Vercel Production.",
+          503,
+          {
+            code: "LLM_FAILED",
+            llmErrors: narrative.errors.slice(0, 6),
+            llmAttempted: narrative.attempted,
+            keysPresent: envDiag.keysPresent,
+            providersConfigured: providers.map((p) => p.id),
+          },
+        );
+      }
+      logger.warn("agent_llm_soft_degrade", {
+        transient: narrative.transient,
+        followUp: isFollowUp,
+        errors: narrative.errors.slice(0, 3),
       });
-      return fail(
-        "LLM (GLM/OpenRouter) không phản hồi. Kiểm tra API key, model và quota trên Vercel Production.",
-        503,
-        {
-          code: "LLM_FAILED",
-          llmErrors: narrative.errors.slice(0, 6),
-          llmAttempted: narrative.attempted,
-          keysPresent: envDiag.keysPresent,
-          providersConfigured: providers.map((p) => p.id),
-        },
-      );
     }
 
     const answer = smoothAgentAnswer(
       llmResult?.text ?? buildAdvisorFallback(message, deterministic),
     );
-    const model = llmResult ? `${llmResult.provider}/${llmResult.model}` : "rule-engine";
+    const model = llmResult
+      ? `${llmResult.provider}/${llmResult.model}`
+      : narrative.transient
+        ? "data-engine/soft"
+        : "rule-engine";
     const latencyMs = Date.now() - started;
 
     const sessionId =
@@ -375,11 +389,16 @@ export async function POST(req: NextRequest) {
         providersConfigured: providers.map((p) => p.id),
         llmAttempted: narrative.attempted,
         llmErrors: llmResult ? undefined : narrative.errors.slice(0, 6),
+        llmSoft: !llmResult && (narrative.transient || isFollowUp),
         llmKeysPresent: envDiag.keysPresent,
       },
       {
         latencyMs,
-        source: playbookContext ? "rag-playbook+data-engine+llm" : "data-engine+intent+llm",
+        source: llmResult
+          ? playbookContext
+            ? "rag-playbook+data-engine+llm"
+            : "data-engine+intent+llm"
+          : "data-engine-soft",
         confidence: contexts[0]?.analysis.confidence ?? 0.85,
         llmProvider: llmResult?.provider ?? null,
       },
