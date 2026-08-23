@@ -68,8 +68,8 @@ function AgentChatShell() {
         skipCache: true,
       });
       setConversations(env.data.items ?? []);
-    } catch {
-      // ignore — history is best-effort
+    } catch (err) {
+      console.warn("[agent] loadConversations failed", err);
     }
   }, [isLoggedIn]);
 
@@ -146,6 +146,8 @@ function AgentChatShell() {
         answer: string;
         model: string;
         conversationId?: string | null;
+        historySaved?: boolean;
+        historyError?: string | null;
       }>("/agent/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -155,9 +157,8 @@ function AgentChatShell() {
         }),
       });
 
-      if (env.data.conversationId && env.data.conversationId !== conversationId) {
-        setConversationId(env.data.conversationId);
-      }
+      const cid = env.data.conversationId ?? null;
+      if (cid) setConversationId(cid);
 
       setMessages((m) => [
         ...m,
@@ -170,7 +171,17 @@ function AgentChatShell() {
         },
       ]);
 
-      void loadConversations();
+      await loadConversations();
+
+      if (env.data.historySaved === false) {
+        setMessages((m) => [
+          ...m,
+          {
+            role: "agent",
+            text: `⚠️ Trả lời OK nhưng chưa lưu lịch sử: ${env.data.historyError ?? "lỗi DB"}. Thử hỏi lại sau vài giây.`,
+          },
+        ]);
+      }
     } catch (err) {
       setMessages((m) => [
         ...m,
@@ -262,12 +273,10 @@ function AgentChatShell() {
 
   return (
     <div className="flex flex-col lg:flex-row gap-0 lg:gap-4 -mx-3 sm:-mx-4 lg:mx-0 h-[calc(100dvh-7.5rem)] sm:h-[calc(100dvh-8.5rem)] lg:h-[calc(100dvh-11rem)] min-h-[420px]">
-      {/* Desktop / large tablet sidebar */}
       <aside className="hidden md:flex md:w-64 lg:w-72 shrink-0 flex-col panel overflow-hidden">
         {HistoryList}
       </aside>
 
-      {/* Mobile / small tablet history drawer */}
       {sidebarOpen && (
         <>
           <button
@@ -293,9 +302,7 @@ function AgentChatShell() {
         </>
       )}
 
-      {/* Main chat panel */}
       <div className="flex-1 min-w-0 flex flex-col panel overflow-hidden">
-        {/* Chat header */}
         <div className="shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3 border-b border-[#1a3558]">
           <button
             type="button"
@@ -322,7 +329,6 @@ function AgentChatShell() {
           </button>
         </div>
 
-        {/* Messages */}
         <div
           ref={listRef}
           className="flex-1 overflow-y-auto overscroll-contain px-3 sm:px-4 py-3 sm:py-4 scrollbar-hide"
@@ -393,7 +399,6 @@ function AgentChatShell() {
           )}
         </div>
 
-        {/* Composer */}
         <form
           onSubmit={handleSubmit}
           className="shrink-0 border-t border-[#1a3558] p-2.5 sm:p-3 safe-area-pb"
