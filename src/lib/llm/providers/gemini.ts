@@ -1,22 +1,29 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
-/**
- * Default model for free-tier keys.
- * Google shut down gemini-2.0-flash (and 2.0-flash-lite) on 2026-06-01.
- * gemini-2.5-flash remains available on free tier until ~Oct 2026.
- * Override via GEMINI_MODEL if needed.
- */
-const DEFAULT_MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
+function modelCandidates(): string[] {
+  const primary = process.env.GEMINI_MODEL?.trim();
+  const list = [
+    primary,
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.7-flash",
+    "gemini-flash-latest",
+  ].filter((m): m is string => Boolean(m));
+  return [...new Set(list)];
+}
 
 function isConfigured() {
   return Boolean(process.env.GEMINI_API_KEY?.trim());
 }
 
-async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<LlmChatResult> {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) throw new Error("GEMINI_API_KEY missing");
-
-  const model = DEFAULT_MODEL;
+async function chatOne(
+  apiKey: string,
+  model: string,
+  messages: LlmMessage[],
+  opts: LlmChatOptions,
+): Promise<LlmChatResult> {
   const system = messages.find((m) => m.role === "system")?.content;
   const contents = messages
     .filter((m) => m.role !== "system")
@@ -52,22 +59,37 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
     );
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      throw new Error(`Gemini HTTP ${res.status}: ${errText.slice(0, 200)}`);
+      throw new Error(`Gemini HTTP ${res.status} (${model}): ${errText.slice(0, 220)}`);
     }
     const data = (await res.json()) as {
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
     };
     const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-    if (!text.trim()) throw new Error("Gemini empty response");
+    if (!text.trim()) throw new Error(`Gemini empty response (${model})`);
     return { text: text.trim(), provider: "gemini", model, latencyMs: Date.now() - started };
   } finally {
     clearTimeout(timer);
   }
 }
 
+async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<LlmChatResult> {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) throw new Error("GEMINI_API_KEY missing");
+
+  const errors: string[] = [];
+  for (const model of modelCandidates()) {
+    try {
+      return await chatOne(apiKey, model, messages, opts);
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  throw new Error(errors.slice(0, 3).join(" | ") || "Gemini all models failed");
+}
+
 export const geminiProvider: LlmProvider = {
   id: "gemini",
-  label: "Google Gemini (free tier)",
+  label: "Google Gemini",
   isConfigured,
   chat,
 };
