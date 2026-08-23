@@ -1,6 +1,11 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
-const DEFAULT_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+/**
+ * Default model for free-tier keys.
+ * Google retired gemini-2.5-flash for many new API keys (HTTP 404).
+ * Override via GEMINI_MODEL if needed (e.g. gemini-3.6-flash, gemini-2.5-flash).
+ */
+const DEFAULT_MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash";
 
 function isConfigured() {
   return Boolean(process.env.GEMINI_API_KEY?.trim());
