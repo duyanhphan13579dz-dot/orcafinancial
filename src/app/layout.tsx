@@ -93,10 +93,14 @@ export default function RootLayout({
           <AppearanceLoader />
           <MobileHeader />
 
-          {/* Desktop-only chrome (≥ lg / ~1024px) */}
-          <header className="hidden lg:block sticky top-0 z-40 border-b border-[#1a3558] bg-[#0A2540]/95 backdrop-blur">
-            <div className="mx-auto max-w-7xl px-4 py-3">
-              <div className="flex items-center gap-4 min-w-0">
+          {/* Desktop-only chrome (≥ lg / ~1024px)
+              Row 1: logo + search (priority) + user
+              Row 2: nav links (scroll horizontally if needed — never wrap over search)
+           */}
+          <header className="hidden lg:block sticky top-0 z-40 border-b border-[#1a3558] bg-[#0A2540]/98 backdrop-blur-md">
+            <div className="mx-auto max-w-7xl px-4">
+              {/* Row 1 — brand + search + account */}
+              <div className="flex items-center gap-4 py-2.5 min-w-0">
                 <Link
                   href="/"
                   className="flex items-center gap-3 shrink-0 group"
@@ -116,27 +120,28 @@ export default function RootLayout({
                   </div>
                 </Link>
 
-                <nav className="flex items-center gap-3 xl:gap-5 text-sm text-slate-400 font-display flex-wrap min-w-0">
-                  {NAV.map((n) => (
-                    <Link
-                      key={n.href}
-                      href={n.href}
-                      className="relative whitespace-nowrap hover:text-[#00d4ff] transition-colors after:content-[''] after:absolute after:left-0 after:right-0 after:-bottom-1 after:h-px after:bg-[#00d4ff] after:scale-x-0 hover:after:scale-x-100 after:transition-transform after:origin-left"
-                    >
-                      {n.label}
-                    </Link>
-                  ))}
-                </nav>
+                {/* Search takes remaining space — always visible & clickable */}
+                <div className="flex-1 min-w-0 max-w-xl mx-auto">
+                  <SearchBar />
+                </div>
 
-                <div className="ml-auto flex items-center gap-3 flex-1 justify-end min-w-0 max-w-md">
-                  <div className="block w-full min-w-0">
-                    <SearchBar />
-                  </div>
-                  <div className="shrink-0">
-                    <UserMenu />
-                  </div>
+                <div className="shrink-0 relative z-50">
+                  <UserMenu />
                 </div>
               </div>
+
+              {/* Row 2 — navigation: single line, horizontal scroll on narrow desktop */}
+              <nav className="flex items-center gap-1 xl:gap-2 text-sm text-slate-400 font-display border-t border-[#1a3558]/60 -mx-4 px-4 overflow-x-auto scrollbar-hide">
+                {NAV.map((n) => (
+                  <Link
+                    key={n.href}
+                    href={n.href}
+                    className="relative shrink-0 whitespace-nowrap px-2.5 py-2 hover:text-[#00d4ff] transition-colors after:content-[''] after:absolute after:left-2.5 after:right-2.5 after:bottom-0 after:h-0.5 after:bg-[#00d4ff] after:scale-x-0 hover:after:scale-x-100 after:transition-transform after:origin-left"
+                  >
+                    {n.label}
+                  </Link>
+                ))}
+              </nav>
             </div>
           </header>
 
