@@ -26,8 +26,12 @@ function titleFromPrompt(prompt: string): string {
   return `${t.slice(0, 45)}…`;
 }
 
+function newId(): string {
+  return crypto.randomUUID();
+}
+
 export async function listConversations(userId: string, limit = 40): Promise<ConversationSummary[]> {
-  await ensureAgentTables().catch(() => undefined);
+  await ensureAgentTables();
 
   const rows = await db
     .select({
@@ -35,10 +39,10 @@ export async function listConversations(userId: string, limit = 40): Promise<Con
       title: agentConversations.title,
       createdAt: agentConversations.createdAt,
       updatedAt: agentConversations.updatedAt,
-      messageCount: sql<number>`(
-        SELECT COUNT(*)::int FROM agent_logs
-        WHERE agent_logs.conversation_id = ${agentConversations.id}
-      )`,
+      messageCount: sql<number>`coalesce((
+        select count(*)::int from agent_logs al
+        where al.conversation_id = agent_conversations.id
+      ), 0)`,
     })
     .from(agentConversations)
     .where(eq(agentConversations.userId, userId))
@@ -58,7 +62,7 @@ export async function getConversationMessages(
   userId: string,
   conversationId: string,
 ): Promise<{ conversation: ConversationSummary | null; messages: HistoryMessage[] }> {
-  await ensureAgentTables().catch(() => undefined);
+  await ensureAgentTables();
 
   const conv = await db
     .select()
@@ -109,17 +113,16 @@ export async function getConversationMessages(
 }
 
 export async function createConversation(userId: string, title?: string): Promise<string> {
-  await ensureAgentTables().catch(() => undefined);
+  await ensureAgentTables();
 
-  const [row] = await db
-    .insert(agentConversations)
-    .values({
-      userId,
-      title: title?.trim() || "Cuộc trò chuyện mới",
-    })
-    .returning({ id: agentConversations.id });
+  const id = newId();
+  await db.insert(agentConversations).values({
+    id,
+    userId,
+    title: title?.trim() || "Cuộc trò chuyện mới",
+  });
 
-  return row.id;
+  return id;
 }
 
 export async function appendChatTurn(opts: {
@@ -130,12 +133,42 @@ export async function appendChatTurn(opts: {
   response: string;
   model: string;
   latencyMs: number;
-}): Promise<{ conversationId: string | null }> {
-  await ensureAgentTables().catch(() => undefined);
+}): Promise<{ conversationId: string | null; saved: boolean; error?: string }> {
+  try {
+    await ensureAgentTables();
+  } catch (err) {
+    return {
+      conversationId: null,
+      saved: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 
   let conversationId = opts.conversationId;
 
-  if (opts.userId) {
+  if (!opts.userId) {
+    // Guest: still log without conversation thread
+    try {
+      await db.insert(agentLogs).values({
+        sessionId: opts.sessionId || "guest",
+        userId: null,
+        conversationId: null,
+        prompt: opts.prompt,
+        response: opts.response.slice(0, 8000),
+        model: opts.model,
+        latencyMs: opts.latencyMs,
+      });
+      return { conversationId: null, saved: true };
+    } catch (err) {
+      return {
+        conversationId: null,
+        saved: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  try {
     if (conversationId) {
       const owned = await db
         .select({ id: agentConversations.id })
@@ -152,44 +185,37 @@ export async function appendChatTurn(opts: {
     } else {
       await db
         .update(agentConversations)
-        .set({
-          updatedAt: new Date(),
-          title: titleFromPrompt(opts.prompt),
-        })
-        .where(
-          and(
-            eq(agentConversations.id, conversationId),
-            eq(agentConversations.userId, opts.userId),
-            eq(agentConversations.title, "Cuộc trò chuyện mới"),
-          ),
-        )
-        .catch(() => undefined);
-
-      await db
-        .update(agentConversations)
         .set({ updatedAt: new Date() })
-        .where(eq(agentConversations.id, conversationId))
-        .catch(() => undefined);
+        .where(
+          and(eq(agentConversations.id, conversationId), eq(agentConversations.userId, opts.userId)),
+        );
     }
-  } else {
-    conversationId = null;
+
+    await db.insert(agentLogs).values({
+      sessionId: opts.sessionId || "auth",
+      userId: opts.userId,
+      conversationId,
+      prompt: opts.prompt,
+      response: opts.response.slice(0, 8000),
+      model: opts.model,
+      latencyMs: opts.latencyMs,
+    });
+
+    return { conversationId, saved: true };
+  } catch (err) {
+    return {
+      conversationId: conversationId ?? null,
+      saved: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
-
-  await db.insert(agentLogs).values({
-    sessionId: opts.sessionId,
-    userId: opts.userId,
-    conversationId,
-    prompt: opts.prompt,
-    response: opts.response.slice(0, 8000),
-    model: opts.model,
-    latencyMs: opts.latencyMs,
-  });
-
-  return { conversationId };
 }
 
 export async function deleteConversation(userId: string, conversationId: string): Promise<boolean> {
-  await ensureAgentTables().catch(() => undefined);
+  await ensureAgentTables();
+
+  // Logs cascade via FK; if cascade missing, delete logs first
+  await db.delete(agentLogs).where(eq(agentLogs.conversationId, conversationId)).catch(() => undefined);
 
   const deleted = await db
     .delete(agentConversations)

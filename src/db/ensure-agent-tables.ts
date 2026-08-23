@@ -9,7 +9,7 @@ let ensurePromise: Promise<void> | null = null;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS agent_conversations (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  id uuid PRIMARY KEY,
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title varchar(200) NOT NULL DEFAULT 'Cuộc trò chuyện mới',
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -31,7 +31,6 @@ CREATE TABLE IF NOT EXISTS agent_logs (
 
 CREATE INDEX IF NOT EXISTS agent_logs_created_idx ON agent_logs (created_at);
 
--- Extend agent_logs for authenticated history (nullable for legacy rows)
 ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS conversation_id uuid REFERENCES agent_conversations(id) ON DELETE CASCADE;
 
