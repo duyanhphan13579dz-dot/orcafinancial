@@ -1,10 +1,6 @@
 import { forProvider, logger, recentLogs } from "@/lib/logger";
 import { sharedCacheGet, sharedCacheSet } from "@/lib/connectors/redis-cache";
 
-/* ═══════════════════════════════════════════════════════════════════════
-   Domain types (unchanged)
-   ═══════════════════════════════════════════════════════════════════════ */
-
 export type Timeframe = "1" | "15" | "60" | "D";
 
 export interface Ohlcv {
@@ -58,10 +54,6 @@ export class ProviderError extends Error {
   }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   Environment-driven config
-   ═══════════════════════════════════════════════════════════════════════ */
-
 function envInt(key: string, fallback: number): number {
   const raw = process.env[key];
   if (!raw) return fallback;
@@ -70,25 +62,14 @@ function envInt(key: string, fallback: number): number {
 }
 
 export const CONNECTOR_CONFIG = {
-  /** Consecutive failures before opening the circuit. Default 5. */
   failureThreshold: envInt("CIRCUIT_BREAKER_THRESHOLD", 5),
-  /** How long (ms) the circuit stays open. Default 60 000. */
   cooldownMs: envInt("CIRCUIT_BREAKER_TIMEOUT", 60_000),
-  /** Retry attempts per fetch call (default 3 → 4 total attempts). */
   retryAttempts: envInt("CONNECTOR_RETRY_ATTEMPTS", 3),
-  /** Base delay (ms) for exponential backoff. */
   retryBaseMs: envInt("CONNECTOR_RETRY_BASE_MS", 1000),
-  /** Per-request timeout. */
   fetchTimeoutMs: envInt("CONNECTOR_FETCH_TIMEOUT_MS", 10_000),
-  /** How long (ms) without a success before we mark the provider DOWN. */
   staleAfterMs: envInt("CONNECTOR_STALE_AFTER_MS", 15 * 60_000),
-  /** How long (ms) before we consider a provider degraded. */
   degradedAfterMs: envInt("CONNECTOR_DEGRADED_AFTER_MS", 5 * 60_000),
 };
-
-/* ═══════════════════════════════════════════════════════════════════════
-   Circuit breaker (env-configured, uptime-aware)
-   ═══════════════════════════════════════════════════════════════════════ */
 
 export class CircuitBreaker {
   private failures = 0;
@@ -116,7 +97,6 @@ export class CircuitBreaker {
     return "open";
   }
 
-  /** UP / DEGRADED / DOWN — used by health and dashboard. */
   get status3(): "UP" | "DEGRADED" | "DOWN" {
     if (this.state === "open") return "DOWN";
     const sinceSuccess = this.lastSuccessAt === 0 ? Infinity : Date.now() - this.lastSuccessAt;
@@ -160,7 +140,6 @@ export class CircuitBreaker {
     };
   }
 
-  /** Manual reset from the admin dashboard. */
   reset() {
     this.failures = 0;
     this.openedAt = 0;
@@ -180,10 +159,7 @@ export class CircuitBreaker {
       const result = await fn();
       const wasOpen = this.openedAt !== 0;
       this.failures = 0;
-      if (wasOpen) {
-        // Closed from half-open — count downtime
-        this.cumulativeDowntimeMs += Date.now() - this.openedAt;
-      }
+      if (wasOpen) this.cumulativeDowntimeMs += Date.now() - this.openedAt;
       this.openedAt = 0;
       this.lastSuccessAt = Date.now();
       this.totalSuccesses += 1;
@@ -225,11 +201,6 @@ export function resetBreaker(name: string) {
   breakers.get(name)?.reset();
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   Stale data registry — marks which (symbol, kind) tuples are stale
-   when ALL providers for that tuple have failed.
-   ═══════════════════════════════════════════════════════════════════════ */
-
 export interface StaleFlag {
   key: string;
   kind: string;
@@ -257,10 +228,6 @@ export function isStale(kind: string, symbol: string | null): StaleFlag | null {
 export function getStaleFlags(): StaleFlag[] {
   return [...staleMap.values()];
 }
-
-/* ═══════════════════════════════════════════════════════════════════════
-   Data Validator — rejects obviously-bad records BEFORE they hit the DB.
-   ═══════════════════════════════════════════════════════════════════════ */
 
 export const DataValidator = {
   ohlcv(b: Partial<Ohlcv>, ctx: { provider: string; symbol?: string }): Ohlcv | null {
@@ -335,30 +302,21 @@ export const DataValidator = {
   },
 };
 
-/* ═══════════════════════════════════════════════════════════════════════
-   fetchWithRetry — exponential backoff with jitter + rich structured logs
-   ═══════════════════════════════════════════════════════════════════════ */
-
 export interface FetchOpts extends RequestInit {
   timeoutMs?: number;
   retries?: number;
-  /** Provider tag attached to logs. */
   provider?: string;
-  /** If true, do not retry on 4xx (default true). */
   noRetryOnClientError?: boolean;
-  /** If true, capture raw response body on parse failure (max 500 chars) for logs. */
   captureRawOnError?: boolean;
 }
 
 function classifyError(err: unknown, status?: number): { retryable: boolean; code: string; message: string } {
   const msg = err instanceof Error ? err.message : String(err);
   const name = err instanceof Error ? err.name : "Unknown";
-  // Network errors
   if (name === "AbortError") return { retryable: true, code: "TIMEOUT", message: msg };
   if (name === "TypeError") return { retryable: true, code: "NETWORK", message: msg };
   if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|EAI_AGAIN|UND_ERR_/i.test(msg))
     return { retryable: true, code: "NETWORK", message: msg };
-  // HTTP status
   if (status !== undefined) {
     if (status >= 500) return { retryable: true, code: `HTTP_${status}`, message: msg };
     if (status === 429) return { retryable: true, code: "HTTP_429", message: msg };
@@ -426,7 +384,6 @@ export async function fetchWithRetry(url: string, init: FetchOpts = {}): Promise
       const durationMs = Date.now() - started;
       lastErr = err;
       if (err instanceof ProviderError && err.meta?.code && String(err.meta.code).startsWith("HTTP_4")) {
-        // Non-retryable client error
         throw err;
       }
       const cls = classifyError(err, lastStatus);
@@ -441,15 +398,12 @@ export async function fetchWithRetry(url: string, init: FetchOpts = {}): Promise
         error: cls.message.slice(0, 300),
       });
       if (!cls.retryable || attempt === retries) break;
-      // Exponential backoff with jitter: 1s, 2s, 4s * (1 ± 0.2)
       const base = CONNECTOR_CONFIG.retryBaseMs * Math.pow(2, attempt);
       const jitter = base * 0.2 * (Math.random() * 2 - 1);
-      const wait = Math.round(base + jitter);
-      await new Promise((r) => setTimeout(r, wait));
+      await new Promise((r) => setTimeout(r, Math.round(base + jitter)));
     }
   }
 
-  // Capture raw body snippet when configured (useful for parser debugging).
   const finalErr = lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   log.error("fetch_all_retries_exhausted", {
     url,
@@ -461,10 +415,6 @@ export async function fetchWithRetry(url: string, init: FetchOpts = {}): Promise
   throw finalErr;
 }
 
-/**
- * Read a response body as JSON with parse-error logging (captures raw body
- * snippet on failure so operators can diagnose upstream format changes).
- */
 export async function readJsonSafe<T = unknown>(res: Response, provider: string, url: string): Promise<T> {
   const text = await res.text();
   try {
@@ -481,7 +431,6 @@ export async function readJsonSafe<T = unknown>(res: Response, provider: string,
   }
 }
 
-/** Read a response body as text with error logging. */
 export async function readTextSafe(res: Response, provider: string, url: string): Promise<string> {
   try {
     return await res.text();
@@ -493,10 +442,6 @@ export async function readTextSafe(res: Response, provider: string, url: string)
     throw new ProviderError(provider, `text read failed for ${url}`);
   }
 }
-
-/* ═══════════════════════════════════════════════════════════════════════
-   Database retry wrapper — handles P1001/P1002/P1008 (transient).
-   ═══════════════════════════════════════════════════════════════════════ */
 
 function isTransientDbError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
@@ -542,29 +487,30 @@ export async function safeDbQuery<T>(
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   Shared TTL cache and rate limiter
-   Backed by Upstash Redis when configured (shared across all serverless
-   instances); falls back to a local in-memory Map otherwise. See
-   @/lib/connectors/redis-cache for details. Call-site signatures below
-   are unchanged from the previous in-memory-only implementation.
-   ═══════════════════════════════════════════════════════════════════════ */
+/** In-flight dedupe: concurrent cached() for same key share one loader. */
+const inflightLoaders = new Map<string, Promise<unknown>>();
 
 export async function cached<T>(key: string, ttlMs: number, loader: () => Promise<T>): Promise<T> {
   const hit = await sharedCacheGet<T>(key);
   if (hit !== undefined) return hit;
-  const value = await loader();
-  await sharedCacheSet(key, value, ttlMs);
-  return value;
+
+  const existing = inflightLoaders.get(key);
+  if (existing) return existing as Promise<T>;
+
+  const promise = (async () => {
+    try {
+      const value = await loader();
+      await sharedCacheSet(key, value, ttlMs);
+      return value;
+    } finally {
+      inflightLoaders.delete(key);
+    }
+  })();
+
+  inflightLoaders.set(key, promise);
+  return promise;
 }
 
-/**
- * Read-through cache that returns the last-known-good value when the loader
- * fails. `sharedCacheGet` enforces the real TTL and won't return an expired
- * entry, so "stale" values are kept separately here (no expiry, capped size)
- * — best-effort, per-instance, matching the previous implementation's
- * fallback behavior.
- */
 const staleShadow = new Map<string, unknown>();
 const STALE_SHADOW_MAX = 500;
 
@@ -605,6 +551,29 @@ export function rateLimit(key: string, limit = 120, windowMs = 60_000): boolean 
   arr.push(now);
   rateBuckets.set(key, arr);
   return true;
+}
+
+/** Run async work with limited concurrency (protect upstream rate limits). */
+export async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, Math.max(1, items.length)) }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) break;
+      try {
+        results[i] = { status: "fulfilled", value: await fn(items[i], i) };
+      } catch (reason) {
+        results[i] = { status: "rejected", reason };
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 export { recentLogs };
