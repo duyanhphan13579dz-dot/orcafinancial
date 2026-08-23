@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { getAuthedUser } from "@/lib/auth/guard";
 import { analyze, type AnalysisResult } from "@/lib/analysis";
-import type { Quote } from "@/lib/connectors/core";
+import { mapPool, CONNECTOR_CONFIG, type Quote } from "@/lib/connectors/core";
 import {
   generateFundamentalReport,
   type FundamentalReport,
@@ -246,14 +246,17 @@ export async function POST(req: NextRequest) {
       ...new Set([...message.toUpperCase().matchAll(TICKER_RE)].map((m) => m[1])),
     ].slice(0, 3);
 
-    const validated: string[] = [];
-    for (const c of candidates) {
-      try {
+    const validateSettled = await mapPool(
+      candidates,
+      CONNECTOR_CONFIG.searchConcurrency,
+      async (c) => {
         const found = await searchSymbols(c);
-        if (found.some((f) => f.symbol === c)) validated.push(c);
-      } catch {
-        // skip
-      }
+        return found.some((f) => f.symbol === c) ? c : null;
+      },
+    );
+    const validated: string[] = [];
+    for (const r of validateSettled) {
+      if (r.status === "fulfilled" && r.value) validated.push(r.value);
     }
 
     const intent = detectIntent(message, validated.length > 0);
