@@ -8,11 +8,12 @@ import {
   type FundamentalReport,
 } from "@/lib/fundamental";
 import {
-  agentNarrative,
   buildAdvisorFallback,
   listConfiguredProviders,
+  llmEnvDiagnostics,
   smoothAgentAnswer,
 } from "@/lib/llm";
+import { agentNarrativeDetailed } from "@/lib/llm/sentiment-llm";
 import {
   getHistory,
   getMarketOverview,
@@ -114,7 +115,6 @@ function detectIntent(message: string, hasTickers: boolean): AgentIntent {
     return "market_overview";
   }
 
-  // Any residual money/finance wording → treat as personal_finance so RAG still fires
   if (
     /tiền|tài\s*chính|đầu\s*tư|vay|nợ|lương|thu\s*nhập|chi\s*tiêu|tiết\s*kiệm|bảo\s*hiểm|thuế|lãi|vốn/.test(
       m,
@@ -375,7 +375,6 @@ export async function POST(req: NextRequest) {
     const needMarket =
       intent === "market_ticker" || intent === "market_overview";
 
-    // Always try RAG — open search for general/market, domain playbooks for PF/DN/Wealth
     const playbookContext = retrievePlaybookContext(message, intent) || null;
 
     const [contexts, market, newsRes, personalContext, corporateContext] =
@@ -427,7 +426,8 @@ export async function POST(req: NextRequest) {
       playbookContext,
     );
 
-    const llmResult = await agentNarrative(message, deterministic);
+    const narrative = await agentNarrativeDetailed(message, deterministic);
+    const llmResult = narrative.result;
 
     const answer = smoothAgentAnswer(
       llmResult?.text ?? buildAdvisorFallback(message, deterministic),
@@ -438,6 +438,15 @@ export async function POST(req: NextRequest) {
       : "rule-engine";
 
     const latencyMs = Date.now() - started;
+    const envDiag = llmEnvDiagnostics();
+
+    if (!llmResult) {
+      logger.warn("agent_llm_fallback_rule_engine", {
+        errors: narrative.errors,
+        attempted: narrative.attempted,
+        keysPresent: envDiag.keysPresent,
+      });
+    }
 
     const sessionId =
       req.cookies.get("vnstock_session")?.value ??
@@ -472,6 +481,9 @@ export async function POST(req: NextRequest) {
         personalized: Boolean(personalContext || corporateContext),
         rag: Boolean(playbookContext),
         providersConfigured: listConfiguredProviders().map((p) => p.id),
+        llmAttempted: narrative.attempted,
+        llmErrors: llmResult ? undefined : narrative.errors.slice(0, 6),
+        llmKeysPresent: envDiag.keysPresent,
       },
       {
         latencyMs,
