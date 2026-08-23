@@ -53,7 +53,6 @@ export function invalidateApiCache(pathPrefix?: string) {
   }
 }
 
-/** Parse body as JSON; if upstream returned HTML/plain text, surface a clear Error. */
 async function readEnvelope<T>(res: Response): Promise<Envelope<T>> {
   const text = await res.text();
   const trimmed = text.trim();
@@ -77,7 +76,6 @@ async function readEnvelope<T>(res: Response): Promise<Envelope<T>> {
   }
 }
 
-/** Frontend only ever talks to our backend API (never external sources directly). */
 export async function api<T>(
   path: string,
   init?: RequestInit & { skipCache?: boolean },
@@ -93,6 +91,7 @@ export async function api<T>(
   const run = (async (): Promise<Envelope<T>> => {
     const res = await fetch(`/api/v1${path}`, {
       ...init,
+      credentials: "include",
       cache: skipCache ? "no-store" : init?.cache ?? "default",
     });
     const json = await readEnvelope<T>(res);
