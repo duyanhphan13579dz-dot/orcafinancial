@@ -1,12 +1,17 @@
 import { DN_PLAYBOOK } from "./playbooks/dn";
 import { PF_PLAYBOOK } from "./playbooks/pf";
 import { WEALTH_PLAYBOOK } from "./playbooks/wealth";
+import { MONEY_GENERAL_PLAYBOOK } from "./playbooks/money-general";
 import type { PlaybookChunk, PlaybookDomain, RetrievedChunk } from "./types";
 
 const ALL: PlaybookChunk[] = [
   ...PF_PLAYBOOK,
   ...DN_PLAYBOOK,
   ...WEALTH_PLAYBOOK,
+  // money-general already partially merged into PF by domain; include full set once
+  ...MONEY_GENERAL_PLAYBOOK.filter(
+    (c) => !PF_PLAYBOOK.some((p) => p.id === c.id),
+  ),
 ];
 
 function normalize(text: string): string {
@@ -113,36 +118,45 @@ export function formatPlaybookForLlm(retrieved: RetrievedChunk[]): string {
   ].join("\n\n");
 }
 
+/**
+ * Map agent intent → playbook context.
+ * "general" / market intents still get open keyword search so money questions
+ * without a narrow intent still receive expert guidance.
+ */
 export function retrievePlaybookContext(
   query: string,
-  intent: "personal_finance" | "corporate_finance" | "wealth" | string,
+  intent: string,
 ): string {
   if (intent === "personal_finance") {
     return formatPlaybookForLlm(
-      retrievePlaybook(query, { domain: "pf", topK: 3 }),
+      retrievePlaybook(query, { domain: "pf", topK: 4, minScore: 1.5 }),
     );
   }
   if (intent === "corporate_finance") {
     return formatPlaybookForLlm(
-      retrievePlaybook(query, { domain: "dn", topK: 3 }),
+      retrievePlaybook(query, { domain: "dn", topK: 3, minScore: 1.5 }),
     );
   }
   if (intent === "wealth") {
-    // Prefer wealth chunks; allow light PF overlap (liquidity / emergency)
     const wealthHits = retrievePlaybook(query, {
       domain: "wealth",
       topK: 3,
-      minScore: 1.5,
+      minScore: 1.2,
     });
-    if (wealthHits.length >= 2) {
-      return formatPlaybookForLlm(wealthHits);
-    }
     const pfSupport = retrievePlaybook(query, {
       domain: "pf",
-      topK: 1,
+      topK: 2,
       minScore: 2,
     });
-    return formatPlaybookForLlm([...wealthHits, ...pfSupport].slice(0, 3));
+    const merged = [...wealthHits];
+    for (const h of pfSupport) {
+      if (!merged.some((m) => m.chunk.id === h.chunk.id)) merged.push(h);
+    }
+    return formatPlaybookForLlm(merged.slice(0, 4));
   }
-  return "";
+
+  // general | market_* | anything else: open search across all playbooks
+  return formatPlaybookForLlm(
+    retrievePlaybook(query, { topK: 3, minScore: 1.8 }),
+  );
 }

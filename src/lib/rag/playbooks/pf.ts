@@ -1,4 +1,5 @@
 import type { PlaybookChunk } from "../types";
+import { MONEY_GENERAL_PLAYBOOK } from "./money-general";
 
 /** Personal Finance (PF) expert playbook for ORCA Agent RAG. */
 export const PF_PLAYBOOK: PlaybookChunk[] = [
@@ -22,6 +23,8 @@ export const PF_PLAYBOOK: PlaybookChunk[] = [
       "150k",
       "nghìn",
       "triệu",
+      "xoay",
+      "không đủ",
     ],
     body: `Khung ngắn hạn: (1) Xác định số tiền còn và số ngày phải xoay. (2) Giữ 15–25% làm dự phòng tối thiểu (hoặc ít nhất một khoản cố định nhỏ). (3) Ngân sách/ngày = (tiền − dự phòng) / số ngày. (4) Ưu tiên chỉ 3 nhóm: ăn, đi lại, khoản bắt buộc; tạm dừng mua sắm không cần thiết. (5) Nếu có thể, liệt kê 1–2 việc cắt giảm cụ thể trong tuần. Luôn tính số cụ thể khi khách cho số tiền + thời gian.`,
   },
@@ -115,4 +118,20 @@ export const PF_PLAYBOOK: PlaybookChunk[] = [
     ],
     body: `Không đổ hết một cục vào đầu tư. Tách 3 lớp: (A) quỹ dự phòng, (B) tiền cần dùng ≤12 tháng, (C) phần dài hạn. Chỉ phần C mới xem xét tăng trưởng. Hỏi chi phí/tháng, nợ, thời điểm cần dùng tiền trước khi đề xuất tỷ lệ.`,
   },
+  {
+    id: "pf-cut-spending",
+    domain: "pf",
+    title: "Cắt giảm chi tiêu",
+    keywords: [
+      "cắt giảm",
+      "tiết kiệm chi",
+      "tiêu nhiều",
+      "lãng phí",
+      "subscription",
+      "chi phí",
+    ],
+    body: `Liệt kê chi 30 ngày gần nhất theo nhóm. Cắt trước: đăng ký ít dùng, ăn ngoài/giao hàng, mua sắm impulse. Giữ: sức khỏe, đi lại cần thiết, trả nợ. Mục tiêu giảm 10–20% chi linh hoạt trong 1 tháng rồi đánh giá lại — không cắt đến mức không bền.`,
+  },
+  // Cross-cutting money situations (tax, FX, scams, etc.)
+  ...MONEY_GENERAL_PLAYBOOK.filter((c) => c.domain === "pf"),
 ];
