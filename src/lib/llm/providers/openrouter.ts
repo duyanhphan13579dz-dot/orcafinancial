@@ -1,21 +1,17 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
 /**
- * Free-tier path (no card required on OpenRouter):
- * - openrouter/free = auto-picks any currently free model
- * - explicit :free IDs as backups
- * Rate limit typically ~20 RPM / ~50 RPD until optional $10 top-up.
+ * Fallback path for GLM without Z.AI key:
+ * prefer z-ai/glm-5.2:free then other free models.
  */
 function modelCandidates(): string[] {
   const primary = process.env.OPENROUTER_MODEL?.trim();
   const list = [
     primary,
+    "z-ai/glm-5.2:free",
+    "z-ai/glm-4.5-air:free",
     "openrouter/free",
     "meta-llama/llama-3.3-70b-instruct:free",
-    "openai/gpt-oss-120b:free",
-    "openai/gpt-oss-20b:free",
-    "nvidia/nemotron-3-nano-30b-a3b:free",
-    "meta-llama/llama-3.2-3b-instruct:free",
   ].filter((m): m is string => Boolean(m));
   return [...new Set(list)];
 }
@@ -94,7 +90,7 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
 
 export const openrouterProvider: LlmProvider = {
   id: "openrouter",
-  label: "OpenRouter (free models)",
+  label: "OpenRouter (GLM free fallback)",
   isConfigured,
   chat,
 };

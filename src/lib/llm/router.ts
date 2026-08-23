@@ -1,24 +1,27 @@
 import { logger } from "@/lib/logger";
 import { anthropicProvider } from "./providers/anthropic";
 import { geminiProvider } from "./providers/gemini";
+import { glmProvider } from "./providers/glm";
 import { groqProvider } from "./providers/groq";
 import { openrouterProvider } from "./providers/openrouter";
 import type { LlmChatOptions, LlmMessage, LlmChatResult, LlmProvider, LlmProviderId } from "./types";
 
 /**
- * Default cascade prioritises free-tier reliability:
- * OpenRouter (:free / openrouter/free) → Gemini → Groq → Anthropic.
- * Override: LLM_PROVIDER_ORDER=openrouter,gemini,groq,anthropic
+ * Default: GLM only (user request to replace Gemini/Groq/Anthropic).
+ * OpenRouter kept as optional fallback for z-ai/glm-5.2:free without Z.AI key.
+ * Override: LLM_PROVIDER_ORDER=glm,openrouter
  */
 const ALL: LlmProvider[] = [
+  glmProvider,
   openrouterProvider,
+  // retained but off by default cascade unless keys + order include them
   geminiProvider,
   groqProvider,
   anthropicProvider,
 ];
 
 function orderedProviders(prefer?: LlmProviderId): LlmProvider[] {
-  const envOrder = (process.env.LLM_PROVIDER_ORDER ?? "")
+  const envOrder = (process.env.LLM_PROVIDER_ORDER ?? "glm,openrouter")
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean) as LlmProviderId[];
@@ -28,11 +31,9 @@ function orderedProviders(prefer?: LlmProviderId): LlmProvider[] {
 
   if (envOrder.length > 0) {
     list = envOrder.map((id) => byId.get(id)).filter((p): p is LlmProvider => Boolean(p));
-    for (const p of ALL) {
-      if (!list.includes(p)) list.push(p);
-    }
+    // Do NOT auto-append gemini/groq/anthropic — only what user ordered
   } else {
-    list = [...ALL];
+    list = [glmProvider, openrouterProvider];
   }
 
   if (prefer) {
@@ -49,18 +50,23 @@ export function listConfiguredProviders(): Array<{ id: LlmProviderId; label: str
   return orderedProviders().map((p) => ({ id: p.id, label: p.label }));
 }
 
-/** Safe diagnostics — which keys exist (never values). */
 export function llmEnvDiagnostics(): {
   keysPresent: Record<string, boolean>;
   configured: LlmProviderId[];
   order: LlmProviderId[];
 } {
   const keysPresent = {
-    GROQ_API_KEY: Boolean(process.env.GROQ_API_KEY?.trim()),
-    GEMINI_API_KEY: Boolean(process.env.GEMINI_API_KEY?.trim()),
+    ZAI_API_KEY: Boolean(
+      process.env.ZAI_API_KEY?.trim() ||
+        process.env.ZHIPU_API_KEY?.trim() ||
+        process.env.GLM_API_KEY?.trim() ||
+        process.env.BIGMODEL_API_KEY?.trim(),
+    ),
     OPENROUTER_API_KEY: Boolean(
       process.env.OPENROUTER_API_KEY?.trim() || process.env.OPENROUTES_API_KEY?.trim(),
     ),
+    GROQ_API_KEY: Boolean(process.env.GROQ_API_KEY?.trim()),
+    GEMINI_API_KEY: Boolean(process.env.GEMINI_API_KEY?.trim()),
     ANTHROPIC_API_KEY: Boolean(process.env.ANTHROPIC_API_KEY?.trim()),
   };
   const configured = orderedProviders().map((p) => p.id);
@@ -92,7 +98,9 @@ export async function chatWithFallbackDetailed(
     logger.debug("llm_no_provider_configured");
     return {
       result: null,
-      errors: ["No LLM provider configured (missing API keys in this environment)"],
+      errors: [
+        "No LLM provider configured. Set ZAI_API_KEY (or GLM_API_KEY) for Z.AI GLM, or OPENROUTER_API_KEY for z-ai/glm-5.2:free",
+      ],
       attempted: [],
     };
   }

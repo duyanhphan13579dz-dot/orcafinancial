@@ -1,6 +1,11 @@
 /** Shared types for multi-provider LLM layer. */
 
-export type LlmProviderId = "gemini" | "groq" | "openrouter" | "anthropic";
+export type LlmProviderId =
+  | "glm"
+  | "openrouter"
+  | "gemini"
+  | "groq"
+  | "anthropic";
 
 export interface LlmMessage {
   role: "system" | "user" | "assistant";
