@@ -4,6 +4,7 @@ import { companies, jobLogs, news, priceSnapshots } from "@/db/schema";
 import {
   cached,
   mapPool,
+  CONNECTOR_CONFIG,
   type Ohlcv,
   type Quote,
   type SymbolInfo,
@@ -33,7 +34,6 @@ export const INDICES = [
   { code: "UPCOM", name: "UPCOM-Index", exchange: "UPCOM" },
 ];
 
-/** Prefer DB snapshot if newer than this (ms). */
 const SNAPSHOT_FRESH_MS = 25_000;
 
 async function logJob(job: string, status: "ok" | "error", detail: string, durationMs: number) {
@@ -76,7 +76,6 @@ async function loadFreshSnapshots(symbols: string[]): Promise<Map<string, Quote>
   return out;
 }
 
-/* ----------------------- History with fallback chain ----------------------- */
 export async function getHistory(
   symbol: string,
   from: number,
@@ -99,11 +98,9 @@ export async function getHistory(
   });
 }
 
-/* ----------------------------- Validated quote ----------------------------- */
 export async function getQuote(symbol: string): Promise<Quote> {
   const key = `quote:${symbol}`;
   const quote = await cached(key, 12_000, async () => {
-    // Fast path: fresh DB snapshot
     const snaps = await loadFreshSnapshots([symbol]);
     const snap = snaps.get(symbol);
     if (snap) return snap;
@@ -172,13 +169,15 @@ export async function getQuote(symbol: string): Promise<Quote> {
 export async function getQuotes(symbols: string[]): Promise<Quote[]> {
   if (symbols.length === 0) return [];
 
-  // 1) Batch-read fresh snapshots
   const snaps = await loadFreshSnapshots(symbols);
   const missing = symbols.filter((s) => !snaps.has(s));
 
-  // 2) Upstream only for missing — limited concurrency
   if (missing.length > 0) {
-    const settled = await mapPool(missing, 6, (s) => getQuote(s));
+    const settled = await mapPool(
+      missing,
+      CONNECTOR_CONFIG.quoteConcurrency,
+      (s) => getQuote(s),
+    );
     for (const r of settled) {
       if (r.status === "fulfilled") snaps.set(r.value.symbol, r.value);
     }
@@ -187,7 +186,6 @@ export async function getQuotes(symbols: string[]): Promise<Quote[]> {
   return symbols.map((s) => snaps.get(s)).filter((q): q is Quote => Boolean(q));
 }
 
-/* ------------------------------ Market overview ---------------------------- */
 export async function getMarketOverview() {
   return cached("market:overview", 18_000, async () => {
     const started = Date.now();
@@ -232,7 +230,6 @@ export async function getMarketOverview() {
   });
 }
 
-/* ---------------------------------- Search --------------------------------- */
 export async function searchSymbols(query: string): Promise<SymbolInfo[]> {
   const q = query.trim();
   if (!q) return [];
@@ -244,7 +241,6 @@ export async function searchSymbols(query: string): Promise<SymbolInfo[]> {
       .where(or(ilike(companies.symbol, `${q}%`), ilike(companies.name, `%${q}%`)))
       .limit(15);
 
-    // Exact symbol hit in local DB → skip remote (fast path for ticker validation)
     const exact = local.find((c) => c.symbol.toUpperCase() === q.toUpperCase());
     if (exact && q.length <= 4) {
       return [
@@ -324,7 +320,6 @@ export async function getCompany(symbol: string): Promise<SymbolInfo | null> {
   }
 }
 
-/* ----------------------------------- News ---------------------------------- */
 const TICKER_RE = /\b([A-Z]{3})\b/g;
 const NEWS_SYNC_INTERVAL_MS = 120_000;
 const NEWS_LIST_CACHE_MS = 20_000;
@@ -354,7 +349,7 @@ export async function syncNews(): Promise<{ inserted: number; errors: string[] }
     // DB down
   }
 
-  const chunkSize = 25;
+  const chunkSize = CONNECTOR_CONFIG.newsInsertConcurrency;
   for (let i = 0; i < items.length; i += chunkSize) {
     const chunk = items.slice(i, i + chunkSize);
     await Promise.all(
@@ -442,10 +437,7 @@ export async function getNews(opts: { page?: number; limit?: number; symbol?: st
         .orderBy(desc(news.publishedAt))
         .limit(limit)
         .offset((page - 1) * limit),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(news)
-        .where(where),
+      db.select({ count: sql<number>`count(*)::int` }).from(news).where(where),
     ]);
     rows = rowResult;
     count = countResult[0]?.count ?? 0;
@@ -483,7 +475,6 @@ export async function getNews(opts: { page?: number; limit?: number; symbol?: st
   return payload;
 }
 
-/* ----------------------------- Sentiment API ------------------------------ */
 export async function getNewsSentiment(symbol: string) {
   return cached(`sentiment:${symbol}`, 60_000, async () => {
     scheduleNewsSync();
@@ -501,11 +492,7 @@ export async function getNewsSentiment(symbol: string) {
         )
         .orderBy(desc(news.publishedAt))
         .limit(20),
-      db
-        .select({ sentiment: news.sentiment })
-        .from(news)
-        .where(gte(news.publishedAt, cutoff))
-        .limit(100),
+      db.select({ sentiment: news.sentiment }).from(news).where(gte(news.publishedAt, cutoff)).limit(100),
     ]);
 
     const headlines = rows.map((r) => r.title);
