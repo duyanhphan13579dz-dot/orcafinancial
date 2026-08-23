@@ -1,24 +1,10 @@
 import { logger } from "@/lib/logger";
-import { anthropicProvider } from "./providers/anthropic";
-import { geminiProvider } from "./providers/gemini";
 import { glmProvider } from "./providers/glm";
-import { groqProvider } from "./providers/groq";
 import { openrouterProvider } from "./providers/openrouter";
 import type { LlmChatOptions, LlmMessage, LlmChatResult, LlmProvider, LlmProviderId } from "./types";
 
-/**
- * Default: GLM only (user request to replace Gemini/Groq/Anthropic).
- * OpenRouter kept as optional fallback for z-ai/glm-5.2:free without Z.AI key.
- * Override: LLM_PROVIDER_ORDER=glm,openrouter
- */
-const ALL: LlmProvider[] = [
-  glmProvider,
-  openrouterProvider,
-  // retained but off by default cascade unless keys + order include them
-  geminiProvider,
-  groqProvider,
-  anthropicProvider,
-];
+/** Only GLM (+ optional OpenRouter for z-ai/glm-*:free). */
+const ALL: LlmProvider[] = [glmProvider, openrouterProvider];
 
 function orderedProviders(prefer?: LlmProviderId): LlmProvider[] {
   const envOrder = (process.env.LLM_PROVIDER_ORDER ?? "glm,openrouter")
@@ -27,13 +13,12 @@ function orderedProviders(prefer?: LlmProviderId): LlmProvider[] {
     .filter(Boolean) as LlmProviderId[];
 
   const byId = new Map(ALL.map((p) => [p.id, p]));
-  let list: LlmProvider[];
+  let list: LlmProvider[] = envOrder
+    .map((id) => byId.get(id))
+    .filter((p): p is LlmProvider => Boolean(p));
 
-  if (envOrder.length > 0) {
-    list = envOrder.map((id) => byId.get(id)).filter((p): p is LlmProvider => Boolean(p));
-    // Do NOT auto-append gemini/groq/anthropic — only what user ordered
-  } else {
-    list = [glmProvider, openrouterProvider];
+  if (list.length === 0) {
+    list = [...ALL];
   }
 
   if (prefer) {
@@ -65,16 +50,9 @@ export function llmEnvDiagnostics(): {
     OPENROUTER_API_KEY: Boolean(
       process.env.OPENROUTER_API_KEY?.trim() || process.env.OPENROUTES_API_KEY?.trim(),
     ),
-    GROQ_API_KEY: Boolean(process.env.GROQ_API_KEY?.trim()),
-    GEMINI_API_KEY: Boolean(process.env.GEMINI_API_KEY?.trim()),
-    ANTHROPIC_API_KEY: Boolean(process.env.ANTHROPIC_API_KEY?.trim()),
   };
   const configured = orderedProviders().map((p) => p.id);
-  return {
-    keysPresent,
-    configured,
-    order: configured,
-  };
+  return { keysPresent, configured, order: configured };
 }
 
 function isHardAuthError(msg: string): boolean {
