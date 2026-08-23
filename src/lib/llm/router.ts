@@ -6,13 +6,14 @@ import { openrouterProvider } from "./providers/openrouter";
 import type { LlmChatOptions, LlmMessage, LlmChatResult, LlmProvider, LlmProviderId } from "./types";
 
 /**
- * Default cascade: Groq (fast) → Gemini → OpenRouter → Anthropic.
- * Override via LLM_PROVIDER_ORDER=groq,gemini,openrouter,anthropic
+ * Default cascade prioritises free-tier reliability:
+ * OpenRouter (:free / openrouter/free) → Gemini → Groq → Anthropic.
+ * Override: LLM_PROVIDER_ORDER=openrouter,gemini,groq,anthropic
  */
 const ALL: LlmProvider[] = [
-  groqProvider,
-  geminiProvider,
   openrouterProvider,
+  geminiProvider,
+  groqProvider,
   anthropicProvider,
 ];
 
@@ -82,10 +83,6 @@ export type ChatWithFallbackResult = {
   attempted: LlmProviderId[];
 };
 
-/**
- * Try each configured provider in order.
- * Returns structured errors for API diagnostics when all fail.
- */
 export async function chatWithFallbackDetailed(
   messages: LlmMessage[],
   opts: LlmChatOptions = {},
