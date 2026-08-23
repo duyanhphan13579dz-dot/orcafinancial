@@ -8,36 +8,20 @@ export interface Envelope<T> {
   error?: string;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
- * Client-side SWR cache
- *
- * Root cause of slow page switches: every page is "use client", api()
- * always used cache:"no-store", and usePoll reset loading=true with no
- * retained data. Navigating crypto → forex → crypto refetched everything.
- *
- * Fix: module-level Map shared across route mounts. On revisit we paint
- * cached data immediately (loading=false if cache hit) and revalidate in
- * the background when soft TTL expires.
- * ═══════════════════════════════════════════════════════════════════════ */
-
 interface CacheEntry {
   data: unknown;
   meta: Record<string, unknown> | null;
   fetchedAt: number;
 }
 
-/** Soft TTL — serve from memory, refresh in background when older. */
 const DEFAULT_SOFT_TTL_MS = 15_000;
-/** Hard TTL — drop entry and force a blocking fetch. */
 const DEFAULT_HARD_TTL_MS = 5 * 60_000;
-/** Cap memory growth (FIFO eviction by insertion order via Map). */
 const MAX_CACHE_ENTRIES = 80;
 
 const responseCache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<Envelope<unknown>>>();
 
 function touchCache(key: string, entry: CacheEntry) {
-  // Re-insert to keep Map insertion order = LRU-ish for eviction
   responseCache.delete(key);
   responseCache.set(key, entry);
   while (responseCache.size > MAX_CACHE_ENTRIES) {
@@ -57,7 +41,6 @@ function readCache(path: string, hardTtlMs = DEFAULT_HARD_TTL_MS): CacheEntry | 
   return hit;
 }
 
-/** Invalidate one path or all (e.g. after logout). */
 export function invalidateApiCache(pathPrefix?: string) {
   if (!pathPrefix) {
     responseCache.clear();
@@ -67,6 +50,30 @@ export function invalidateApiCache(pathPrefix?: string) {
     if (key.startsWith(pathPrefix) || key.includes(pathPrefix)) {
       responseCache.delete(key);
     }
+  }
+}
+
+/** Parse body as JSON; if upstream returned HTML/plain text, surface a clear Error. */
+async function readEnvelope<T>(res: Response): Promise<Envelope<T>> {
+  const text = await res.text();
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    throw new Error(res.ok ? "Empty response" : `HTTP ${res.status}`);
+  }
+
+  try {
+    return JSON.parse(trimmed) as Envelope<T>;
+  } catch {
+    const snippet = trimmed.replace(/\s+/g, " ").slice(0, 160);
+    if (!res.ok) {
+      throw new Error(
+        snippet.startsWith("An error") || snippet.startsWith("<!DOCTYPE")
+          ? `Máy chủ lỗi (HTTP ${res.status}). Thử lại sau khi deploy xong hoặc kiểm tra Vercel logs.`
+          : `HTTP ${res.status}: ${snippet}`,
+      );
+    }
+    throw new Error(`Phản hồi không phải JSON: ${snippet}`);
   }
 }
 
@@ -84,14 +91,11 @@ export async function api<T>(
   }
 
   const run = (async (): Promise<Envelope<T>> => {
-    // Prefer browser HTTP cache when server sets Cache-Control; still
-    // layer our memory cache on top for instant SPA navigations.
     const res = await fetch(`/api/v1${path}`, {
       ...init,
-      // GET: allow browser/CDN cache; mutations stay no-store
       cache: skipCache ? "no-store" : init?.cache ?? "default",
     });
-    const json = (await res.json()) as Envelope<T>;
+    const json = await readEnvelope<T>(res);
     if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
 
     if (!skipCache) {
@@ -117,21 +121,11 @@ export async function api<T>(
 }
 
 export type UsePollOptions = {
-  /** Soft TTL before background revalidate (default 15s). */
   softTtlMs?: number;
-  /** Hard TTL before cache is discarded (default 5min). */
   hardTtlMs?: number;
-  /** When false, do not poll on an interval — one-shot + manual refresh. */
   enabled?: boolean;
 };
 
-/**
- * Poll a backend endpoint with client SWR.
- *
- * - Cache hit → paint immediately (no loading flash)
- * - Soft TTL expired → show stale data + background refresh
- * - Hard TTL / miss → loading until first response
- */
 export function usePoll<T>(
   path: string | null,
   intervalMs = 15_000,
@@ -165,14 +159,12 @@ export function usePoll<T>(
 
       try {
         const env = await api<T>(p);
-        // Ignore stale responses if path changed mid-flight
         if (pathRef.current !== p) return;
         setData(env.data);
         setMeta(env.meta ?? null);
         setError(null);
       } catch (err) {
         if (pathRef.current !== p) return;
-        // Keep showing cached data on transient errors
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         if (pathRef.current === p) {
