@@ -34,7 +34,14 @@ export const INDICES = [
   { code: "UPCOM", name: "UPCOM-Index", exchange: "UPCOM" },
 ];
 
-const SNAPSHOT_FRESH_MS = 25_000;
+/** Prefer DB snapshot if newer than this (ms). */
+const SNAPSHOT_FRESH_MS = 45_000;
+
+/** Market overview cache — longer TTL = sub-second warm dashboard hits via Redis. */
+const OVERVIEW_TTL_MS = Number(process.env.MARKET_OVERVIEW_TTL_MS) || 60_000;
+const QUOTE_TTL_MS = Number(process.env.MARKET_QUOTE_TTL_MS) || 20_000;
+const HIST_D_TTL_MS = Number(process.env.MARKET_HIST_D_TTL_MS) || 120_000;
+const HIST_INTRA_TTL_MS = Number(process.env.MARKET_HIST_INTRA_TTL_MS) || 30_000;
 
 async function logJob(job: string, status: "ok" | "error", detail: string, durationMs: number) {
   try {
@@ -83,7 +90,7 @@ export async function getHistory(
   timeframe: Timeframe,
 ): Promise<{ bars: Ohlcv[]; source: string; confidence: number }> {
   const key = `hist:${symbol}:${timeframe}:${Math.floor(from / 300)}:${Math.floor(to / 300)}`;
-  return cached(key, timeframe === "D" ? 90_000 : 25_000, async () => {
+  return cached(key, timeframe === "D" ? HIST_D_TTL_MS : HIST_INTRA_TTL_MS, async () => {
     try {
       const bars = await vndirectHistory(symbol, from, to, timeframe);
       return { bars, source: "vndirect-dchart", confidence: 0.95 };
@@ -100,7 +107,7 @@ export async function getHistory(
 
 export async function getQuote(symbol: string): Promise<Quote> {
   const key = `quote:${symbol}`;
-  const quote = await cached(key, 12_000, async () => {
+  const quote = await cached(key, QUOTE_TTL_MS, async () => {
     const snaps = await loadFreshSnapshots([symbol]);
     const snap = snaps.get(symbol);
     if (snap) return snap;
@@ -187,7 +194,7 @@ export async function getQuotes(symbols: string[]): Promise<Quote[]> {
 }
 
 export async function getMarketOverview() {
-  return cached("market:overview", 18_000, async () => {
+  return cached("market:overview", OVERVIEW_TTL_MS, async () => {
     const started = Date.now();
     const indexCodes = INDICES.map((i) => i.code);
 
@@ -234,7 +241,7 @@ export async function searchSymbols(query: string): Promise<SymbolInfo[]> {
   const q = query.trim();
   if (!q) return [];
 
-  return cached(`search:v2:${q.toUpperCase()}`, 180_000, async () => {
+  return cached(`search:v2:${q.toUpperCase()}`, 300_000, async () => {
     const local = await db
       .select()
       .from(companies)
@@ -476,7 +483,7 @@ export async function getNews(opts: { page?: number; limit?: number; symbol?: st
 }
 
 export async function getNewsSentiment(symbol: string) {
-  return cached(`sentiment:${symbol}`, 60_000, async () => {
+  return cached(`sentiment:${symbol}`, 90_000, async () => {
     scheduleNewsSync();
 
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
