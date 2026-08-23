@@ -59,7 +59,7 @@ function detectIntent(message: string, hasTickers: boolean): AgentIntent {
   }
 
   const corporateFinancePattern =
-    /doanh\s*nghiệp|công\s*ty|báo\s*cáo\s*tài\s*chính|bctc|vốn\s*lưu\s*động|vốn\s*working|cấu\s*trúc\s*vốn|dòng\s*tiền\s*(dn|doanh\s*nghiệp|công\s*ty)|dòng\s*tiền\s*doanh\s*nghiệp|ebitda|ebit|đòn\s*bẩy|nợ\s*doanh\s*nghiệp|khả\s*năng\s*trả\s*lãi|biên\s*lợi\s*nhuận|roa|roe|capex|opex|working\s*capital|corporate\s*finance|financial\s*statement|cash\s*flow|capital\s*structure/.test(
+    /doanh\s*nghiệp|công\s*ty|báo\s*cáo\s*tài\s*chính|bctc|vốn\s*lưu\s*động|vốn\s*working|cấu\s*trúc\s*vốn|dòng\s*tiền\s*(dn|doanh\s*nghiệp|công\s*ty)|dòng\s*tiền\s*doanh\s*nghiệp|ebitda|ebit|đòn\s*bẩy|nợ\s*doanh\s*nghiệp|khả\s*năng\s*trả\s*lãi|biên\s*lợi\s*nhuận|roa|roe|capex|opex|working\s*capital|corporate\s*finance|financial\s*statement|cash\s*flow|capital\s*structure|hộ\s*kinh\s*doanh|sme|cửa\s*hàng|xoay\s*vốn|báo\s*giá|định\s*giá\s*dịch\s*vụ/.test(
       m,
     );
 
@@ -68,7 +68,7 @@ function detectIntent(message: string, hasTickers: boolean): AgentIntent {
   }
 
   const wealthPattern =
-    /wealth|quản\s*lý\s*gia\s*sản|quản\s*lý\s*tài\s*sản|tài\s*sản\s*ròng|net\s*worth|phân\s*bổ\s*tài\s*sản|phân\s*bổ\s*danh\s*mục|asset\s*allocation|danh\s*mục\s*dài\s*hạn|danh\s*mục\s*đầu\s*tư|hưu\s*trí|nghỉ\s*hưu|khẩu\s*vị\s*rủi\s*ro|mức\s*chịu\s*rủi\s*ro|đa\s*dạng\s*hóa|đa\s*dạng\s*danh\s*mục|tái\s*cân\s*bằng|rebalancing|retirement|portfolio\s*management|wealth\s*management/.test(
+    /wealth|quản\s*lý\s*gia\s*sản|quản\s*lý\s*tài\s*sản|tài\s*sản\s*ròng|net\s*worth|phân\s*bổ\s*tài\s*sản|phân\s*bổ\s*danh\s*mục|asset\s*allocation|danh\s*mục\s*dài\s*hạn|danh\s*mục\s*đầu\s*tư|hưu\s*trí|nghỉ\s*hưu|khẩu\s*vị\s*rủi\s*ro|mức\s*chịu\s*rủi\s*ro|đa\s*dạng\s*hóa|đa\s*dạng\s*danh\s*mục|tái\s*cân\s*bằng|rebalancing|retirement|portfolio\s*management|wealth\s*management|nên\s*đầu\s*tư|đầu\s*tư\s*gì|etf|quỹ\s*mở|trái\s*phiếu|mua\s*nhà\s*hay\s*thuê|buy\s*or\s*rent/.test(
       m,
     );
 
@@ -77,12 +77,12 @@ function detectIntent(message: string, hasTickers: boolean): AgentIntent {
   }
 
   const personalFinancePattern =
-    /ngân\s*sách|budget|lập\s*budget|tiết\s*kiệm|saving|quỹ\s*khẩn|emergency\s*fund|chi\s*tiêu|tiêu\s*thế\s*nào|tiêu\s*bao\s*nhiêu|tiêu\s*đến|sống\s*đến|sống\s*qua|còn\s*(bao\s*nhiêu|ít|tiền)|thiếu\s*tiền|hết\s*tiền|tiền\s*ăn|tiền\s*nhà|tiền\s*thuê|tiền\s*điện|tiền\s*xăng|tiền\s*đi\s*lại|sinh\s*hoạt|lương|thu\s*nhập|income|nợ\s*cá\s*nhân|đang\s*nợ|mắc\s*nợ|trả\s*nợ|nợ\s*thẻ|vay\s*cá\s*nhân|khoản\s*vay|bảo\s*hiểm\s*nhân\s*thọ|bảo\s*hiểm\s*cá\s*nhân|mục\s*tiêu\s*tài\s*chính|mua\s*nhà|mua\s*xe|đám\s*cưới|du\s*lịch|học\s*phí|tài\s*chính\s*cá\s*nhân|personal\s*finance|personal\s*budget|cash\s*flow\s*cá\s*nhân/.test(
+    /ngân\s*sách|budget|lập\s*budget|tiết\s*kiệm|saving|quỹ\s*khẩn|emergency\s*fund|chi\s*tiêu|tiêu\s*thế\s*nào|tiêu\s*bao\s*nhiêu|tiêu\s*đến|sống\s*đến|sống\s*qua|còn\s*(bao\s*nhiêu|ít|tiền)|thiếu\s*tiền|hết\s*tiền|tiền\s*ăn|tiền\s*nhà|tiền\s*thuê|tiền\s*điện|tiền\s*xăng|tiền\s*đi\s*lại|sinh\s*hoạt|lương|thu\s*nhập|income|nợ\s*cá\s*nhân|đang\s*nợ|mắc\s*nợ|trả\s*nợ|nợ\s*thẻ|vay\s*cá\s*nhân|khoản\s*vay|bảo\s*hiểm|mục\s*tiêu\s*tài\s*chính|mua\s*nhà|mua\s*xe|đám\s*cưới|du\s*lịch|học\s*phí|tài\s*chính\s*cá\s*nhân|personal\s*finance|personal\s*budget|cash\s*flow\s*cá\s*nhân|thuế|tncn|lạm\s*phát|lãi\s*suất|tỷ\s*giá|chuyển\s*tiền|kiều\s*hối|đàm\s*phán\s*lương|tăng\s*lương|thu\s*nhập\s*phụ|freelance|lừa\s*đảo|đa\s*cấp|vay\s*nóng|tín\s*dụng\s*đen|cắt\s*giảm|xoay\s*tiền|nhàn\s*rỗi|tiền\s*mặt/.test(
       m,
     );
 
   const hasMoneyAmount =
-    /(?:\d+(?:[.,]\d+)?)\s*(?:k|nghìn|ngàn|triệu|tr|tỷ|tỉ|đ|vnđ|vnd|đồng)\b/.test(
+    /(?:\d+(?:[.,]\d+)?)\s*(?:k|nghìn|ngàn|triệu|tr|tỷ|tỉ|đ|vnđ|vnd|đồng|usd|\$)\b/.test(
       m,
     );
 
@@ -92,14 +92,15 @@ function detectIntent(message: string, hasTickers: boolean): AgentIntent {
     );
 
   const naturalBudgetingPattern =
-    /còn\s*\d|có\s*\d|đang\s*có\s*\d|trong\s*tài\s*khoản|tài\s*khoản\s*còn|tiền\s*còn|phải\s*dùng|phải\s*tiêu|làm\s*sao\s*đủ|làm\s*sao\s*để\s*đủ|chia\s*tiền|phân\s*bổ\s*tiền|quản\s*lý\s*tiền|quản\s*lý\s*tài\s*chính/.test(
+    /còn\s*\d|có\s*\d|đang\s*có\s*\d|trong\s*tài\s*khoản|tài\s*khoản\s*còn|tiền\s*còn|phải\s*dùng|phải\s*tiêu|làm\s*sao\s*đủ|làm\s*sao\s*để\s*đủ|chia\s*tiền|phân\s*bổ\s*tiền|quản\s*lý\s*tiền|quản\s*lý\s*tài\s*chính|nên\s*làm\s*gì\s*với\s*tiền/.test(
       m,
     );
 
   if (
     personalFinancePattern ||
     (hasMoneyAmount && hasTimeHorizon) ||
-    (hasMoneyAmount && naturalBudgetingPattern)
+    (hasMoneyAmount && naturalBudgetingPattern) ||
+    hasMoneyAmount
   ) {
     return "personal_finance";
   }
@@ -111,6 +112,15 @@ function detectIntent(message: string, hasTickers: boolean): AgentIntent {
 
   if (marketPattern) {
     return "market_overview";
+  }
+
+  // Any residual money/finance wording → treat as personal_finance so RAG still fires
+  if (
+    /tiền|tài\s*chính|đầu\s*tư|vay|nợ|lương|thu\s*nhập|chi\s*tiêu|tiết\s*kiệm|bảo\s*hiểm|thuế|lãi|vốn/.test(
+      m,
+    )
+  ) {
+    return "personal_finance";
   }
 
   return "general";
@@ -228,6 +238,10 @@ function composeDeterministicAnswer(
     if (personalContext) {
       parts.push(personalContext);
     }
+  } else if (intent === "general") {
+    parts.push(
+      "Trả lời mọi góc độ tiền bạc/tài chính liên quan câu hỏi. Dùng playbook nếu có; tính số khi khách đưa số. Không từ chối chỉ vì ngoài thị trường cổ phiếu.",
+    );
   }
 
   if (market) {
@@ -292,14 +306,10 @@ function composeDeterministicAnswer(
     contexts.length === 0 &&
     !market &&
     !personalContext &&
-    !corporateContext &&
-    (intent === "personal_finance" ||
-      intent === "corporate_finance" ||
-      intent === "wealth" ||
-      intent === "general")
+    !corporateContext
   ) {
     parts.push(
-      "Câu hỏi này không bắt buộc số liệu thị trường. Trả lời theo nguyên tắc tài chính và số liệu khách đã nêu.",
+      "Câu hỏi này không bắt buộc số liệu thị trường. Trả lời theo nguyên tắc tài chính và số liệu khách đã nêu — đừng từ chối.",
     );
   }
 
@@ -365,12 +375,8 @@ export async function POST(req: NextRequest) {
     const needMarket =
       intent === "market_ticker" || intent === "market_overview";
 
-    const playbookContext =
-      intent === "personal_finance" ||
-      intent === "corporate_finance" ||
-      intent === "wealth"
-        ? retrievePlaybookContext(message, intent)
-        : null;
+    // Always try RAG — open search for general/market, domain playbooks for PF/DN/Wealth
+    const playbookContext = retrievePlaybookContext(message, intent) || null;
 
     const [contexts, market, newsRes, personalContext, corporateContext] =
       await Promise.all([
