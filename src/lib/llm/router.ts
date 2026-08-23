@@ -3,7 +3,7 @@ import { glmProvider } from "./providers/glm";
 import { openrouterProvider } from "./providers/openrouter";
 import type { LlmChatOptions, LlmMessage, LlmChatResult, LlmProvider, LlmProviderId } from "./types";
 
-/** Only GLM (+ optional OpenRouter for z-ai/glm-*:free). */
+/** Fixed stack: GLM primary, OpenRouter secondary. No other providers. */
 const ALL: LlmProvider[] = [glmProvider, openrouterProvider];
 
 function orderedProviders(prefer?: LlmProviderId): LlmProvider[] {
@@ -17,15 +17,11 @@ function orderedProviders(prefer?: LlmProviderId): LlmProvider[] {
     .map((id) => byId.get(id))
     .filter((p): p is LlmProvider => Boolean(p));
 
-  if (list.length === 0) {
-    list = [...ALL];
-  }
+  if (list.length === 0) list = [...ALL];
 
   if (prefer) {
     const preferred = list.find((p) => p.id === prefer);
-    if (preferred) {
-      list = [preferred, ...list.filter((p) => p.id !== prefer)];
-    }
+    if (preferred) list = [preferred, ...list.filter((p) => p.id !== prefer)];
   }
 
   return list.filter((p) => p.isConfigured());
@@ -55,6 +51,15 @@ export function llmEnvDiagnostics(): {
   return { keysPresent, configured, order: configured };
 }
 
+/** When true (default in production), agent must not silently use rule-engine if keys exist. */
+export function isLlmStrict(): boolean {
+  const raw = process.env.LLM_STRICT;
+  if (raw !== undefined && raw !== "") {
+    return !/^(0|false|no|off)$/i.test(raw);
+  }
+  return process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
+}
+
 function isHardAuthError(msg: string): boolean {
   return /\b(401|403|invalid api key|incorrect api key|authentication|unauthorized|decommissioned|model_decommissioned|not_found|does not exist)\b/i.test(
     msg,
@@ -77,7 +82,7 @@ export async function chatWithFallbackDetailed(
     return {
       result: null,
       errors: [
-        "No LLM provider configured. Set ZAI_API_KEY (or GLM_API_KEY) for Z.AI GLM, or OPENROUTER_API_KEY for z-ai/glm-5.2:free",
+        "No LLM provider configured. Set ZAI_API_KEY (GLM) and/or OPENROUTER_API_KEY on Vercel Production.",
       ],
       attempted: [],
     };
@@ -85,9 +90,7 @@ export async function chatWithFallbackDetailed(
 
   const errors: string[] = [];
   const attempted: LlmProviderId[] = [];
-  const baseTimeout = opts.timeoutMs ?? 22_000;
-  const perProviderTimeout = (index: number) =>
-    Math.max(10_000, baseTimeout - index * 3_000);
+  const baseTimeout = opts.timeoutMs ?? 20_000;
 
   for (let i = 0; i < providers.length; i++) {
     const provider = providers[i];
@@ -95,7 +98,7 @@ export async function chatWithFallbackDetailed(
     try {
       const result = await provider.chat(messages, {
         ...opts,
-        timeoutMs: perProviderTimeout(i),
+        timeoutMs: Math.max(12_000, baseTimeout - i * 2_000),
       });
       logger.info("llm_ok", {
         provider: provider.id,
@@ -106,7 +109,7 @@ export async function chatWithFallbackDetailed(
       return { result, errors, attempted };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${provider.id}: ${msg.slice(0, 200)}`);
+      errors.push(`${provider.id}: ${msg.slice(0, 220)}`);
       logger.warn("llm_provider_failed", { provider: provider.id, error: msg });
       if (isHardAuthError(msg)) continue;
     }

@@ -1,19 +1,9 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
-/**
- * Fallback path for GLM without Z.AI key:
- * prefer z-ai/glm-5.2:free then other free models.
- */
+/** OpenRouter fallback — prefer free GLM models only. */
 function modelCandidates(): string[] {
-  const primary = process.env.OPENROUTER_MODEL?.trim();
-  const list = [
-    primary,
-    "z-ai/glm-5.2:free",
-    "z-ai/glm-4.5-air:free",
-    "openrouter/free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-  ].filter((m): m is string => Boolean(m));
-  return [...new Set(list)];
+  const primary = process.env.OPENROUTER_MODEL?.trim() || "z-ai/glm-4.5-air:free";
+  return [...new Set([primary, "z-ai/glm-5.2:free", "openrouter/free"])];
 }
 
 function resolveApiKey(): string | undefined {
@@ -36,7 +26,7 @@ async function chatOne(
 ): Promise<LlmChatResult> {
   const started = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 22_000);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 20_000);
 
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -90,7 +80,7 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
 
 export const openrouterProvider: LlmProvider = {
   id: "openrouter",
-  label: "OpenRouter (GLM free fallback)",
+  label: "OpenRouter",
   isConfigured,
   chat,
 };

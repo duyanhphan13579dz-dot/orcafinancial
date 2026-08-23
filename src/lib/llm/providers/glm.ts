@@ -1,19 +1,9 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
 /**
- * Z.AI / Zhipu GLM (open-weight family).
- * Official free API models: glm-4.7-flash, glm-4.5-flash.
- * Flagship: glm-5.2, glm-5.3 (paid / trial credits).
- *
- * Keys (any one):
- *   ZAI_API_KEY | ZHIPU_API_KEY | GLM_API_KEY | BIGMODEL_API_KEY
- *
- * Base URL (optional):
- *   GLM_BASE_URL — default https://api.z.ai/api/paas/v4
- *   (China alternate: https://open.bigmodel.cn/api/paas/v4)
- *
- * Model (optional):
- *   GLM_MODEL — default tries free Flash first, then 5.2
+ * Z.AI / Zhipu GLM.
+ * Keys: ZAI_API_KEY | ZHIPU_API_KEY | GLM_API_KEY | BIGMODEL_API_KEY
+ * Model: GLM_MODEL (default glm-4.7-flash only — avoid multi-model cascade timeouts)
  */
 function resolveApiKey(): string | undefined {
   return (
@@ -34,18 +24,10 @@ function baseUrl(): string {
 }
 
 function modelCandidates(): string[] {
-  const primary = process.env.GLM_MODEL?.trim();
-  const list = [
-    primary,
-    // Official free-tier models on Z.AI API
-    "glm-4.7-flash",
-    "glm-4.5-flash",
-    // Stronger (may need credits)
-    "glm-5.2",
-    "glm-5",
-    "glm-4.7",
-  ].filter((m): m is string => Boolean(m));
-  return [...new Set(list)];
+  const primary = process.env.GLM_MODEL?.trim() || "glm-4.7-flash";
+  // Only one primary + one backup to avoid 30s+ cascade
+  const backup = primary === "glm-4.7-flash" ? "glm-4.5-flash" : "glm-4.7-flash";
+  return [...new Set([primary, backup])];
 }
 
 function isConfigured() {
@@ -60,7 +42,7 @@ async function chatOne(
 ): Promise<LlmChatResult> {
   const started = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 28_000);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 20_000);
 
   try {
     const res = await fetch(`${baseUrl()}/chat/completions`, {

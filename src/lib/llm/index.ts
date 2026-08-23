@@ -12,6 +12,7 @@ export {
   chatWithFallbackDetailed,
   listConfiguredProviders,
   llmEnvDiagnostics,
+  isLlmStrict,
 } from "./router";
 export {
   scoreSentimentHybrid,
