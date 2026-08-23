@@ -26,6 +26,15 @@ export async function register() {
           );
         }
         try {
+          const { ensureAgentTables } = await import("@/db/ensure-agent-tables");
+          await ensureAgentTables();
+        } catch (err) {
+          console.error(
+            "[instrumentation] ensureAgentTables failed:",
+            err instanceof Error ? err.message : err,
+          );
+        }
+        try {
           const { ensureMarketTables } = await import("@/db/ensure-market-tables");
           await ensureMarketTables();
         } catch (err) {
