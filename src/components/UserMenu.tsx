@@ -43,8 +43,9 @@ export function UserMenu() {
   const initials = (user.name ?? user.email).slice(0, 2).toUpperCase();
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative z-50" ref={ref}>
       <button
+        type="button"
         onClick={() => setOpen(!open)}
         className="flex items-center gap-2 rounded-full border border-[#1a3558] bg-[#0e2e4f] p-1 pr-3 hover:border-[#00d4ff]/50 transition-colors min-h-[40px]"
       >
@@ -63,7 +64,7 @@ export function UserMenu() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-56 rounded-lg border border-[#1a3558] bg-[#0A2540] shadow-2xl overflow-hidden z-50">
+        <div className="absolute right-0 top-full mt-2 w-56 rounded-lg border border-[#1a3558] bg-[#0A2540] shadow-2xl overflow-hidden z-[70] ring-1 ring-black/40">
           <div className="px-4 py-3 border-b border-[#1a3558]">
             <div className="text-sm font-semibold text-white truncate">{user.name || "Tài khoản"}</div>
             <div className="text-[11px] text-slate-500 truncate">{user.email}</div>
@@ -83,6 +84,7 @@ export function UserMenu() {
             <span>⚙️</span> Cài đặt
           </Link>
           <button
+            type="button"
             onClick={() => {
               setOpen(false);
               void logout();
