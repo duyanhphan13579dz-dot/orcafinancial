@@ -1,6 +1,4 @@
 import { NextRequest } from "next/server";
-import { db } from "@/db";
-import { agentLogs } from "@/db/schema";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { getAuthedUser } from "@/lib/auth/guard";
 import { analyze, type AnalysisResult } from "@/lib/analysis";
@@ -33,6 +31,7 @@ import {
 import { buildPersonalFinanceContext } from "@/lib/personal-finance/context";
 import { buildCorporateFinanceContext } from "@/lib/corporate-finance/context";
 import { retrievePlaybookContext } from "@/lib/rag";
+import { appendChatTurn } from "@/lib/agent/history";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -322,6 +321,7 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as {
       message?: string;
       companyName?: string;
+      conversationId?: string | null;
     };
 
     const message = body.message?.trim() ?? "";
@@ -335,6 +335,10 @@ export async function POST(req: NextRequest) {
     }
 
     const authedUser = await getAuthedUser(req).catch(() => null);
+    const requestedConversationId =
+      typeof body.conversationId === "string" && body.conversationId.trim()
+        ? body.conversationId.trim()
+        : null;
 
     const candidates = [
       ...new Set(
@@ -429,20 +433,28 @@ export async function POST(req: NextRequest) {
 
     const latencyMs = Date.now() - started;
 
-    const sessionId = req.cookies.get("vnstock_session")?.value ?? "";
+    const sessionId =
+      req.cookies.get("vnstock_session")?.value ??
+      req.cookies.get("refreshToken")?.value?.slice(0, 64) ??
+      "";
 
-    void db
-      .insert(agentLogs)
-      .values({
+    let conversationId: string | null = null;
+    try {
+      const saved = await appendChatTurn({
+        userId: authedUser?.id ?? null,
+        conversationId: requestedConversationId,
         sessionId,
         prompt: message,
-        response: answer.slice(0, 8000),
+        response: answer,
         model,
         latencyMs,
-      })
-      .catch((err) =>
-        logger.error("agent_log_failed", { error: String(err) }),
-      );
+      });
+      conversationId = saved.conversationId;
+    } catch (err) {
+      logger.error("agent_log_failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     return ok(
       {
@@ -450,6 +462,7 @@ export async function POST(req: NextRequest) {
         model,
         intent,
         symbols: validated,
+        conversationId,
         personalized: Boolean(personalContext || corporateContext),
         rag: Boolean(playbookContext),
         providersConfigured: listConfiguredProviders().map((p) => p.id),
