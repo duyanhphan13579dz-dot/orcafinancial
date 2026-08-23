@@ -137,20 +137,6 @@ export const watchlistItems = pgTable(
   (t) => [uniqueIndex("watchlist_session_symbol_uq").on(t.sessionId, t.symbol)],
 );
 
-export const agentLogs = pgTable(
-  "agent_logs",
-  {
-    id: serial("id").primaryKey(),
-    sessionId: varchar("session_id", { length: 64 }).notNull().default(""),
-    prompt: text("prompt").notNull(),
-    response: text("response").notNull(),
-    model: varchar("model", { length: 60 }).notNull().default("rule-engine"),
-    latencyMs: integer("latency_ms").notNull().default(0),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("agent_logs_created_idx").on(t.createdAt)],
-);
-
 export const jobLogs = pgTable(
   "job_logs",
   {
@@ -325,3 +311,44 @@ export const auditLogs = pgTable("audit_logs", {
   index("audit_logs_user_idx").on(t.userId),
   index("audit_logs_created_idx").on(t.createdAt),
 ]);
+
+/** Per-user AI Agent conversation threads. */
+export const agentConversations = pgTable(
+  "agent_conversations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: varchar("title", { length: 200 }).notNull().default("Cuộc trò chuyện mới"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("agent_conversations_user_idx").on(t.userId),
+    index("agent_conversations_updated_idx").on(t.updatedAt),
+  ],
+);
+
+/** Individual chat turns (user prompt + agent response). */
+export const agentLogs = pgTable(
+  "agent_logs",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: varchar("session_id", { length: 64 }).notNull().default(""),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    conversationId: uuid("conversation_id").references(() => agentConversations.id, {
+      onDelete: "cascade",
+    }),
+    prompt: text("prompt").notNull(),
+    response: text("response").notNull(),
+    model: varchar("model", { length: 60 }).notNull().default("rule-engine"),
+    latencyMs: integer("latency_ms").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("agent_logs_created_idx").on(t.createdAt),
+    index("agent_logs_user_idx").on(t.userId),
+    index("agent_logs_conversation_idx").on(t.conversationId),
+  ],
+);
