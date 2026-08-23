@@ -10,8 +10,8 @@ import {
   buildSentimentUserPrompt,
 } from "./prompts";
 
-import { chatWithFallback } from "./router";
-import type { SentimentLlmResult } from "./types";
+import { chatWithFallback, chatWithFallbackDetailed } from "./router";
+import type { LlmChatResult, SentimentLlmResult } from "./types";
 
 function clampScore(n: number): number {
   if (!Number.isFinite(n)) return 0;
@@ -79,12 +79,6 @@ function parseSentimentJson(
   }
 }
 
-/**
- * Hybrid sentiment:
- *
- * Rule engine is always available.
- * LLM refines it when a provider is configured.
- */
 export async function scoreSentimentHybrid(
   symbol: string,
   headlines: string[],
@@ -254,14 +248,26 @@ export async function scoreSentimentHybrid(
   }
 }
 
-/**
- * Main ORCA financial-advisor LLM — detailed, coherent, human tone.
- */
+export type AgentNarrativeMeta = {
+  result: LlmChatResult | null;
+  errors: string[];
+  attempted: string[];
+};
+
+/** Main ORCA financial-advisor LLM — detailed, coherent, human tone. */
 export async function agentNarrative(
   userQuestion: string,
   contextBlock: string,
-) {
-  return chatWithFallback(
+): Promise<LlmChatResult | null> {
+  const { result } = await agentNarrativeDetailed(userQuestion, contextBlock);
+  return result;
+}
+
+export async function agentNarrativeDetailed(
+  userQuestion: string,
+  contextBlock: string,
+): Promise<AgentNarrativeMeta> {
+  const detailed = await chatWithFallbackDetailed(
     [
       {
         role: "system",
@@ -295,4 +301,10 @@ export async function agentNarrative(
       timeoutMs: 28_000,
     },
   );
+
+  return {
+    result: detailed.result,
+    errors: detailed.errors,
+    attempted: detailed.attempted,
+  };
 }

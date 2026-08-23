@@ -6,8 +6,7 @@ import { openrouterProvider } from "./providers/openrouter";
 import type { LlmChatOptions, LlmMessage, LlmChatResult, LlmProvider, LlmProviderId } from "./types";
 
 /**
- * Default cascade prioritises speed then quality:
- * Groq (fastest) → Gemini → OpenRouter → Anthropic.
+ * Default cascade: Groq (fast) → Gemini → OpenRouter → Anthropic.
  * Override via LLM_PROVIDER_ORDER=groq,gemini,openrouter,anthropic
  */
 const ALL: LlmProvider[] = [
@@ -49,35 +48,67 @@ export function listConfiguredProviders(): Array<{ id: LlmProviderId; label: str
   return orderedProviders().map((p) => ({ id: p.id, label: p.label }));
 }
 
-/** Hard failures that should not waste full timeout on retries. */
+/** Safe diagnostics — which keys exist (never values). */
+export function llmEnvDiagnostics(): {
+  keysPresent: Record<string, boolean>;
+  configured: LlmProviderId[];
+  order: LlmProviderId[];
+} {
+  const keysPresent = {
+    GROQ_API_KEY: Boolean(process.env.GROQ_API_KEY?.trim()),
+    GEMINI_API_KEY: Boolean(process.env.GEMINI_API_KEY?.trim()),
+    OPENROUTER_API_KEY: Boolean(
+      process.env.OPENROUTER_API_KEY?.trim() || process.env.OPENROUTES_API_KEY?.trim(),
+    ),
+    ANTHROPIC_API_KEY: Boolean(process.env.ANTHROPIC_API_KEY?.trim()),
+  };
+  const configured = orderedProviders().map((p) => p.id);
+  return {
+    keysPresent,
+    configured,
+    order: configured,
+  };
+}
+
 function isHardAuthError(msg: string): boolean {
-  return /\b(401|403|invalid api key|incorrect api key|authentication|unauthorized)\b/i.test(
+  return /\b(401|403|invalid api key|incorrect api key|authentication|unauthorized|decommissioned|model_decommissioned|not_found|does not exist)\b/i.test(
     msg,
   );
 }
 
+export type ChatWithFallbackResult = {
+  result: LlmChatResult | null;
+  errors: string[];
+  attempted: LlmProviderId[];
+};
+
 /**
- * Try each configured provider in order. Returns null if all fail or none configured.
- * Fail-fast on auth errors; shorter per-provider budget when cascading.
+ * Try each configured provider in order.
+ * Returns structured errors for API diagnostics when all fail.
  */
-export async function chatWithFallback(
+export async function chatWithFallbackDetailed(
   messages: LlmMessage[],
   opts: LlmChatOptions = {},
-): Promise<LlmChatResult | null> {
+): Promise<ChatWithFallbackResult> {
   const providers = orderedProviders(opts.prefer);
   if (providers.length === 0) {
     logger.debug("llm_no_provider_configured");
-    return null;
+    return {
+      result: null,
+      errors: ["No LLM provider configured (missing API keys in this environment)"],
+      attempted: [],
+    };
   }
 
   const errors: string[] = [];
+  const attempted: LlmProviderId[] = [];
   const baseTimeout = opts.timeoutMs ?? 22_000;
-  // First provider gets full budget; later ones slightly shorter to keep total latency down
   const perProviderTimeout = (index: number) =>
     Math.max(10_000, baseTimeout - index * 3_000);
 
   for (let i = 0; i < providers.length; i++) {
     const provider = providers[i];
+    attempted.push(provider.id);
     try {
       const result = await provider.chat(messages, {
         ...opts,
@@ -89,17 +120,23 @@ export async function chatWithFallback(
         latencyMs: result.latencyMs,
         attempt: i + 1,
       });
-      return result;
+      return { result, errors, attempted };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${provider.id}: ${msg}`);
+      errors.push(`${provider.id}: ${msg.slice(0, 200)}`);
       logger.warn("llm_provider_failed", { provider: provider.id, error: msg });
-
-      // Auth failures on a key won't recover by waiting — continue to next provider immediately
       if (isHardAuthError(msg)) continue;
     }
   }
 
   logger.warn("llm_all_providers_failed", { errors });
-  return null;
+  return { result: null, errors, attempted };
+}
+
+export async function chatWithFallback(
+  messages: LlmMessage[],
+  opts: LlmChatOptions = {},
+): Promise<LlmChatResult | null> {
+  const { result } = await chatWithFallbackDetailed(messages, opts);
+  return result;
 }

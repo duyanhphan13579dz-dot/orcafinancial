@@ -1,7 +1,12 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
-/** Fast default; override via GROQ_MODEL (e.g. llama-3.1-8b-instant for even lower latency). */
-const DEFAULT_MODEL = process.env.GROQ_MODEL?.trim() || "llama-3.3-70b-versatile";
+/**
+ * Groq free/dev tier shut down llama-3.3-70b-versatile on 2026-08-16.
+ * Prefer openai/gpt-oss-120b (capable) with llama-3.1-8b-instant as ultra-fast option.
+ * Override via GROQ_MODEL.
+ */
+const DEFAULT_MODEL =
+  process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-120b";
 
 function isConfigured() {
   return Boolean(process.env.GROQ_API_KEY?.trim());
@@ -33,7 +38,7 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
     });
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      throw new Error(`Groq HTTP ${res.status}: ${errText.slice(0, 200)}`);
+      throw new Error(`Groq HTTP ${res.status}: ${errText.slice(0, 280)}`);
     }
     const data = (await res.json()) as {
       choices?: Array<{ message?: { content?: string } }>;

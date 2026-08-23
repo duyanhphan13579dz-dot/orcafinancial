@@ -1,6 +1,8 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
-const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL?.trim() || "claude-haiku-4-5";
+/** Prefer dated snapshot; alias claude-haiku-4-5 also works on some accounts. */
+const DEFAULT_MODEL =
+  process.env.ANTHROPIC_MODEL?.trim() || "claude-haiku-4-5-20251001";
 
 function isConfigured() {
   return Boolean(process.env.ANTHROPIC_API_KEY?.trim());
@@ -39,7 +41,7 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
     });
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      throw new Error(`Anthropic HTTP ${res.status}: ${errText.slice(0, 200)}`);
+      throw new Error(`Anthropic HTTP ${res.status}: ${errText.slice(0, 280)}`);
     }
     const data = (await res.json()) as {
       content?: Array<{ type: string; text?: string }>;
