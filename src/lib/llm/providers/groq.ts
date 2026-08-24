@@ -11,6 +11,8 @@ import type {
  * Production models currently preferred:
  * - openai/gpt-oss-120b
  * - openai/gpt-oss-20b
+ * - llama-3.3-70b-versatile (high free-tier headroom)
+ * - llama-3.1-8b-instant
  *
  * Env:
  * - GROQ_API_KEY
@@ -30,17 +32,8 @@ function modelCandidates(): string[] {
     process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-120b";
 
   /*
-   * Keep GPT-OSS models first.
-   *
-   * The previous implementation used:
-   *   [...].slice(0, 2)
-   *
-   * which accidentally prevented the third fallback model
-   * from ever being attempted.
-   *
-   * We intentionally do not depend on llama-3.1-8b-instant
-   * as the first fallback because the user's current Groq
-   * project returned HTTP 404 for that model.
+   * Prefer smaller / higher-quota models after the primary so a 429 on
+   * gpt-oss-120b does not waste the whole request.
    */
   const list = [
     primary,
@@ -62,6 +55,11 @@ function sleep(ms: number): Promise<void> {
 
 function isGptOssModel(model: string): boolean {
   return /^openai\/gpt-oss-(20b|120b)$/i.test(model.trim());
+}
+
+function isRateLimitError(status: number, body: string): boolean {
+  if (status === 429) return true;
+  return /rate.?limit|too many requests|tokens per (minute|day)/i.test(body);
 }
 
 type GroqMessage = {
@@ -133,19 +131,6 @@ async function chatOne(
   try {
     const isGptOss = isGptOssModel(model);
 
-    /*
-     * GPT-OSS is a reasoning model.
-     *
-     * The previous implementation only sent:
-     *   model/messages/max_tokens/temperature
-     *
-     * In the user's production test, GPT-OSS 120B returned HTTP 200
-     * but content was empty.
-     *
-     * We explicitly request hidden reasoning so the application
-     * receives the final answer in message.content without exposing
-     * internal reasoning to the user.
-     */
     const body: Record<string, unknown> = {
       model,
       messages: messages.map((m) => ({
@@ -175,29 +160,23 @@ async function chatOne(
     );
 
     /*
-     * Retry only transient provider errors.
-     *
-     * Do NOT retry 401/403/404/400 etc. against the same model.
+     * 429 / capacity: do NOT hammer the same model.
+     * One short pause then fail this model so the caller can try the next.
      */
     if (res.status === 429 || res.status === 503) {
       const errText = await res.text().catch(() => "");
 
-      if (attempt === 0) {
-        await sleep(500);
-        return chatOne(
-          apiKey,
-          model,
-          messages,
-          opts,
-          1,
-        );
+      if (attempt === 0 && res.status === 503) {
+        await sleep(350);
+        return chatOne(apiKey, model, messages, opts, 1);
       }
 
+      const kind = isRateLimitError(res.status, errText)
+        ? "rate_limited"
+        : "unavailable";
+
       throw new Error(
-        `Groq HTTP ${res.status} rate_limited (${model}): ${errText.slice(
-          0,
-          240,
-        )}`,
+        `Groq HTTP ${res.status} ${kind} (${model})`,
       );
     }
 
@@ -205,27 +184,24 @@ async function chatOne(
       const errText = await res.text().catch(() => "");
 
       throw new Error(
-        `Groq HTTP ${res.status} (${model}): ${errText.slice(
-          0,
-          320,
-        )}`,
+        `Groq HTTP ${res.status} (${model}): ${errText.slice(0, 200)}`,
       );
     }
 
     const data = (await res.json()) as GroqResponse;
 
     if (data.error?.message) {
+      const msg = data.error.message;
+      if (/rate.?limit/i.test(msg)) {
+        throw new Error(`Groq rate_limited (${model})`);
+      }
       throw new Error(
-        `Groq API (${model}): ${data.error.message.slice(0, 240)}`,
+        `Groq API (${model}): ${msg.slice(0, 180)}`,
       );
     }
 
     const extracted = extractAssistantText(data);
 
-    /*
-     * GPT-OSS can expose reasoning separately from the final answer.
-     * Never return reasoning as the assistant response.
-     */
     if (!extracted.text) {
       const details = [
         `Groq empty response (${model})`,
@@ -236,7 +212,7 @@ async function chatOne(
           ? "reasoning_present=true"
           : undefined,
         extracted.refusal
-          ? `refusal=${extracted.refusal.slice(0, 120)}`
+          ? `refusal=${extracted.refusal.slice(0, 80)}`
           : undefined,
       ]
         .filter(Boolean)
@@ -284,27 +260,28 @@ async function chat(
   }
 
   const errors: string[] = [];
+  let hitRateLimit = false;
 
   for (const model of modelCandidates()) {
     try {
-      return await chatOne(
-        apiKey,
-        model,
-        messages,
-        opts,
-        0,
-      );
+      return await chatOne(apiKey, model, messages, opts, 0);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : String(error);
+
+      if (/rate_limited|HTTP 429/i.test(message)) {
+        hitRateLimit = true;
+      }
 
       errors.push(message);
     }
   }
 
-  throw new Error(
-    errors.join(" | ") || "Groq failed",
-  );
+  const summary = hitRateLimit
+    ? `Groq rate_limited on all models: ${errors.map((e) => e.split("(")[0].trim()).join("; ")}`
+    : errors.join(" | ") || "Groq failed";
+
+  throw new Error(summary.slice(0, 400));
 }
 
 export const groqProvider: LlmProvider = {
