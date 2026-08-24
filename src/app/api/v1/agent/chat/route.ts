@@ -32,6 +32,7 @@ import {
   shouldCacheAgentAnswer,
   withAgentSingleFlight,
 } from "@/lib/agent/response-cache";
+import { enrichAgentWithCrypto } from "@/lib/agent/crypto-enrich";
 import { getDbHealth } from "@/db";
 import { logger } from "@/lib/logger";
 
@@ -177,7 +178,6 @@ function minimalAnalysis(symbol: string, quote: Quote): AnalysisResult {
   };
 }
 
-/** Parallel quote / history / news with tight budgets — partial OK. */
 async function buildSymbolContext(symbol: string): Promise<SymbolContext | null> {
   const to = Math.floor(Date.now() / 1000);
   const from = to - 86400 * 90;
@@ -223,7 +223,6 @@ function fmt(n: number | null | undefined, digits = 2): string {
   return n === null || n === undefined || !Number.isFinite(n) ? "n/a" : n.toFixed(digits);
 }
 
-/** Human-readable lines for rule-engine fallback when LLM is rate-limited. */
 function composeHumanDataSummary(contexts: SymbolContext[]): string {
   const lines: string[] = [];
   for (const c of contexts) {
@@ -252,6 +251,7 @@ function composeDataContext(
   corporateContext: string | null,
   playbookContext: string | null,
   sourceReports: SourceReport[],
+  cryptoBlock?: string,
 ): string {
   const parts: string[] = [];
   parts.push(`intent: ${intent}`);
@@ -299,6 +299,9 @@ function composeDataContext(
     }
     parts.push(`sentiment=${c.sentimentLabel} score=${c.sentimentScore.toFixed(2)}`);
   }
+  if (cryptoBlock?.trim()) {
+    parts.push(cryptoBlock.trim().slice(0, 4500));
+  }
   return parts.join("\n");
 }
 
@@ -310,7 +313,6 @@ function newRequestId(): string {
   }
 }
 
-/** Strip raw JSON / model ids from user-facing rate-limit hints. */
 function publicLlmHint(errors: string[] | undefined, transient: boolean): string {
   if (transient) {
     return (
@@ -441,7 +443,7 @@ export async function POST(req: NextRequest) {
     const needMarket = intent === "market_ticker" || intent === "market_overview";
     const playbookContext = retrievePlaybookContext(message, intent) || null;
 
-    const DATA_BUDGET_MS = 10_000;
+    const DATA_BUDGET_MS = 12_000;
 
     const dataStarted = Date.now();
     const [
@@ -450,6 +452,7 @@ export async function POST(req: NextRequest) {
       newsSettled,
       pfSettled,
       dnSettled,
+      cryptoEnrich,
     ] = await Promise.all([
       withTimeout(
         Promise.all(validated.map(buildSymbolContext)).then((list) =>
@@ -486,11 +489,22 @@ export async function POST(req: NextRequest) {
             value: null as string | null,
             report: { name: "corporate_finance", status: "skipped" as SourceStatus },
           }),
+      enrichAgentWithCrypto(message, [...candidates, ...validated]),
     ]);
 
     const contexts = Array.isArray(contextsSettled) ? contextsSettled : [];
     for (const c of contexts) allSources.push(...c.sources);
     allSources.push(marketSettled.report, newsSettled.report, pfSettled.report, dnSettled.report);
+
+    if (cryptoEnrich.block) {
+      allSources.push({
+        name: "crypto.intel",
+        status: "ok",
+        detail: cryptoEnrich.layersOk.join(",") || "partial",
+      });
+    } else if (cryptoEnrich.cryptoSymbols.length) {
+      allSources.push({ name: "crypto.intel", status: "empty" });
+    }
 
     const market = marketSettled.value;
     const newsRes = newsSettled.value;
@@ -510,15 +524,21 @@ export async function POST(req: NextRequest) {
       corporateContext,
       playbookContext,
       allSources,
+      cryptoEnrich.block,
     );
 
     const dbHealth = getDbHealth();
     const dataMs = Date.now() - dataStarted;
 
+    const responseSymbols = [
+      ...new Set([...validated, ...cryptoEnrich.cryptoSymbols]),
+    ];
+
     logger.info("agent_data_ready", {
       requestId,
       intent,
-      symbols: validated,
+      symbols: responseSymbols,
+      cryptoLayers: cryptoEnrich.layersOk,
       contextChars: dataContext.length,
       dataMs,
       sources: allSources.map((s) => `${s.name}:${s.status}${s.ms != null ? `(${s.ms}ms)` : ""}`),
@@ -527,7 +547,7 @@ export async function POST(req: NextRequest) {
     });
 
     const llmStarted = Date.now();
-    const produced = await withAgentSingleFlight(message, validated, async () => {
+    const produced = await withAgentSingleFlight(message, responseSymbols, async () => {
       const narrative = await agentNarrativeDetailed(message, dataContext, {
         followUp: isFollowUp,
       });
@@ -540,7 +560,7 @@ export async function POST(req: NextRequest) {
           answer,
           model,
           intent,
-          symbols: validated,
+          symbols: responseSymbols,
           cachedAt: Date.now(),
           _llmAttempted: narrative.attempted,
           _llmProvider: llmResult.provider,
@@ -549,9 +569,9 @@ export async function POST(req: NextRequest) {
         } as const;
       }
 
-      // Soft path: rate-limit / transient LLM failure but we already have market data
       const humanSummary = composeHumanDataSummary(contexts);
-      const softCtx = humanSummary || dataContext;
+      const softCtx =
+        [humanSummary, cryptoEnrich.block].filter(Boolean).join("\n") || dataContext;
       if (softCtx.length > 40) {
         const softAnswer = buildAdvisorFallback(message, softCtx);
         logger.warn("agent_llm_soft_fallback", {
@@ -564,7 +584,7 @@ export async function POST(req: NextRequest) {
           answer: softAnswer,
           model: "rule-engine/soft",
           intent,
-          symbols: validated,
+          symbols: responseSymbols,
           cachedAt: Date.now(),
           _llmAttempted: narrative.attempted,
           _llmProvider: null as string | null,
@@ -599,11 +619,11 @@ export async function POST(req: NextRequest) {
       shouldCacheAgentAnswer(intent, personalized, message) &&
       answer.length > 40
     ) {
-      void setCachedAgentAnswer(message, validated, {
+      void setCachedAgentAnswer(message, responseSymbols, {
         answer,
         model,
         intent,
-        symbols: validated,
+        symbols: responseSymbols,
       });
     }
 
@@ -654,7 +674,7 @@ export async function POST(req: NextRequest) {
       dataMs,
       llmMs,
       intent,
-      symbols: validated,
+      symbols: responseSymbols,
       model,
       llmProvider: (produced as { _llmProvider?: string | null })._llmProvider ?? null,
       dbStatus: dbHealth.status,
@@ -669,7 +689,9 @@ export async function POST(req: NextRequest) {
         answer,
         model,
         intent,
-        symbols: validated,
+        symbols: responseSymbols,
+        cryptoSymbols: cryptoEnrich.cryptoSymbols,
+        cryptoLayers: cryptoEnrich.layersOk,
         conversationId: saved.conversationId,
         historySaved: saved.saved,
         historyError: saved.error ?? null,
@@ -695,7 +717,7 @@ export async function POST(req: NextRequest) {
         source: soft ? "data-engine→rule-soft" : "data-engine→llm",
         confidence: soft
           ? 0.55
-          : contexts[0]?.analysis.confidence ?? 0.85,
+          : contexts[0]?.analysis.confidence ?? (cryptoEnrich.block ? 0.75 : 0.85),
         llmProvider: (produced as { _llmProvider?: string | null })._llmProvider ?? null,
         requestId,
       },
