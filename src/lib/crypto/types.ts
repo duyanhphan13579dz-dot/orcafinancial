@@ -234,7 +234,51 @@ export interface CryptoSentimentIntelligence {
   fetchedAt: string;
 }
 
-/** Unified object for AI + UI (Phase 0–4). */
+/* ─── Phase 5: Launchpad / Launchpool ─────────────────────────────────── */
+
+export type LaunchEventKind =
+  | "LAUNCHPOOL"
+  | "LAUNCHPAD"
+  | "SPOT_LISTING"
+  | "FUTURES_LISTING"
+  | "DELIST"
+  | "OTHER";
+
+export interface LaunchEvent {
+  id: string;
+  code: string;
+  title: string;
+  kind: LaunchEventKind;
+  status: "UPCOMING" | "ONGOING" | "RECENT" | "ENDED";
+  symbols: string[];
+  primarySymbol: string | null;
+  publishedAt: string;
+  publishedMs: number;
+  url: string;
+}
+
+export interface LaunchpadIntelligence {
+  summary: {
+    total: number;
+    launchpool: number;
+    launchpad: number;
+    spotListings: number;
+    futuresListings: number;
+    delistings: number;
+  };
+  highlights: LaunchEvent[];
+  launchpool: LaunchEvent[];
+  launchpad: LaunchEvent[];
+  listings: LaunchEvent[];
+  delistings: LaunchEvent[];
+  all: LaunchEvent[];
+  available: boolean;
+  errors: string[];
+  source: string;
+  fetchedAt: string;
+}
+
+/** Unified object for AI + UI (Phase 0–5). */
 export interface CryptoMarketSnapshot {
   symbol: string;
   name: string;
