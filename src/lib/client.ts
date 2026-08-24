@@ -17,6 +17,8 @@ interface CacheEntry {
 const DEFAULT_SOFT_TTL_MS = 15_000;
 const DEFAULT_HARD_TTL_MS = 5 * 60_000;
 const MAX_CACHE_ENTRIES = 80;
+/** Agent chat can take up to ~50s server-side; client must wait longer than that. */
+const DEFAULT_FETCH_TIMEOUT_MS = 55_000;
 
 const responseCache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<Envelope<unknown>>>();
@@ -53,6 +55,24 @@ export function invalidateApiCache(pathPrefix?: string) {
   }
 }
 
+function mapNetworkError(err: unknown, status?: number): Error {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/abort|timeout/i.test(msg)) {
+    return new Error(
+      "Yêu cầu quá lâu (timeout). Thử lại sau vài giây — server có thể đang lấy dữ liệu thị trường.",
+    );
+  }
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg)) {
+    return new Error(
+      "Không nhận được phản hồi từ server (Failed to fetch). Thường do timeout/deploy hoặc mất kết nối. Thử lại sau 5–10 giây.",
+    );
+  }
+  if (status === 504 || status === 502) {
+    return new Error(`Máy chủ quá tải (HTTP ${status}). Thử lại sau vài giây.`);
+  }
+  return err instanceof Error ? err : new Error(msg);
+}
+
 async function readEnvelope<T>(res: Response): Promise<Envelope<T>> {
   const text = await res.text();
   const trimmed = text.trim();
@@ -78,10 +98,13 @@ async function readEnvelope<T>(res: Response): Promise<Envelope<T>> {
 
 export async function api<T>(
   path: string,
-  init?: RequestInit & { skipCache?: boolean },
+  init?: RequestInit & { skipCache?: boolean; timeoutMs?: number },
 ): Promise<Envelope<T>> {
   const method = (init?.method ?? "GET").toUpperCase();
   const skipCache = init?.skipCache || method !== "GET";
+  const timeoutMs =
+    init?.timeoutMs ??
+    (path.includes("/agent/chat") ? DEFAULT_FETCH_TIMEOUT_MS : 30_000);
 
   if (!skipCache) {
     const existing = inflight.get(path);
@@ -89,22 +112,31 @@ export async function api<T>(
   }
 
   const run = (async (): Promise<Envelope<T>> => {
-    const res = await fetch(`/api/v1${path}`, {
-      ...init,
-      credentials: "include",
-      cache: skipCache ? "no-store" : init?.cache ?? "default",
-    });
-    const json = await readEnvelope<T>(res);
-    if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-
-    if (!skipCache) {
-      touchCache(path, {
-        data: json.data,
-        meta: json.meta ?? null,
-        fetchedAt: Date.now(),
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`/api/v1${path}`, {
+        ...init,
+        credentials: "include",
+        cache: skipCache ? "no-store" : init?.cache ?? "default",
+        signal: controller.signal,
       });
+      const json = await readEnvelope<T>(res);
+      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+
+      if (!skipCache) {
+        touchCache(path, {
+          data: json.data,
+          meta: json.meta ?? null,
+          fetchedAt: Date.now(),
+        });
+      }
+      return json;
+    } catch (err) {
+      throw mapNetworkError(err);
+    } finally {
+      clearTimeout(timer);
     }
-    return json;
   })();
 
   if (!skipCache) {
