@@ -242,11 +242,16 @@ export async function searchSymbols(query: string): Promise<SymbolInfo[]> {
   if (!q) return [];
 
   return cached(`search:v2:${q.toUpperCase()}`, 300_000, async () => {
-    const local = await db
-      .select()
-      .from(companies)
-      .where(or(ilike(companies.symbol, `${q}%`), ilike(companies.name, `%${q}%`)))
-      .limit(15);
+    let local: (typeof companies.$inferSelect)[] = [];
+    try {
+      local = await db
+        .select()
+        .from(companies)
+        .where(or(ilike(companies.symbol, `${q}%`), ilike(companies.name, `%${q}%`)))
+        .limit(15);
+    } catch (err) {
+      logger.warn("search_local_db_failed", { q, error: String(err) });
+    }
 
     const exact = local.find((c) => c.symbol.toUpperCase() === q.toUpperCase());
     if (exact && q.length <= 4) {
@@ -314,10 +319,14 @@ export async function searchSymbols(query: string): Promise<SymbolInfo[]> {
 }
 
 export async function getCompany(symbol: string): Promise<SymbolInfo | null> {
-  const rows = await db.select().from(companies).where(eq(companies.symbol, symbol)).limit(1);
-  if (rows.length > 0) {
-    const c = rows[0];
-    return { symbol: c.symbol, name: c.name, exchange: c.exchange, type: c.type, source: c.source };
+  try {
+    const rows = await db.select().from(companies).where(eq(companies.symbol, symbol)).limit(1);
+    if (rows.length > 0) {
+      const c = rows[0];
+      return { symbol: c.symbol, name: c.name, exchange: c.exchange, type: c.type, source: c.source };
+    }
+  } catch (err) {
+    logger.warn("get_company_db_failed", { symbol, error: String(err) });
   }
   try {
     const results = await searchSymbols(symbol);
@@ -353,7 +362,7 @@ export async function syncNews(): Promise<{ inserted: number; errors: string[] }
     const rows = await db.select({ symbol: companies.symbol }).from(companies);
     knownSymbols = new Set([...FEATURED_SYMBOLS, ...rows.map((r) => r.symbol)]);
   } catch {
-    // DB down
+    // DB down — still insert with featured symbols only
   }
 
   const chunkSize = CONNECTOR_CONFIG.newsInsertConcurrency;
@@ -415,6 +424,7 @@ function scheduleNewsSync(): void {
     });
 }
 
+/** Never throw on DB failure — Agent and news page keep working with empty/cached. */
 export async function getNews(opts: { page?: number; limit?: number; symbol?: string } = {}) {
   const page = Math.max(1, opts.page ?? 1);
   const limit = Math.min(50, Math.max(1, opts.limit ?? 20));
@@ -449,9 +459,12 @@ export async function getNews(opts: { page?: number; limit?: number; symbol?: st
     rows = rowResult;
     count = countResult[0]?.count ?? 0;
   } catch (err) {
-    logger.error("get_news_db_failed", { error: String(err) });
+    logger.warn("get_news_db_failed", { error: String(err) });
     if (hit) return hit.value;
-    throw err;
+    // Soft-fail: empty payload so Agent continues without news context
+    return { items: [], total: 0, page, limit, degraded: true } as NewsListPayload & {
+      degraded?: boolean;
+    };
   }
 
   if (rows.length === 0 && count === 0 && !opts.symbol) {
@@ -487,20 +500,28 @@ export async function getNewsSentiment(symbol: string) {
     scheduleNewsSync();
 
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const [rows, allRows] = await Promise.all([
-      db
-        .select({ sentiment: news.sentiment, title: news.title, publishedAt: news.publishedAt })
-        .from(news)
-        .where(
-          and(
-            gte(news.publishedAt, cutoff),
-            or(ilike(news.symbols, `%${symbol}%`), ilike(news.title, `%${symbol}%`)),
-          ),
-        )
-        .orderBy(desc(news.publishedAt))
-        .limit(20),
-      db.select({ sentiment: news.sentiment }).from(news).where(gte(news.publishedAt, cutoff)).limit(100),
-    ]);
+    let rows: { sentiment: number; title: string; publishedAt: Date }[] = [];
+    let allRows: { sentiment: number }[] = [];
+    try {
+      const [r1, r2] = await Promise.all([
+        db
+          .select({ sentiment: news.sentiment, title: news.title, publishedAt: news.publishedAt })
+          .from(news)
+          .where(
+            and(
+              gte(news.publishedAt, cutoff),
+              or(ilike(news.symbols, `%${symbol}%`), ilike(news.title, `%${symbol}%`)),
+            ),
+          )
+          .orderBy(desc(news.publishedAt))
+          .limit(20),
+        db.select({ sentiment: news.sentiment }).from(news).where(gte(news.publishedAt, cutoff)).limit(100),
+      ]);
+      rows = r1;
+      allRows = r2;
+    } catch (err) {
+      logger.warn("get_news_sentiment_db_failed", { symbol, error: String(err) });
+    }
 
     const headlines = rows.map((r) => r.title);
     const hybrid = await scoreSentimentHybrid(symbol, headlines);
