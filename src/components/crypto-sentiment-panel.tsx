@@ -5,9 +5,9 @@ import { api } from "@/lib/client";
 import type { CryptoSentimentIntelligence } from "@/lib/crypto/types";
 
 function severityClass(s: string): string {
-  if (s === "HIGH") return "border-rose-500/40 bg-rose-500/10 text-rose-300";
-  if (s === "MEDIUM") return "border-amber-500/40 bg-amber-500/10 text-amber-300";
-  return "border-slate-600 bg-slate-900/40 text-slate-300";
+  if (s === "HIGH") return "border-rose-500/30 bg-rose-500/10 text-rose-300";
+  if (s === "MEDIUM") return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+  return "border-slate-700/50 bg-slate-900/40 text-slate-300";
 }
 
 function labelClass(l: string): string {
@@ -18,6 +18,7 @@ function labelClass(l: string): string {
 
 export function CryptoSentimentPanel({ symbol }: { symbol: string }) {
   const [data, setData] = useState<CryptoSentimentIntelligence | null>(null);
+  const [open, setOpen] = useState(true);
 
   useEffect(() => {
     if (!symbol) return;
@@ -41,77 +42,82 @@ export function CryptoSentimentPanel({ symbol }: { symbol: string }) {
 
   if (!data?.available) {
     return (
-      <div className="panel p-4">
-        <h2 className="mb-3 font-semibold text-white">Social Sentiment</h2>
-        <div className="text-sm text-slate-500">Đang tải sentiment…</div>
-      </div>
+      <section className="panel overflow-hidden">
+        <div className="px-4 py-3">
+          <div className="text-sm font-semibold text-white">Social Sentiment</div>
+          <div className="mt-1 text-xs text-slate-500">Đang tải…</div>
+        </div>
+      </section>
     );
   }
 
   const d = data.distribution;
 
   return (
-    <div className="panel p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-semibold text-white">Social Sentiment</h2>
-        <span className="text-[10px] text-slate-500">
-          {d.sampleSize} headlines · {data.scoringSource}
-          {data.model ? ` · ${data.model}` : ""}
-        </span>
-      </div>
-
-      <div className="mb-3 flex items-end gap-3">
-        <div className={`text-3xl font-black ${labelClass(data.label)}`}>
-          {data.label}
-        </div>
-        <div className="mb-1 text-sm text-slate-400">
-          score {data.score.toFixed(3)} · conf {Math.round(data.confidence * 100)}%
-        </div>
-      </div>
-
-      <div className="mb-2 text-[10px] text-slate-500">
-        Bullish {d.bullishPct}% · Neutral {d.neutralPct}% · Bearish {d.bearishPct}%
-      </div>
-      <div className="mb-4 flex h-2.5 overflow-hidden rounded-full bg-slate-800">
-        <div className="bg-emerald-500/80" style={{ width: `${d.bullishPct}%` }} />
-        <div className="bg-slate-500/80" style={{ width: `${d.neutralPct}%` }} />
-        <div className="bg-rose-500/80" style={{ width: `${d.bearishPct}%` }} />
-      </div>
-
-      <div
-        className={`mb-4 rounded-lg border p-3 text-xs ${severityClass(data.divergence.severity)}`}
+    <section className="panel overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left hover:bg-white/[0.02]"
       >
-        <div className="font-semibold">
-          Divergence · {data.divergence.title}
-          <span className="ml-2 text-[10px] opacity-70">{data.divergence.severity}</span>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-sm font-semibold text-white">Social Sentiment</span>
+          <span className={`text-xs font-bold ${labelClass(data.label)}`}>{data.label}</span>
+          <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">
+            {d.sampleSize} news
+          </span>
         </div>
-        <p className="mt-1 opacity-90">{data.divergence.insight}</p>
-      </div>
+        <span className="text-xs text-slate-500">{open ? "▾" : "▸"}</span>
+      </button>
 
-      {data.headlines.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-            Headlines
+      {open && (
+        <div className="border-t border-slate-800/80 px-4 pb-4 pt-3">
+          <div className="mb-2 flex items-baseline gap-2">
+            <span className={`text-2xl font-black ${labelClass(data.label)}`}>{data.label}</span>
+            <span className="text-xs text-slate-500">
+              {data.score.toFixed(2)} · {Math.round(data.confidence * 100)}% conf
+            </span>
           </div>
-          {data.headlines.slice(0, 5).map((h, i) => (
-            <a
-              key={`${h.link}-${i}`}
-              href={h.link}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block rounded bg-slate-900/40 px-2 py-1.5 text-xs hover:bg-slate-800/60"
-            >
-              <span className={`mr-1.5 font-mono text-[10px] ${labelClass(h.lean)}`}>
-                {h.lean.slice(0, 4)}
-              </span>
-              <span className="text-slate-300">{h.title}</span>
-              <span className="mt-0.5 block text-[10px] text-slate-500">
-                {h.source}
-              </span>
-            </a>
-          ))}
+
+          <div className="mb-1 flex justify-between text-[10px] text-slate-500">
+            <span className="text-emerald-400/90">{d.bullishPct}%</span>
+            <span>{d.neutralPct}%</span>
+            <span className="text-rose-400/90">{d.bearishPct}%</span>
+          </div>
+          <div className="mb-3 flex h-1.5 overflow-hidden rounded-full bg-slate-800">
+            <div className="bg-emerald-500" style={{ width: `${d.bullishPct}%` }} />
+            <div className="bg-slate-500" style={{ width: `${d.neutralPct}%` }} />
+            <div className="bg-rose-500" style={{ width: `${d.bearishPct}%` }} />
+          </div>
+
+          <div className={`mb-3 rounded-lg border p-2.5 text-[11px] leading-relaxed ${severityClass(data.divergence.severity)}`}>
+            <div className="font-semibold">
+              {data.divergence.title}
+              <span className="ml-1.5 text-[9px] opacity-60">{data.divergence.severity}</span>
+            </div>
+            <p className="mt-1 line-clamp-3 opacity-90">{data.divergence.insight}</p>
+          </div>
+
+          {data.headlines.length > 0 && (
+            <div className="max-h-36 space-y-1 overflow-y-auto">
+              {data.headlines.slice(0, 4).map((h, i) => (
+                <a
+                  key={`${h.link}-${i}`}
+                  href={h.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block rounded-md bg-slate-900/50 px-2 py-1.5 text-[11px] transition hover:bg-slate-800/70"
+                >
+                  <span className={`mr-1.5 font-mono text-[9px] font-bold ${labelClass(h.lean)}`}>
+                    {h.lean.slice(0, 4)}
+                  </span>
+                  <span className="text-slate-300 line-clamp-1">{h.title}</span>
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       )}
-    </div>
+    </section>
   );
 }
