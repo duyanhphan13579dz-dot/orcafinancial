@@ -7,6 +7,11 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Bar } from "@/components/candle-chart";
+import {
+  FuturesPanel,
+  OrderFlowPanel,
+  WhalePanel,
+} from "@/components/crypto-intel-panels";
 import { CryptoSentimentPanel } from "@/components/crypto-sentiment-panel";
 import { api, changeColor, fmtNum, fmtPct } from "@/lib/client";
 import {
@@ -20,7 +25,7 @@ import type {
 } from "@/lib/crypto/types";
 
 const ChartSkeleton = () => (
-  <div className="h-[380px] w-full animate-pulse rounded-lg bg-slate-800/40" />
+  <div className="h-[360px] w-full animate-pulse rounded-lg bg-slate-800/40" />
 );
 
 const CandleChart = dynamic(
@@ -66,12 +71,6 @@ interface Analysis {
   disclaimer: string;
 }
 
-interface SentimentData {
-  score: number;
-  label: string;
-  articles?: Array<{ title: string; link: string; source: string; publishedAt: string }>;
-}
-
 interface Bundle {
   coin: Detail["coin"];
   price: Detail["price"];
@@ -79,62 +78,10 @@ interface Bundle {
   timeframe: string;
   source: string;
   analysis: Analysis | null;
-  sentiment: SentimentData | null;
   futures?: FuturesIntelligence | null;
 }
 
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
-
-function biasColor(bias: string): string {
-  if (bias.includes("LONG") || bias.includes("BUY") || bias.includes("ACCUM"))
-    return "text-emerald-400";
-  if (bias.includes("SHORT") || bias.includes("SELL") || bias.includes("DISTRIB"))
-    return "text-rose-400";
-  return "text-amber-300";
-}
-
-function biasLabel(bias: string): string {
-  const map: Record<string, string> = {
-    LONG_CROWDED: "LONG crowded",
-    SHORT_CROWDED: "SHORT crowded",
-    NEUTRAL: "NEUTRAL",
-    LONG_DOMINANT: "LONG dominant",
-    SHORT_DOMINANT: "SHORT dominant",
-    BALANCED: "Balanced",
-    LONG_BUILDUP: "Long buildup",
-    SHORT_BUILDUP: "Short buildup",
-    SHORT_COVERING: "Short covering",
-    LONG_LIQUIDATION: "Long liquidation",
-    BUY_DOMINANT: "Buy-side dominant",
-    SELL_DOMINANT: "Sell-side dominant",
-    ACCUMULATION: "Accumulation",
-    DISTRIBUTION: "Distribution",
-    UNKNOWN: "—",
-  };
-  return map[bias] ?? bias;
-}
-
-function fmtOiUsd(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "—";
-  const a = Math.abs(n);
-  const sign = n < 0 ? "-" : "";
-  if (a >= 1e9) return `${sign}$${(a / 1e9).toFixed(2)}B`;
-  if (a >= 1e6) return `${sign}$${(a / 1e6).toFixed(1)}M`;
-  if (a >= 1e3) return `${sign}$${(a / 1e3).toFixed(0)}K`;
-  return `${sign}$${fmtNum(a, 0)}`;
-}
-
-function fmtTime(ms: number): string {
-  try {
-    return new Date(ms).toLocaleTimeString("vi-VN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  } catch {
-    return "—";
-  }
-}
 
 export default function CryptoDetail() {
   const params = useParams();
@@ -143,7 +90,7 @@ export default function CryptoDetail() {
   const [timeframe, setTimeframe] = useState("1h");
   const [bundle, setBundle] = useState<Bundle | null>(null);
   const [bars, setBars] = useState<Bar[]>([]);
-  const [chartSource, setChartSource] = useState<string>("");
+  const [chartSource, setChartSource] = useState("");
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -177,7 +124,7 @@ export default function CryptoDetail() {
       .catch(async (err) => {
         if (cancelled) return;
         try {
-          const o = await api<{ symbol: string; timeframe: string; bars: Bar[] }>(
+          const o = await api<{ bars: Bar[] }>(
             `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(timeframe)}&limit=200`,
           );
           if (cancelled) return;
@@ -201,15 +148,13 @@ export default function CryptoDetail() {
             timeframe,
             source: String(o.meta?.source ?? "binance"),
             analysis: null,
-            sentiment: null,
             futures: null,
           });
           setError(null);
           void api<FuturesIntelligence>(`/crypto/${encodeURIComponent(symbol)}/futures`)
             .then((f) => {
-              if (!cancelled) {
+              if (!cancelled)
                 setBundle((prev) => (prev ? { ...prev, futures: f.data } : prev));
-              }
             })
             .catch(() => undefined);
         } catch {
@@ -268,7 +213,7 @@ export default function CryptoDetail() {
       setWsKline(null);
       setError(null);
       try {
-        const o = await api<{ symbol: string; timeframe: string; bars: Bar[] }>(
+        const o = await api<{ bars: Bar[] }>(
           `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(tf)}&limit=200`,
         );
         setBars(o.data.bars ?? []);
@@ -333,8 +278,7 @@ export default function CryptoDetail() {
   }, [bundle?.price, wsPrice]);
 
   const chartBars = useMemo(() => {
-    const historical = bars;
-    if (historical.length === 0 || !wsKline) return historical;
+    if (bars.length === 0 || !wsKline) return bars;
     const realtimeBar: Bar = {
       time: Math.floor(wsKline.startTime / 1000),
       open: wsKline.open,
@@ -343,381 +287,92 @@ export default function CryptoDetail() {
       close: wsKline.close,
       volume: wsKline.volume,
     };
-    const last = historical[historical.length - 1];
-    if (last && last.time === realtimeBar.time) {
-      return [...historical.slice(0, -1), realtimeBar];
-    }
-    if (last && realtimeBar.time > last.time) {
-      return [...historical, realtimeBar];
-    }
-    return historical;
+    const last = bars[bars.length - 1];
+    if (last && last.time === realtimeBar.time) return [...bars.slice(0, -1), realtimeBar];
+    if (last && realtimeBar.time > last.time) return [...bars, realtimeBar];
+    return bars;
   }, [bars, wsKline]);
 
   const coin = bundle?.coin;
   const analysis = bundle?.analysis;
   const futures = bundle?.futures;
-  const book = orderFlow?.orderBook;
 
-  const maxDepthNotional = useMemo(() => {
-    if (!book) return 1;
-    const all = [...book.bids, ...book.asks].map((l) => l.notional);
-    return Math.max(1, ...all);
-  }, [book]);
-
-  const maxZoneNotional = useMemo(() => {
-    const z = whaleLiq?.liquidation.zones ?? [];
-    if (!z.length) return 1;
-    return Math.max(1, ...z.map((x) => x.notionalEstimate));
-  }, [whaleLiq]);
-
-  const websocketText =
+  const live =
     wsStatus === "connected"
-      ? "BINANCE LIVE"
+      ? { text: "LIVE", cls: "bg-emerald-400 live-dot" }
       : wsStatus === "reconnecting"
-        ? "RECONNECTING"
-        : wsStatus === "connecting"
-          ? "CONNECTING"
-          : "REST FALLBACK";
+        ? { text: "RECONNECT", cls: "bg-amber-400" }
+        : { text: "REST", cls: "bg-slate-500" };
 
-  const websocketClass =
-    wsStatus === "connected"
-      ? "bg-emerald-400 live-dot"
-      : wsStatus === "reconnecting"
-        ? "bg-amber-400"
-        : "bg-slate-500";
-
-  const recommendationClass =
+  const recCls =
     analysis?.recommendation === "LONG"
-      ? "border-emerald-600 bg-emerald-500/10 text-emerald-300"
+      ? "border-emerald-600/60 bg-emerald-500/10 text-emerald-300"
       : analysis?.recommendation === "SHORT"
-        ? "border-rose-600 bg-rose-500/10 text-rose-300"
-        : "border-amber-600 bg-amber-500/10 text-amber-300";
+        ? "border-rose-600/60 bg-rose-500/10 text-rose-300"
+        : "border-amber-600/50 bg-amber-500/10 text-amber-300";
 
   return (
-    <div className="space-y-5">
-      <Link href="/crypto" className="text-xs text-[#00d4ff]">
+    <div className="space-y-4">
+      <Link href="/crypto" className="inline-block text-xs text-[#00d4ff] hover:underline">
         ← Thị trường Crypto
       </Link>
 
-      <div className="panel flex flex-wrap items-center gap-4 p-4">
+      {/* Header */}
+      <div className="panel flex flex-wrap items-center gap-3 p-4">
         {coin?.logoUrl ? (
           <Image
             src={coin.logoUrl}
             alt=""
-            width={48}
-            height={48}
-            className="h-12 w-12 rounded-full"
+            width={44}
+            height={44}
+            className="h-11 w-11 rounded-full"
             priority
           />
         ) : (
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#00d4ff]/15 font-bold text-[#00d4ff]">
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#00d4ff]/15 text-sm font-bold text-[#00d4ff]">
             {symbol.slice(0, 2)}
           </div>
         )}
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-black text-white">{coin?.name ?? symbol}</h1>
-            <span className="text-slate-500">{symbol}</span>
-            <span title={websocketText} className={`h-2 w-2 rounded-full ${websocketClass}`} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="truncate text-xl font-black text-white sm:text-2xl">
+              {coin?.name ?? symbol}
+            </h1>
+            <span className="text-sm text-slate-500">{symbol}</span>
+            <span title={live.text} className={`h-2 w-2 rounded-full ${live.cls}`} />
+            <span className="text-[10px] text-slate-500">{live.text}</span>
           </div>
-          <div className="mt-1 text-[10px] text-slate-500">
-            {(price?.source ?? chartSource) || "Binance"} · {websocketText}
+          <div className="mt-0.5 flex flex-wrap gap-x-3 text-[10px] text-slate-500">
+            <span>{price?.source ?? chartSource || "Binance"}</span>
+            {coin?.marketCapRank != null && <span>Rank #{coin.marketCapRank}</span>}
+            {price?.volume24h != null && <span>Vol {fmtNum(price.volume24h, 0)}</span>}
           </div>
         </div>
-        <div className="sm:ml-auto">
-          <div className="font-mono text-3xl font-black text-white">
+        <div className="text-right">
+          <div className="font-mono text-2xl font-black text-white sm:text-3xl">
             ${fmtNum(price?.price, price?.price && price.price < 1 ? 6 : 2)}
           </div>
-          <div className={`text-right font-bold ${changeColor(price?.change24h)}`}>
+          <div className={`text-sm font-bold ${changeColor(price?.change24h)}`}>
             {fmtPct(price?.change24h)}
           </div>
         </div>
       </div>
 
-      {futures?.available && (
-        <div className="panel p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="font-semibold text-white">Futures Intelligence</h2>
-            <span className="text-[10px] text-slate-500">
-              Binance Futures · {futures.binanceFuturesSymbol}
-            </span>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
-              <div className="text-[10px] uppercase tracking-wide text-slate-500">Funding Rate</div>
-              <div className="mt-1 font-mono text-xl font-bold text-white">
-                {futures.funding.ratePct != null
-                  ? `${futures.funding.ratePct >= 0 ? "+" : ""}${futures.funding.ratePct.toFixed(4)}%`
-                  : "—"}
-              </div>
-              <div className={`mt-1 text-xs font-semibold ${biasColor(futures.funding.bias)}`}>
-                {biasLabel(futures.funding.bias)}
-              </div>
-            </div>
-            <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
-              <div className="text-[10px] uppercase tracking-wide text-slate-500">Long / Short</div>
-              <div className="mt-1 font-mono text-xl font-bold text-white">
-                {futures.longShort.longAccountPct != null && futures.longShort.shortAccountPct != null
-                  ? `${futures.longShort.longAccountPct.toFixed(0)} / ${futures.longShort.shortAccountPct.toFixed(0)}`
-                  : "—"}
-              </div>
-              <div className="mt-1 flex items-center justify-between text-xs">
-                <span className={`font-semibold ${biasColor(futures.longShort.bias)}`}>
-                  {biasLabel(futures.longShort.bias)}
-                </span>
-                {futures.longShort.ratio != null && (
-                  <span className="font-mono text-slate-400">
-                    ratio {futures.longShort.ratio.toFixed(2)}
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
-              <div className="text-[10px] uppercase tracking-wide text-slate-500">Open Interest</div>
-              <div className="mt-1 font-mono text-xl font-bold text-white">
-                {fmtOiUsd(futures.openInterest.openInterestUsd)}
-              </div>
-              <div className="mt-1 flex items-center justify-between text-xs">
-                <span className={`font-semibold ${biasColor(futures.openInterest.setup)}`}>
-                  {biasLabel(futures.openInterest.setup)}
-                </span>
-                {futures.openInterest.changePct != null && (
-                  <span
-                    className={`font-mono ${
-                      futures.openInterest.changePct >= 0 ? "text-emerald-400" : "text-rose-400"
-                    }`}
-                  >
-                    {futures.openInterest.changePct >= 0 ? "+" : ""}
-                    {futures.openInterest.changePct.toFixed(2)}%
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="mt-3 space-y-1.5 rounded-lg bg-slate-900/30 p-3 text-xs text-slate-300">
-            <div className="font-semibold text-slate-400">OI + Price Analysis</div>
-            <p>{futures.openInterest.insight}</p>
-            <p className="text-slate-500">{futures.funding.insight}</p>
-            <p className="text-slate-500">{futures.longShort.insight}</p>
-          </div>
-        </div>
-      )}
-
-      {whaleLiq?.available && (
-        <div className="panel p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-semibold text-white">🐋 Whale & Liquidation</h2>
-            <span className="text-[10px] text-slate-500">
-              {whaleLiq.whale.windowMinutes} phút · ngưỡng {fmtOiUsd(whaleLiq.whaleThresholdUsd)} ·
-              refresh 30s
-            </span>
-          </div>
-          <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
-              <div className="text-[10px] uppercase text-slate-500">Whale Buy</div>
-              <div className="mt-1 font-mono text-lg font-bold text-emerald-400">
-                {fmtOiUsd(whaleLiq.whale.buyNotional)}
-              </div>
-              <div className="text-[10px] text-slate-500">{whaleLiq.whale.buyCount} lệnh</div>
-            </div>
-            <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
-              <div className="text-[10px] uppercase text-slate-500">Whale Sell</div>
-              <div className="mt-1 font-mono text-lg font-bold text-rose-400">
-                {fmtOiUsd(whaleLiq.whale.sellNotional)}
-              </div>
-              <div className="text-[10px] text-slate-500">{whaleLiq.whale.sellCount} lệnh</div>
-            </div>
-            <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
-              <div className="text-[10px] uppercase text-slate-500">Net flow</div>
-              <div
-                className={`mt-1 font-mono text-lg font-bold ${
-                  whaleLiq.whale.netFlow >= 0 ? "text-emerald-400" : "text-rose-400"
-                }`}
-              >
-                {whaleLiq.whale.netFlow >= 0 ? "+" : ""}
-                {fmtOiUsd(whaleLiq.whale.netFlow)}
-              </div>
-              <div className={`text-xs font-semibold ${biasColor(whaleLiq.whale.bias)}`}>
-                {biasLabel(whaleLiq.whale.bias)}
-              </div>
-            </div>
-          </div>
-          <p className="mb-4 text-xs text-slate-300">{whaleLiq.whale.insight}</p>
-          {whaleLiq.takerInsight && (
-            <p className="mb-4 text-xs text-slate-400">{whaleLiq.takerInsight}</p>
-          )}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div>
-              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                Liquidation zones (ước lượng)
-              </div>
-              {whaleLiq.liquidation.markPrice != null && (
-                <div className="mb-2 text-[10px] text-slate-500">
-                  Mark ≈ ${fmtNum(whaleLiq.liquidation.markPrice, 2)}
-                </div>
-              )}
-              <div className="space-y-1">
-                {whaleLiq.liquidation.zones.slice(0, 10).map((z, i) => {
-                  const above =
-                    whaleLiq.liquidation.markPrice != null &&
-                    z.price >= whaleLiq.liquidation.markPrice;
-                  const bar = Math.min(100, (z.notionalEstimate / maxZoneNotional) * 100);
-                  return (
-                    <div key={`${z.side}-${z.price}-${i}`} className="relative">
-                      <div className="relative flex items-center justify-between overflow-hidden rounded px-2 py-1 text-[11px] font-mono">
-                        <div
-                          className={`absolute inset-y-0 left-0 ${z.side === "SHORT" ? "bg-rose-500/20" : "bg-emerald-500/20"}`}
-                          style={{ width: `${bar}%` }}
-                        />
-                        <span className="relative z-10 text-slate-300">${fmtNum(z.price, 0)}</span>
-                        <span
-                          className={`relative z-10 ${
-                            z.side === "SHORT" ? "text-rose-400" : "text-emerald-400"
-                          }`}
-                        >
-                          {z.side === "SHORT" ? "🔴 shorts" : "🟢 longs"}{" "}
-                          {fmtOiUsd(z.notionalEstimate)}
-                        </span>
-                        <span className="relative z-10 text-slate-500">
-                          {above ? "↑" : "↓"}
-                          {Math.abs(z.distancePct).toFixed(1)}%
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="mt-2 text-[10px] text-slate-500">{whaleLiq.liquidation.insight}</p>
-            </div>
-            <div>
-              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                Whale events
-              </div>
-              <div className="max-h-[280px] space-y-0.5 overflow-y-auto font-mono text-[11px]">
-                {whaleLiq.whale.events.slice(0, 15).map((e, i) => (
-                  <div
-                    key={`${e.tradeId ?? "w"}-${e.time}-${i}`}
-                    className="flex items-center justify-between rounded px-1 py-0.5"
-                  >
-                    <span className="text-slate-500">
-                      {e.kind === "ORDER_WALL" ? "WALL" : fmtTime(e.time)}
-                    </span>
-                    <span className={e.side === "BUY" ? "text-emerald-400" : "text-rose-400"}>
-                      {e.kind === "WHALE" ? "🐋 " : e.kind === "ORDER_WALL" ? "🧱 " : ""}
-                      {e.side}
-                    </span>
-                    <span className="text-white">{fmtNum(e.price, 2)}</span>
-                    <span className="text-slate-400">{fmtOiUsd(e.notional)}</span>
-                  </div>
-                ))}
-                {whaleLiq.whale.events.length === 0 && (
-                  <div className="text-slate-500">Không có sự kiện whale trong cửa sổ.</div>
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="mt-3 rounded-lg bg-slate-900/30 p-3 text-xs text-slate-400">
-            <span className="font-semibold text-slate-300">Assessment: </span>
-            {whaleLiq.assessment}
-          </div>
-        </div>
-      )}
-
-      {orderFlow?.available && book && (
-        <div className="panel p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-semibold text-white">Order Flow</h2>
-            <span className="text-[10px] text-slate-500">
-              Depth + trades · refresh 5s · whale ≥ {fmtOiUsd(orderFlow.whaleThresholdUsd)}
-            </span>
-          </div>
-          <div className="mb-3 rounded-lg bg-slate-900/40 p-3">
-            <div className="mb-1 flex justify-between text-[10px] text-slate-500">
-              <span>Buy liquidity {book.imbalance.bidPct.toFixed(0)}%</span>
-              <span className={biasColor(book.imbalance.bias)}>
-                {biasLabel(book.imbalance.bias)}
-              </span>
-              <span>Sell liquidity {book.imbalance.askPct.toFixed(0)}%</span>
-            </div>
-            <div className="flex h-2 overflow-hidden rounded-full bg-slate-800">
-              <div className="bg-emerald-500/80" style={{ width: `${book.imbalance.bidPct}%` }} />
-              <div className="bg-rose-500/80" style={{ width: `${book.imbalance.askPct}%` }} />
-            </div>
-            <p className="mt-2 text-xs text-slate-400">{book.imbalance.insight}</p>
-          </div>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div>
-              <div className="mb-2 text-[10px] font-semibold uppercase text-rose-400">Asks</div>
-              <div className="space-y-0.5 font-mono text-[11px]">
-                {[...book.asks].reverse().slice(0, 8).map((lvl) => (
-                  <div key={`a-${lvl.price}`} className="relative flex justify-between rounded px-1 py-0.5">
-                    <div
-                      className="absolute inset-y-0 right-0 bg-rose-500/15"
-                      style={{ width: `${Math.min(100, (lvl.notional / maxDepthNotional) * 100)}%` }}
-                    />
-                    <span className="relative z-10 text-rose-300">{fmtNum(lvl.price, 2)}</span>
-                    <span className="relative z-10 text-slate-400">{fmtNum(lvl.qty, 4)}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="my-2 border-t border-dashed border-slate-700" />
-              <div className="mb-2 text-[10px] font-semibold uppercase text-emerald-400">Bids</div>
-              <div className="space-y-0.5 font-mono text-[11px]">
-                {book.bids.slice(0, 8).map((lvl) => (
-                  <div key={`b-${lvl.price}`} className="relative flex justify-between rounded px-1 py-0.5">
-                    <div
-                      className="absolute inset-y-0 right-0 bg-emerald-500/15"
-                      style={{ width: `${Math.min(100, (lvl.notional / maxDepthNotional) * 100)}%` }}
-                    />
-                    <span className="relative z-10 text-emerald-300">{fmtNum(lvl.price, 2)}</span>
-                    <span className="relative z-10 text-slate-400">{fmtNum(lvl.qty, 4)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <div className="mb-2 text-[10px] font-semibold uppercase text-slate-400">Recent trades</div>
-              <div className="max-h-[280px] space-y-0.5 overflow-y-auto font-mono text-[11px]">
-                {orderFlow.recentTrades.slice(0, 20).map((t) => (
-                  <div
-                    key={t.id}
-                    className={`flex justify-between rounded px-1 py-0.5 ${t.isWhale ? "bg-amber-500/10" : ""}`}
-                  >
-                    <span className="text-slate-500">{fmtTime(t.time)}</span>
-                    <span className={t.side === "BUY" ? "text-emerald-400" : "text-rose-400"}>
-                      {t.side}
-                      {t.isWhale ? " 🐋" : ""}
-                    </span>
-                    <span className="text-white">{fmtNum(t.price, 2)}</span>
-                    <span className="text-slate-500">{fmtOiUsd(t.notional)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="panel p-3">
-        <div className="mb-3 flex flex-wrap justify-between gap-2">
-          <div>
-            <h2 className="font-semibold text-white">Biểu đồ {symbol}</h2>
-            <div className="mt-1 text-[10px] text-slate-500">
-              {chartSource || "Binance"}
-              {chartLoading ? " · đang đổi khung…" : ""}
-            </div>
-          </div>
-          <div className="flex gap-1 overflow-x-auto">
+      {/* Chart first */}
+      <div className="panel p-3 sm:p-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-white">Chart · {symbol}</h2>
+          <div className="flex gap-0.5 overflow-x-auto rounded-lg bg-slate-900/60 p-0.5">
             {TIMEFRAMES.map((value) => (
               <button
                 key={value}
                 type="button"
                 onClick={() => onSelectTf(value)}
                 disabled={chartLoading && value === timeframe}
-                className={`min-h-9 rounded px-3 text-xs ${
+                className={`min-h-8 rounded-md px-2.5 text-xs font-medium transition ${
                   timeframe === value
                     ? "bg-[#00d4ff] text-[#0A2540]"
-                    : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                    : "text-slate-400 hover:bg-slate-800 hover:text-white"
                 }`}
               >
                 {value}
@@ -728,44 +383,63 @@ export default function CryptoDetail() {
         {loading && chartBars.length === 0 ? (
           <ChartSkeleton />
         ) : error && chartBars.length === 0 ? (
-          <div className="flex h-[380px] items-center justify-center text-sm text-rose-400">{error}</div>
+          <div className="flex h-[360px] items-center justify-center text-sm text-rose-400">
+            {error}
+          </div>
         ) : chartBars.length > 0 ? (
-          <div className={chartLoading ? "opacity-70 transition-opacity" : ""}>
-            <CandleChart bars={chartBars} height={380} />
+          <div className={chartLoading ? "opacity-60 transition-opacity" : ""}>
+            <CandleChart bars={chartBars} height={360} />
           </div>
         ) : (
-          <div className="flex h-[380px] items-center justify-center text-sm text-slate-500">
-            Không có dữ liệu OHLCV
+          <div className="flex h-[360px] items-center justify-center text-sm text-slate-500">
+            Không có OHLCV
           </div>
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <div className={`panel border p-4 ${recommendationClass}`}>
-          <div className="text-xs opacity-70">Khuyến nghị · {timeframe}</div>
+      {/* Intel grid 2×2 */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        {futures?.available && <FuturesPanel data={futures} />}
+        {whaleLiq?.available && <WhalePanel data={whaleLiq} />}
+        {orderFlow?.available && <OrderFlowPanel data={orderFlow} />}
+        <CryptoSentimentPanel symbol={symbol} />
+      </div>
+
+      {/* Analysis + market */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className={`panel border p-4 ${recCls}`}>
+          <div className="text-[10px] uppercase tracking-wide opacity-70">
+            Signal · {timeframe}
+          </div>
           <div className="mt-1 text-3xl font-black">{analysis?.recommendation ?? "—"}</div>
-          <div className="mt-1 text-sm">
-            Confidence: {analysis ? `${Math.round(analysis.confidence * 100)}%` : "—"}
+          <div className="mt-0.5 text-sm opacity-80">
+            {analysis ? `${Math.round(analysis.confidence * 100)}% confidence` : "—"}
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-y-2 text-xs">
-            <span className="opacity-60">Entry</span>
-            <span className="text-right font-mono">{fmtNum(analysis?.entryPrice, 6)}</span>
-            <span className="opacity-60">Stop Loss</span>
-            <span className="text-right font-mono">{fmtNum(analysis?.stopLoss, 6)}</span>
-            <span className="opacity-60">Take Profit</span>
-            <span className="text-right font-mono">{fmtNum(analysis?.takeProfit, 6)}</span>
+          <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px]">
+            <div>
+              <div className="opacity-60">Entry</div>
+              <div className="font-mono">{fmtNum(analysis?.entryPrice, 4)}</div>
+            </div>
+            <div>
+              <div className="opacity-60">SL</div>
+              <div className="font-mono">{fmtNum(analysis?.stopLoss, 4)}</div>
+            </div>
+            <div>
+              <div className="opacity-60">TP</div>
+              <div className="font-mono">{fmtNum(analysis?.takeProfit, 4)}</div>
+            </div>
           </div>
-          <ul className="mt-4 space-y-1 text-xs">
-            {(analysis?.reasons ?? []).slice(0, 6).map((reason, index) => (
-              <li key={index}>• {reason}</li>
+          <ul className="mt-3 max-h-24 space-y-0.5 overflow-y-auto text-[11px] opacity-90">
+            {(analysis?.reasons ?? []).slice(0, 5).map((r, i) => (
+              <li key={i}>· {r}</li>
             ))}
           </ul>
         </div>
 
         <div className="panel p-4">
-          <h2 className="mb-3 font-semibold text-white">Thông tin thị trường</h2>
-          <div className="grid grid-cols-2 gap-y-3 text-xs">
-            <span className="text-slate-500">Giá</span>
+          <h2 className="mb-3 text-sm font-semibold text-white">Market</h2>
+          <div className="grid grid-cols-2 gap-y-2.5 text-xs">
+            <span className="text-slate-500">Price</span>
             <span className="text-right font-mono text-white">{fmtNum(price?.price, 6)}</span>
             <span className="text-slate-500">Volume 24h</span>
             <span className="text-right font-mono text-white">{fmtNum(price?.volume24h, 0)}</span>
@@ -776,51 +450,52 @@ export default function CryptoDetail() {
           </div>
         </div>
 
-        {/* Phase 4 */}
-        <CryptoSentimentPanel symbol={symbol} />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="panel p-4">
-          <h2 className="mb-3 font-semibold text-white">Chỉ báo kỹ thuật</h2>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {analysis &&
-              Object.entries(analysis.indicators ?? {})
-                .filter(([, value]) => typeof value === "number" || value === null)
-                .map(([key, value]) => (
-                  <div key={key} className="rounded bg-slate-900/40 p-2 text-xs">
-                    <div className="text-slate-500">{key}</div>
-                    <div className="mt-1 font-mono text-white">
-                      {typeof value === "number" ? fmtNum(value, 5) : "—"}
-                    </div>
-                  </div>
-                ))}
-          </div>
-        </div>
-        <div className="panel p-4">
-          <h2 className="mb-3 font-semibold text-white">Mẫu hình gần đây</h2>
-          <div className="space-y-2 text-xs">
+        <div className="panel p-4 md:col-span-2 xl:col-span-1">
+          <h2 className="mb-3 text-sm font-semibold text-white">Patterns</h2>
+          <div className="max-h-36 space-y-1 overflow-y-auto text-xs">
             {[...(analysis?.chartPatterns ?? []), ...(analysis?.candlestickPatterns ?? [])]
-              .slice(0, 8)
-              .map((pattern, index) => (
-                <div key={index} className="flex justify-between rounded bg-slate-900/30 p-2">
-                  <span>{pattern.nameVi}</span>
+              .slice(0, 6)
+              .map((p, i) => (
+                <div key={i} className="flex justify-between rounded bg-slate-900/40 px-2 py-1.5">
+                  <span className="text-slate-300">{p.nameVi}</span>
                   <span
                     className={
-                      pattern.type === "bullish"
+                      p.type === "bullish"
                         ? "text-emerald-400"
-                        : pattern.type === "bearish"
+                        : p.type === "bearish"
                           ? "text-rose-400"
                           : "text-amber-400"
                     }
                   >
-                    {pattern.type} · {Math.round(pattern.reliability * 100)}%
+                    {Math.round(p.reliability * 100)}%
                   </span>
+                </div>
+              ))}
+            {!analysis?.chartPatterns?.length && !analysis?.candlestickPatterns?.length && (
+              <div className="text-slate-500">Chưa có mẫu hình</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Indicators */}
+      {analysis && (
+        <div className="panel p-4">
+          <h2 className="mb-3 text-sm font-semibold text-white">Technical indicators</h2>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+            {Object.entries(analysis.indicators ?? {})
+              .filter(([, v]) => typeof v === "number" || v === null)
+              .map(([key, value]) => (
+                <div key={key} className="rounded-lg bg-slate-900/50 px-2.5 py-2 text-xs">
+                  <div className="text-slate-500">{key}</div>
+                  <div className="mt-0.5 font-mono text-white">
+                    {typeof value === "number" ? fmtNum(value, 4) : "—"}
+                  </div>
                 </div>
               ))}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
