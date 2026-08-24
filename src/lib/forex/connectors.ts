@@ -15,6 +15,13 @@ import {
   secondaryOnlySnapshot,
   type PipelineResult,
 } from "./providers/pipeline";
+import {
+  classifyYahooError,
+  getYahooAuth,
+  invalidateYahooAuth,
+  yahooBrowserHeaders,
+  YAHOO_UA,
+} from "./providers/yahoo-auth";
 
 export type { ForexQuote };
 
@@ -22,9 +29,9 @@ const YAHOO1 = "yahoo-forex-primary";
 const YAHOO2 = "yahoo-forex-fallback";
 const log = forProvider("forex-connectors");
 
-const QUOTE_TIMEOUT_MS = 4_000;
+const QUOTE_TIMEOUT_MS = 5_000;
 const QUOTE_RETRIES = 0;
-const BARS_TIMEOUT_MS = 2_500;
+const BARS_TIMEOUT_MS = 3_000;
 const BARS_RETRIES = 0;
 const DERIVED_STALE_LEG_MS = 30_000;
 
@@ -38,6 +45,7 @@ interface YahooChart {
   chart: {
     result?: Array<{
       meta: {
+        symbol?: string;
         regularMarketPrice?: number;
         previousClose?: number;
         chartPreviousClose?: number;
@@ -56,7 +64,7 @@ interface YahooChart {
         }>;
       };
     }>;
-    error?: { description?: string } | null;
+    error?: { description?: string; code?: string } | null;
   };
 }
 
@@ -72,7 +80,11 @@ interface YahooQuoteBatch {
       ask?: number;
       previousClose?: number;
     }>;
-    error?: unknown;
+    error?: { code?: string; description?: string } | null;
+  };
+  finance?: {
+    result?: unknown;
+    error?: { code?: string; description?: string } | null;
   };
 }
 
@@ -133,19 +145,93 @@ function deriveValue(def: ForexPairDef, map: Map<string, ForexQuote>): ForexQuot
   };
 }
 
-async function fetchBatchQuotes(base: string, provider: string): Promise<Map<string, ForexQuote>> {
+function applyDerived(map: Map<string, ForexQuote>) {
+  for (const def of FOREX_PAIRS) {
+    if (!def.derived) continue;
+    const q = deriveValue(def, map);
+    if (q) map.set(def.symbol, q);
+  }
+}
+
+async function readYahooJson<T>(
+  res: Response,
+  provider: string,
+  url: string,
+): Promise<T> {
+  const text = await res.text();
+  if (!res.ok) {
+    const cls = classifyYahooError(res.status, text);
+    if (cls.retryAuth) invalidateYahooAuth();
+    throw new ProviderError(provider, cls.message, {
+      status: res.status,
+      code: cls.code,
+      retryAuth: cls.retryAuth,
+      snippet: text.slice(0, 200),
+    });
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ProviderError(provider, `JSON parse failed for ${url}`, {
+      snippet: text.slice(0, 200),
+    });
+  }
+}
+
+async function fetchBatchQuotesOnce(
+  base: string,
+  provider: string,
+  forceAuthRefresh: boolean,
+): Promise<Map<string, ForexQuote>> {
   const direct = FOREX_PAIRS.filter((p) => p.yahooSymbol);
   const symbols = direct.map((p) => p.yahooSymbol!).join(",");
-  const url = `${base}/v7/finance/quote?symbols=${encodeURIComponent(symbols)}`;
-  const res = await fetchWithRetry(url, {
-    provider,
-    timeoutMs: QUOTE_TIMEOUT_MS,
-    retries: QUOTE_RETRIES,
+
+  let auth = await getYahooAuth({
+    forceRefresh: forceAuthRefresh,
+    preferHost: base.includes("query2") ? "query2" : "query1",
+  }).catch((e) => {
+    log.warn("yahoo_auth_unavailable", {
+      provider,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return null;
   });
-  const data = await readJsonSafe<YahooQuoteBatch>(res, provider, url);
+
+  const crumbQs = auth?.crumb ? `&crumb=${encodeURIComponent(auth.crumb)}` : "";
+  const url = `${base}/v7/finance/quote?symbols=${encodeURIComponent(symbols)}${crumbQs}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      ...yahooBrowserHeaders(auth),
+      "User-Agent": YAHOO_UA,
+    },
+    cache: "no-store",
+    signal: AbortSignal.timeout(QUOTE_TIMEOUT_MS),
+  });
+
+  const data = await readYahooJson<YahooQuoteBatch>(res, provider, url);
+
+  // Some Yahoo responses nest error under finance
+  const apiErr =
+    data.quoteResponse?.error ??
+    data.finance?.error ??
+    null;
+  if (apiErr?.description) {
+    const cls = classifyYahooError(401, apiErr.description);
+    if (cls.retryAuth) invalidateYahooAuth();
+    throw new ProviderError(provider, cls.message, {
+      code: cls.code,
+      retryAuth: cls.retryAuth,
+      description: apiErr.description,
+    });
+  }
+
   const results = data.quoteResponse?.result ?? [];
   if (!results.length) {
-    throw new ProviderError(provider, "Yahoo batch quote returned empty result");
+    throw new ProviderError(provider, "Yahoo batch quote returned empty result", {
+      code: "EMPTY",
+    });
   }
 
   const byYahoo = new Map(direct.map((p) => [p.yahooSymbol!, p]));
@@ -178,27 +264,131 @@ async function fetchBatchQuotes(base: string, provider: string): Promise<Map<str
   }
 
   if (map.size === 0) {
-    throw new ProviderError(provider, "Yahoo batch quote had no valid prices");
+    throw new ProviderError(provider, "Yahoo batch quote had no valid prices", {
+      code: "EMPTY",
+    });
   }
 
-  for (const def of FOREX_PAIRS) {
-    if (!def.derived) continue;
-    const q = deriveValue(def, map);
-    if (q) map.set(def.symbol, q);
-  }
-
+  applyDerived(map);
   log.info("yahoo_batch_quote_ok", {
     provider,
     requested: direct.length,
     received: map.size,
+    authed: Boolean(auth),
   });
-
   return map;
+}
+
+async function fetchBatchQuotes(
+  base: string,
+  provider: string,
+): Promise<Map<string, ForexQuote>> {
+  try {
+    return await fetchBatchQuotesOnce(base, provider, false);
+  } catch (err) {
+    const retryAuth =
+      err instanceof ProviderError &&
+      (err.meta?.retryAuth === true || err.meta?.code === "INVALID_CRUMB");
+    if (retryAuth) {
+      log.warn("yahoo_quote_retry_with_fresh_auth", { provider });
+      invalidateYahooAuth();
+      return fetchBatchQuotesOnce(base, provider, true);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Fallback when /v7/quote fails: pull regularMarketPrice from chart meta
+ * (v8 chart usually does not require crumb).
+ */
+async function fetchQuotesFromChartMeta(
+  base: string,
+  provider: string,
+): Promise<Map<string, ForexQuote>> {
+  const direct = FOREX_PAIRS.filter((p) => p.yahooSymbol);
+  const auth = await getYahooAuth({
+    preferHost: base.includes("query2") ? "query2" : "query1",
+  }).catch(() => null);
+
+  const map = new Map<string, ForexQuote>();
+  const concurrency = 4;
+  const queue = [...direct];
+
+  async function worker() {
+    while (queue.length) {
+      const def = queue.shift()!;
+      try {
+        const url = `${base}/v8/finance/chart/${encodeURIComponent(
+          def.yahooSymbol!,
+        )}?interval=1d&range=5d`;
+        const res = await fetch(url, {
+          headers: yahooBrowserHeaders(auth),
+          cache: "no-store",
+          signal: AbortSignal.timeout(BARS_TIMEOUT_MS),
+        });
+        if (!res.ok) continue;
+        const data = (await res.json()) as YahooChart;
+        const meta = data.chart.result?.[0]?.meta;
+        const price = meta?.regularMarketPrice;
+        if (typeof price !== "number" || !Number.isFinite(price) || price <= 0) continue;
+        const prev =
+          typeof meta?.previousClose === "number"
+            ? meta.previousClose
+            : typeof meta?.chartPreviousClose === "number"
+              ? meta.chartPreviousClose
+              : null;
+        const change = prev !== null ? price - prev : null;
+        map.set(def.symbol, {
+          symbol: def.symbol,
+          price,
+          bid: typeof meta?.bid === "number" && meta.bid > 0 ? meta.bid : null,
+          ask: typeof meta?.ask === "number" && meta.ask > 0 ? meta.ask : null,
+          change,
+          changePercent: prev ? ((price - prev) / prev) * 100 : null,
+          source: `${provider}-chart-meta`,
+          timestamp: new Date((meta?.regularMarketTime ?? Date.now() / 1000) * 1000),
+          degraded: true,
+        });
+      } catch {
+        // skip symbol
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, direct.length) }, () => worker()),
+  );
+
+  if (map.size < 3) {
+    throw new ProviderError(provider, `chart-meta fallback only ${map.size} quotes`);
+  }
+
+  applyDerived(map);
+  log.info("yahoo_chart_meta_fallback_ok", { provider, count: map.size });
+  return map;
+}
+
+async function fetchYahooQuotesWithFallback(
+  base: string,
+  provider: string,
+): Promise<Map<string, ForexQuote>> {
+  try {
+    return await fetchBatchQuotes(base, provider);
+  } catch (batchErr) {
+    log.warn("yahoo_batch_failed_trying_chart_meta", {
+      provider,
+      error: batchErr instanceof Error ? batchErr.message : String(batchErr),
+    });
+    return fetchQuotesFromChartMeta(base, provider);
+  }
 }
 
 async function fetchYahooPrimary(): Promise<{ quotes: ForexQuote[]; source: string }> {
   const tryHost = async (base: string, provider: string) => {
-    const map = await getBreaker(provider).exec(() => fetchBatchQuotes(base, provider));
+    const map = await getBreaker(provider).exec(() =>
+      fetchYahooQuotesWithFallback(base, provider),
+    );
     const quotes = FOREX_PAIRS.map((p) => map.get(p.symbol)).filter(
       (q): q is ForexQuote => Boolean(q),
     );
@@ -233,12 +423,6 @@ async function fetchYahooPrimary(): Promise<{ quotes: ForexQuote[]; source: stri
   });
 }
 
-/**
- * Multi-source snapshot:
- * 1. Yahoo primary race
- * 2. Enrich + cross-check with secondary (open.er-api / Frankfurter)
- * 3. If Yahoo dead → secondary-only fallback
- */
 export async function fetchForexSnapshot(): Promise<ForexSnapshotResult> {
   try {
     const primary = await fetchYahooPrimary();
@@ -310,15 +494,25 @@ async function fetchDirectBars(
 ): Promise<Ohlcv[]> {
   const p = yahooParams(tf, limit);
   const url = `${base}/v8/finance/chart/${encodeURIComponent(def.yahooSymbol!)}?interval=${p.interval}&range=${p.range}`;
-  const res = await fetchWithRetry(url, {
-    provider,
-    timeoutMs: BARS_TIMEOUT_MS,
-    retries: BARS_RETRIES,
+
+  const auth = await getYahooAuth({
+    preferHost: base.includes("query2") ? "query2" : "query1",
+  }).catch(() => null);
+
+  const res = await fetch(url, {
+    headers: yahooBrowserHeaders(auth),
+    cache: "no-store",
+    signal: AbortSignal.timeout(BARS_TIMEOUT_MS),
   });
-  const data = await readJsonSafe<YahooChart>(res, provider, url);
+
+  const data = await readYahooJson<YahooChart>(res, provider, url);
   const r = data.chart.result?.[0];
   const q = r?.indicators.quote?.[0];
-  if (!r?.timestamp || !q) throw new ProviderError(provider, `No OHLC for ${def.symbol}`);
+  if (!r?.timestamp || !q) {
+    const desc = data.chart.error?.description ?? `No OHLC for ${def.symbol}`;
+    throw new ProviderError(provider, desc, { code: data.chart.error?.code });
+  }
+
   const bars: Ohlcv[] = [];
   for (let i = 0; i < r.timestamp.length; i++) {
     const valid = DataValidator.ohlcv(
