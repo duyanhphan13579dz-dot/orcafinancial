@@ -185,7 +185,56 @@ export interface WhaleLiquidationIntelligence {
   fetchedAt: string;
 }
 
-/** Unified object for AI + UI (Phase 0–3). */
+/* ─── Phase 4: Sentiment + Divergence ─────────────────────────────────── */
+
+export type SentimentLabel = "BULLISH" | "BEARISH" | "NEUTRAL";
+
+export interface SentimentDistribution {
+  bullishPct: number;
+  neutralPct: number;
+  bearishPct: number;
+  sampleSize: number;
+}
+
+export interface SentimentDivergence {
+  code:
+    | "CROWDED_LONG"
+    | "SHORT_BUILDUP"
+    | "BULLISH_DIVERGENCE"
+    | "BEARISH_DIVERGENCE"
+    | "SHORT_SQUEEZE_RISK"
+    | "ALIGNED_BULLISH"
+    | "ALIGNED_BEARISH"
+    | "NEUTRAL";
+  severity: "HIGH" | "MEDIUM" | "LOW";
+  title: string;
+  insight: string;
+}
+
+export interface CryptoSentimentIntelligence {
+  symbol: string;
+  label: SentimentLabel;
+  score: number;
+  confidence: number;
+  distribution: SentimentDistribution;
+  divergence: SentimentDivergence;
+  headlines: Array<{
+    title: string;
+    link: string;
+    source: string;
+    publishedAt: string;
+    lean: SentimentLabel;
+  }>;
+  rationale: string;
+  scoringSource: string;
+  model: string | null;
+  displayLabel: string;
+  available: boolean;
+  errors: string[];
+  fetchedAt: string;
+}
+
+/** Unified object for AI + UI (Phase 0–4). */
 export interface CryptoMarketSnapshot {
   symbol: string;
   name: string;
@@ -193,6 +242,7 @@ export interface CryptoMarketSnapshot {
   futures: FuturesIntelligence | null;
   orderFlow?: OrderFlowIntelligence | null;
   whaleLiquidation?: WhaleLiquidationIntelligence | null;
+  sentimentIntel?: CryptoSentimentIntelligence | null;
   sentiment: {
     score: number | null;
     label: string | null;
