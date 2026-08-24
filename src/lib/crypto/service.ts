@@ -17,6 +17,8 @@ import {
 } from "./connectors";
 import { analyzeCrypto } from "./analysis";
 import { scoreCryptoSentimentHybrid } from "./sentiment-hybrid";
+import { fetchFuturesIntelligence } from "./futures";
+import type { CryptoMarketSnapshot, FuturesIntelligence } from "./types";
 import { forProvider } from "@/lib/logger";
 import type { Ohlcv } from "@/lib/connectors/core";
 
@@ -60,6 +62,7 @@ const FRESHNESS_CACHE_TTL = 5_000;
 const LATEST_PRICES_CACHE_TTL = 8_000;
 const COIN_CACHE_TTL = 3_000;
 const USD_VND_CACHE_TTL = 10 * 60_000;
+const FUTURES_CACHE_TTL = 20_000;
 
 const OHLCV_SOFT_TTL: Record<string, number> = {
   "1m": 15_000, "5m": 30_000, "15m": 60_000,
@@ -84,6 +87,7 @@ const sentimentCache = new Map<
 >();
 const coinCache = new Map<string, CacheEntry<CryptoCoinDetail>>();
 const latestPricesCache = new Map<number, CacheEntry<unknown[]>>();
+const futuresCache = new Map<string, CacheEntry<FuturesIntelligence>>();
 
 let freshnessCache: CacheEntry<{
   refreshed: boolean; latestAt?: string; source?: string;
@@ -240,10 +244,6 @@ export async function syncCryptoMarket(limit = 100, syncAllCoins = false) {
   return syncPromises[key]!;
 }
 
-/**
- * Freshness helper — does NOT block on full market ingest when DB already has rows.
- * Cold DB (no prices) still awaits one sync so list is not empty.
- */
 export async function ensureCryptoFresh(maxAgeMs = 15_000) {
   if (freshnessCache && Date.now() - freshnessCache.timestamp < FRESHNESS_CACHE_TTL) {
     return freshnessCache.value;
@@ -612,6 +612,77 @@ export async function runCryptoAnalysis(symbol: string, timeframe = "1h") {
   };
 }
 
+/** Cached futures intelligence (Phase 1). */
+export async function getCryptoFutures(
+  symbol: string,
+  change24h?: number | null,
+): Promise<FuturesIntelligence> {
+  const normalized = normalizeSymbol(symbol);
+  const cached = futuresCache.get(normalized);
+  if (cached && Date.now() - cached.timestamp < FUTURES_CACHE_TTL) {
+    return cached.value;
+  }
+  const data = await fetchFuturesIntelligence(normalized, change24h ?? null);
+  futuresCache.set(normalized, { value: data, timestamp: Date.now() });
+  return data;
+}
+
+/** Phase 0 unified snapshot for AI / dashboards. */
+export async function getCryptoMarketSnapshot(
+  symbol: string,
+  timeframe = "1h",
+): Promise<CryptoMarketSnapshot> {
+  const sym = normalizeSymbol(symbol);
+  const [detail, analysis, sentiment, futures] = await Promise.all([
+    getCryptoCoin(sym).catch(() => null),
+    runCryptoAnalysis(sym, timeframe).catch(() => null),
+    getLatestCryptoSentiment(sym).catch(() => null),
+    getCryptoFutures(
+      sym,
+      undefined,
+    ).catch(() => null),
+  ]);
+
+  const change24h =
+    detail?.price?.change24h != null ? Number(detail.price.change24h) : null;
+
+  let futuresFinal = futures;
+  if (futures && change24h != null && futures.openInterest.priceChangePct == null) {
+    futuresFinal = await getCryptoFutures(sym, change24h).catch(() => futures);
+  }
+
+  return {
+    symbol: sym,
+    name: detail?.coin.name ?? sym,
+    spot: {
+      price: detail?.price?.price ?? null,
+      change24h,
+      volume24h: detail?.price?.volume24h ?? null,
+      marketCap: detail?.price?.marketCap ?? null,
+      source: detail?.price?.source ?? null,
+      timestamp: detail?.price?.timestamp
+        ? new Date(detail.price.timestamp).toISOString()
+        : null,
+    },
+    futures: futuresFinal,
+    sentiment: sentiment
+      ? {
+          score: Number(sentiment.score),
+          label: String(sentiment.label ?? ""),
+          source: sentiment.source ?? null,
+        }
+      : null,
+    technical: analysis
+      ? {
+          recommendation: analysis.recommendation,
+          confidence: analysis.confidence,
+          reasons: analysis.reasons ?? [],
+        }
+      : null,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 export async function getCryptoDetailBundle(symbol: string, timeframe = "1h", limit = 200) {
   const sym = normalizeSymbol(symbol);
   if (isStablecoin(sym)) {
@@ -628,6 +699,15 @@ export async function getCryptoDetailBundle(symbol: string, timeframe = "1h", li
     runCryptoAnalysis(sym, timeframe).catch(() => null),
     getLatestCryptoSentiment(sym).catch(() => null),
   ]);
+
+  const change24h =
+    detail?.price?.change24h != null ? Number(detail.price.change24h) : null;
+
+  const futures = await getCryptoFutures(sym, change24h).catch((err) => {
+    log.warn("futures_bundle_failed", { symbol: sym, error: String(err) });
+    return null;
+  });
+
   return {
     coin: detail?.coin ?? ohlcv.coin,
     price: detail?.price ?? null,
@@ -636,6 +716,7 @@ export async function getCryptoDetailBundle(symbol: string, timeframe = "1h", li
     source: ohlcv.source,
     analysis,
     sentiment,
+    futures,
   };
 }
 
