@@ -7,6 +7,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Bar } from "@/components/candle-chart";
+import { CryptoSentimentPanel } from "@/components/crypto-sentiment-panel";
 import { api, changeColor, fmtNum, fmtPct } from "@/lib/client";
 import {
   createBinanceWebSocket,
@@ -85,17 +86,9 @@ interface Bundle {
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
 function biasColor(bias: string): string {
-  if (
-    bias.includes("LONG") ||
-    bias.includes("BUY") ||
-    bias.includes("ACCUM")
-  )
+  if (bias.includes("LONG") || bias.includes("BUY") || bias.includes("ACCUM"))
     return "text-emerald-400";
-  if (
-    bias.includes("SHORT") ||
-    bias.includes("SELL") ||
-    bias.includes("DISTRIB")
-  )
+  if (bias.includes("SHORT") || bias.includes("SELL") || bias.includes("DISTRIB"))
     return "text-rose-400";
   return "text-amber-300";
 }
@@ -250,14 +243,11 @@ export default function CryptoDetail() {
     };
   }, [symbol]);
 
-  // Phase 3 — whale + liquidation every 30s
   useEffect(() => {
     if (!symbol) return;
     let cancelled = false;
     const load = () => {
-      void api<WhaleLiquidationIntelligence>(
-        `/crypto/${encodeURIComponent(symbol)}/whale`,
-      )
+      void api<WhaleLiquidationIntelligence>(`/crypto/${encodeURIComponent(symbol)}/whale`)
         .then((r) => {
           if (!cancelled) setWhaleLiq(r.data);
         })
@@ -365,7 +355,6 @@ export default function CryptoDetail() {
 
   const coin = bundle?.coin;
   const analysis = bundle?.analysis;
-  const sentiment = bundle?.sentiment;
   const futures = bundle?.futures;
   const book = orderFlow?.orderBook;
 
@@ -514,7 +503,6 @@ export default function CryptoDetail() {
         </div>
       )}
 
-      {/* Phase 3 — Whale + Liquidation */}
       {whaleLiq?.available && (
         <div className="panel p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -524,7 +512,6 @@ export default function CryptoDetail() {
               refresh 30s
             </span>
           </div>
-
           <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
               <div className="text-[10px] uppercase text-slate-500">Whale Buy</div>
@@ -555,12 +542,10 @@ export default function CryptoDetail() {
               </div>
             </div>
           </div>
-
           <p className="mb-4 text-xs text-slate-300">{whaleLiq.whale.insight}</p>
           {whaleLiq.takerInsight && (
             <p className="mb-4 text-xs text-slate-400">{whaleLiq.takerInsight}</p>
           )}
-
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div>
               <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
@@ -576,10 +561,7 @@ export default function CryptoDetail() {
                   const above =
                     whaleLiq.liquidation.markPrice != null &&
                     z.price >= whaleLiq.liquidation.markPrice;
-                  const bar = Math.min(
-                    100,
-                    (z.notionalEstimate / maxZoneNotional) * 100,
-                  );
+                  const bar = Math.min(100, (z.notionalEstimate / maxZoneNotional) * 100);
                   return (
                     <div key={`${z.side}-${z.price}-${i}`} className="relative">
                       <div className="relative flex items-center justify-between overflow-hidden rounded px-2 py-1 text-[11px] font-mono">
@@ -587,9 +569,7 @@ export default function CryptoDetail() {
                           className={`absolute inset-y-0 left-0 ${z.side === "SHORT" ? "bg-rose-500/20" : "bg-emerald-500/20"}`}
                           style={{ width: `${bar}%` }}
                         />
-                        <span className="relative z-10 text-slate-300">
-                          ${fmtNum(z.price, 0)}
-                        </span>
+                        <span className="relative z-10 text-slate-300">${fmtNum(z.price, 0)}</span>
                         <span
                           className={`relative z-10 ${
                             z.side === "SHORT" ? "text-rose-400" : "text-emerald-400"
@@ -609,7 +589,6 @@ export default function CryptoDetail() {
               </div>
               <p className="mt-2 text-[10px] text-slate-500">{whaleLiq.liquidation.insight}</p>
             </div>
-
             <div>
               <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
                 Whale events
@@ -623,16 +602,8 @@ export default function CryptoDetail() {
                     <span className="text-slate-500">
                       {e.kind === "ORDER_WALL" ? "WALL" : fmtTime(e.time)}
                     </span>
-                    <span
-                      className={
-                        e.side === "BUY" ? "text-emerald-400" : "text-rose-400"
-                      }
-                    >
-                      {e.kind === "WHALE"
-                        ? "🐋 "
-                        : e.kind === "ORDER_WALL"
-                          ? "🧱 "
-                          : ""}
+                    <span className={e.side === "BUY" ? "text-emerald-400" : "text-rose-400"}>
+                      {e.kind === "WHALE" ? "🐋 " : e.kind === "ORDER_WALL" ? "🧱 " : ""}
                       {e.side}
                     </span>
                     <span className="text-white">{fmtNum(e.price, 2)}</span>
@@ -645,7 +616,6 @@ export default function CryptoDetail() {
               </div>
             </div>
           </div>
-
           <div className="mt-3 rounded-lg bg-slate-900/30 p-3 text-xs text-slate-400">
             <span className="font-semibold text-slate-300">Assessment: </span>
             {whaleLiq.assessment}
@@ -653,7 +623,7 @@ export default function CryptoDetail() {
         </div>
       )}
 
-      {orderFlow?.available && (
+      {orderFlow?.available && book && (
         <div className="panel p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold text-white">Order Flow</h2>
@@ -661,129 +631,70 @@ export default function CryptoDetail() {
               Depth + trades · refresh 5s · whale ≥ {fmtOiUsd(orderFlow.whaleThresholdUsd)}
             </span>
           </div>
-
-          {book && (
-            <>
-              <div className="mb-3 rounded-lg bg-slate-900/40 p-3">
-                <div className="mb-1 flex justify-between text-[10px] text-slate-500">
-                  <span>Buy liquidity {book.imbalance.bidPct.toFixed(0)}%</span>
-                  <span className={biasColor(book.imbalance.bias)}>
-                    {biasLabel(book.imbalance.bias)}
-                  </span>
-                  <span>Sell liquidity {book.imbalance.askPct.toFixed(0)}%</span>
-                </div>
-                <div className="flex h-2 overflow-hidden rounded-full bg-slate-800">
-                  <div
-                    className="bg-emerald-500/80 transition-all"
-                    style={{ width: `${book.imbalance.bidPct}%` }}
-                  />
-                  <div
-                    className="bg-rose-500/80 transition-all"
-                    style={{ width: `${book.imbalance.askPct}%` }}
-                  />
-                </div>
-                <p className="mt-2 text-xs text-slate-400">{book.imbalance.insight}</p>
-                {book.spreadBps != null && (
-                  <p className="mt-1 text-[10px] text-slate-500">
-                    Spread {book.spreadBps.toFixed(1)} bps · best {fmtNum(book.bestBid, 2)} /{" "}
-                    {fmtNum(book.bestAsk, 2)}
-                  </p>
-                )}
+          <div className="mb-3 rounded-lg bg-slate-900/40 p-3">
+            <div className="mb-1 flex justify-between text-[10px] text-slate-500">
+              <span>Buy liquidity {book.imbalance.bidPct.toFixed(0)}%</span>
+              <span className={biasColor(book.imbalance.bias)}>
+                {biasLabel(book.imbalance.bias)}
+              </span>
+              <span>Sell liquidity {book.imbalance.askPct.toFixed(0)}%</span>
+            </div>
+            <div className="flex h-2 overflow-hidden rounded-full bg-slate-800">
+              <div className="bg-emerald-500/80" style={{ width: `${book.imbalance.bidPct}%` }} />
+              <div className="bg-rose-500/80" style={{ width: `${book.imbalance.askPct}%` }} />
+            </div>
+            <p className="mt-2 text-xs text-slate-400">{book.imbalance.insight}</p>
+          </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div>
+              <div className="mb-2 text-[10px] font-semibold uppercase text-rose-400">Asks</div>
+              <div className="space-y-0.5 font-mono text-[11px]">
+                {[...book.asks].reverse().slice(0, 8).map((lvl) => (
+                  <div key={`a-${lvl.price}`} className="relative flex justify-between rounded px-1 py-0.5">
+                    <div
+                      className="absolute inset-y-0 right-0 bg-rose-500/15"
+                      style={{ width: `${Math.min(100, (lvl.notional / maxDepthNotional) * 100)}%` }}
+                    />
+                    <span className="relative z-10 text-rose-300">{fmtNum(lvl.price, 2)}</span>
+                    <span className="relative z-10 text-slate-400">{fmtNum(lvl.qty, 4)}</span>
+                  </div>
+                ))}
               </div>
-
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <div>
-                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-rose-400">
-                    Asks (Sell)
+              <div className="my-2 border-t border-dashed border-slate-700" />
+              <div className="mb-2 text-[10px] font-semibold uppercase text-emerald-400">Bids</div>
+              <div className="space-y-0.5 font-mono text-[11px]">
+                {book.bids.slice(0, 8).map((lvl) => (
+                  <div key={`b-${lvl.price}`} className="relative flex justify-between rounded px-1 py-0.5">
+                    <div
+                      className="absolute inset-y-0 right-0 bg-emerald-500/15"
+                      style={{ width: `${Math.min(100, (lvl.notional / maxDepthNotional) * 100)}%` }}
+                    />
+                    <span className="relative z-10 text-emerald-300">{fmtNum(lvl.price, 2)}</span>
+                    <span className="relative z-10 text-slate-400">{fmtNum(lvl.qty, 4)}</span>
                   </div>
-                  <div className="space-y-0.5 font-mono text-[11px]">
-                    {[...book.asks].reverse().slice(0, 10).map((lvl) => {
-                      const isWall = book.sellWalls.some(
-                        (w) => Math.abs(w.price - lvl.price) < lvl.price * 1e-8,
-                      );
-                      return (
-                        <div
-                          key={`a-${lvl.price}`}
-                          className={`relative flex justify-between overflow-hidden rounded px-1 py-0.5 ${isWall ? "ring-1 ring-rose-500/50" : ""}`}
-                        >
-                          <div
-                            className="absolute inset-y-0 right-0 bg-rose-500/15"
-                            style={{
-                              width: `${Math.min(100, (lvl.notional / maxDepthNotional) * 100)}%`,
-                            }}
-                          />
-                          <span className="relative z-10 text-rose-300">{fmtNum(lvl.price, 2)}</span>
-                          <span className="relative z-10 text-slate-400">{fmtNum(lvl.qty, 4)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="my-2 border-t border-dashed border-slate-700" />
-                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
-                    Bids (Buy)
-                  </div>
-                  <div className="space-y-0.5 font-mono text-[11px]">
-                    {book.bids.slice(0, 10).map((lvl) => {
-                      const isWall = book.buyWalls.some(
-                        (w) => Math.abs(w.price - lvl.price) < lvl.price * 1e-8,
-                      );
-                      return (
-                        <div
-                          key={`b-${lvl.price}`}
-                          className={`relative flex justify-between overflow-hidden rounded px-1 py-0.5 ${isWall ? "ring-1 ring-emerald-500/50" : ""}`}
-                        >
-                          <div
-                            className="absolute inset-y-0 right-0 bg-emerald-500/15"
-                            style={{
-                              width: `${Math.min(100, (lvl.notional / maxDepthNotional) * 100)}%`,
-                            }}
-                          />
-                          <span className="relative z-10 text-emerald-300">{fmtNum(lvl.price, 2)}</span>
-                          <span className="relative z-10 text-slate-400">{fmtNum(lvl.qty, 4)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                      Recent trades
-                    </div>
-                    {(orderFlow.whaleSummary.buyCount > 0 ||
-                      orderFlow.whaleSummary.sellCount > 0) && (
-                      <div className="text-[10px] text-amber-300">
-                        🐋 net {fmtOiUsd(orderFlow.whaleSummary.netFlow)} (B
-                        {orderFlow.whaleSummary.buyCount}/S{orderFlow.whaleSummary.sellCount})
-                      </div>
-                    )}
-                  </div>
-                  <div className="max-h-[320px] space-y-0.5 overflow-y-auto font-mono text-[11px]">
-                    {orderFlow.recentTrades.slice(0, 25).map((t) => (
-                      <div
-                        key={t.id}
-                        className={`flex items-center justify-between rounded px-1 py-0.5 ${t.isWhale ? "bg-amber-500/10 ring-1 ring-amber-500/30" : ""}`}
-                      >
-                        <span className="text-slate-500">{fmtTime(t.time)}</span>
-                        <span
-                          className={
-                            t.side === "BUY" ? "text-emerald-400" : "text-rose-400"
-                          }
-                        >
-                          {t.side}
-                          {t.isWhale ? " 🐋" : ""}
-                        </span>
-                        <span className="text-white">{fmtNum(t.price, 2)}</span>
-                        <span className="text-slate-400">{fmtNum(t.qty, 4)}</span>
-                        <span className="text-slate-500">{fmtOiUsd(t.notional)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                ))}
               </div>
-            </>
-          )}
+            </div>
+            <div>
+              <div className="mb-2 text-[10px] font-semibold uppercase text-slate-400">Recent trades</div>
+              <div className="max-h-[280px] space-y-0.5 overflow-y-auto font-mono text-[11px]">
+                {orderFlow.recentTrades.slice(0, 20).map((t) => (
+                  <div
+                    key={t.id}
+                    className={`flex justify-between rounded px-1 py-0.5 ${t.isWhale ? "bg-amber-500/10" : ""}`}
+                  >
+                    <span className="text-slate-500">{fmtTime(t.time)}</span>
+                    <span className={t.side === "BUY" ? "text-emerald-400" : "text-rose-400"}>
+                      {t.side}
+                      {t.isWhale ? " 🐋" : ""}
+                    </span>
+                    <span className="text-white">{fmtNum(t.price, 2)}</span>
+                    <span className="text-slate-500">{fmtOiUsd(t.notional)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -814,7 +725,6 @@ export default function CryptoDetail() {
             ))}
           </div>
         </div>
-
         {loading && chartBars.length === 0 ? (
           <ChartSkeleton />
         ) : error && chartBars.length === 0 ? (
@@ -828,9 +738,6 @@ export default function CryptoDetail() {
             Không có dữ liệu OHLCV
           </div>
         )}
-        {error && chartBars.length > 0 && (
-          <div className="mt-2 text-[10px] text-amber-400">Khung mới: {error} — đang giữ chart cũ.</div>
-        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -838,8 +745,7 @@ export default function CryptoDetail() {
           <div className="text-xs opacity-70">Khuyến nghị · {timeframe}</div>
           <div className="mt-1 text-3xl font-black">{analysis?.recommendation ?? "—"}</div>
           <div className="mt-1 text-sm">
-            Confidence:{" "}
-            {analysis ? `${Math.round(analysis.confidence * 100)}%` : "—"}
+            Confidence: {analysis ? `${Math.round(analysis.confidence * 100)}%` : "—"}
           </div>
           <div className="mt-4 grid grid-cols-2 gap-y-2 text-xs">
             <span className="opacity-60">Entry</span>
@@ -854,10 +760,6 @@ export default function CryptoDetail() {
               <li key={index}>• {reason}</li>
             ))}
           </ul>
-          <div className="mt-4 text-[9px] opacity-60">
-            {analysis?.disclaimer ??
-              "Chỉ là tín hiệu định lượng tham khảo, không phải lời khuyên đầu tư."}
-          </div>
         </div>
 
         <div className="panel p-4">
@@ -874,13 +776,8 @@ export default function CryptoDetail() {
           </div>
         </div>
 
-        <div className="panel p-4">
-          <h2 className="mb-3 font-semibold text-white">Sentiment</h2>
-          <div className="text-3xl font-black text-white">{sentiment ? sentiment.label : "—"}</div>
-          <div className="mt-1 text-sm text-slate-400">
-            Score: {sentiment ? sentiment.score.toFixed(3) : "—"}
-          </div>
-        </div>
+        {/* Phase 4 */}
+        <CryptoSentimentPanel symbol={symbol} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -906,10 +803,7 @@ export default function CryptoDetail() {
             {[...(analysis?.chartPatterns ?? []), ...(analysis?.candlestickPatterns ?? [])]
               .slice(0, 8)
               .map((pattern, index) => (
-                <div
-                  key={index}
-                  className="flex justify-between rounded bg-slate-900/30 p-2"
-                >
+                <div key={index} className="flex justify-between rounded bg-slate-900/30 p-2">
                   <span>{pattern.nameVi}</span>
                   <span
                     className={
