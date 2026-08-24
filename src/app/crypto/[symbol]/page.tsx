@@ -19,6 +19,7 @@ import {
   createBinanceWebSocket,
   type BinanceKline,
 } from "@/lib/crypto/binance-websocket";
+import { computeLeverageLevels } from "@/lib/crypto/leverage-levels";
 import type {
   FuturesIntelligence,
   OrderFlowIntelligence,
@@ -83,6 +84,7 @@ interface Bundle {
 }
 
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
+const LEVERAGE_PRESETS = [0, 5, 10, 20, 50, 100, 125, 200, 500];
 
 export default function CryptoDetail() {
   const params = useParams();
@@ -102,6 +104,7 @@ export default function CryptoDetail() {
   const [wsKline, setWsKline] = useState<BinanceKline | null>(null);
   const [orderFlow, setOrderFlow] = useState<OrderFlowIntelligence | null>(null);
   const [whaleLiq, setWhaleLiq] = useState<WhaleLiquidationIntelligence | null>(null);
+  const [leverage, setLeverage] = useState(10);
 
   const initialDone = useRef(false);
 
@@ -298,6 +301,18 @@ export default function CryptoDetail() {
   const analysis = bundle?.analysis;
   const futures = bundle?.futures;
 
+  const levLevels = useMemo(() => {
+    if (!analysis || !Number.isFinite(analysis.entryPrice)) return null;
+    return computeLeverageLevels({
+      recommendation: analysis.recommendation,
+      entryPrice: analysis.entryPrice,
+      stopLoss: analysis.stopLoss,
+      takeProfit: analysis.takeProfit,
+      markPrice: price?.price ?? null,
+      leverage,
+    });
+  }, [analysis, leverage, price?.price]);
+
   const sourceLabel = price?.source ?? chartSource ?? "Binance";
 
   const live =
@@ -313,6 +328,9 @@ export default function CryptoDetail() {
       : analysis?.recommendation === "SHORT"
         ? "border-rose-600/60 bg-rose-500/10 text-rose-300"
         : "border-amber-600/50 bg-amber-500/10 text-amber-300";
+
+  const pxDigits = (v: number | null | undefined) =>
+    v != null && v < 1 ? 6 : v != null && v < 100 ? 4 : 2;
 
   return (
     <div className="space-y-4">
@@ -408,27 +426,100 @@ export default function CryptoDetail() {
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         <div className={`panel border p-4 ${recCls}`}>
-          <div className="text-[10px] uppercase tracking-wide opacity-70">
-            Signal · {timeframe}
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <div className="text-[10px] uppercase tracking-wide opacity-70">
+                Signal · {timeframe}
+              </div>
+              <div className="mt-1 text-3xl font-black">{analysis?.recommendation ?? "—"}</div>
+              <div className="mt-0.5 text-sm opacity-80">
+                {analysis ? `${Math.round(analysis.confidence * 100)}% confidence` : "—"}
+              </div>
+            </div>
+            <div className="rounded-lg bg-black/20 px-2.5 py-1 text-right">
+              <div className="text-[9px] uppercase opacity-60">Leverage</div>
+              <div className="font-mono text-lg font-black tabular-nums">
+                {leverage <= 0 ? "Spot" : `${leverage}×`}
+              </div>
+            </div>
           </div>
-          <div className="mt-1 text-3xl font-black">{analysis?.recommendation ?? "—"}</div>
-          <div className="mt-0.5 text-sm opacity-80">
-            {analysis ? `${Math.round(analysis.confidence * 100)}% confidence` : "—"}
+
+          {/* Leverage slider */}
+          <div className="mt-3 space-y-1.5">
+            <div className="flex items-center justify-between text-[10px] opacity-70">
+              <span>Đòn bẩy</span>
+              <span className="font-mono">0 → 500×</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={500}
+              step={1}
+              value={leverage}
+              onChange={(e) => setLeverage(Number(e.target.value))}
+              className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-800 accent-[#00d4ff]"
+              aria-label="Đòn bẩy"
+            />
+            <div className="flex flex-wrap gap-1">
+              {LEVERAGE_PRESETS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setLeverage(p)}
+                  className={`rounded px-1.5 py-0.5 font-mono text-[10px] transition ${
+                    leverage === p
+                      ? "bg-[#00d4ff]/25 text-[#00d4ff]"
+                      : "bg-black/20 text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {p === 0 ? "Spot" : `${p}×`}
+                </button>
+              ))}
+            </div>
           </div>
+
           <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px]">
             <div>
               <div className="opacity-60">Entry</div>
-              <div className="font-mono">{fmtNum(analysis?.entryPrice, 4)}</div>
+              <div className="font-mono text-sm font-semibold">
+                {fmtNum(levLevels?.entry ?? analysis?.entryPrice, pxDigits(levLevels?.entry ?? analysis?.entryPrice))}
+              </div>
             </div>
             <div>
               <div className="opacity-60">SL</div>
-              <div className="font-mono">{fmtNum(analysis?.stopLoss, 4)}</div>
+              <div className="font-mono text-sm font-semibold text-rose-300/90">
+                {fmtNum(levLevels?.stopLoss ?? analysis?.stopLoss, pxDigits(levLevels?.stopLoss ?? analysis?.stopLoss))}
+              </div>
+              {levLevels?.slPct != null && (
+                <div className="text-[9px] opacity-60">{levLevels.slPct.toFixed(2)}%</div>
+              )}
             </div>
             <div>
               <div className="opacity-60">TP</div>
-              <div className="font-mono">{fmtNum(analysis?.takeProfit, 4)}</div>
+              <div className="font-mono text-sm font-semibold text-emerald-300/90">
+                {fmtNum(levLevels?.takeProfit ?? analysis?.takeProfit, pxDigits(levLevels?.takeProfit ?? analysis?.takeProfit))}
+              </div>
+              {levLevels?.tpPct != null && (
+                <div className="text-[9px] opacity-60">{levLevels.tpPct.toFixed(2)}%</div>
+              )}
             </div>
           </div>
+
+          {levLevels?.liquidation != null && leverage > 0 && (
+            <div className="mt-2 flex items-center justify-between rounded-md bg-black/25 px-2 py-1.5 text-[10px]">
+              <span className="opacity-60">Est. liquidation</span>
+              <span className="font-mono text-amber-300">
+                {fmtNum(levLevels.liquidation, pxDigits(levLevels.liquidation))}
+              </span>
+            </div>
+          )}
+
+          {levLevels?.riskReward != null && (
+            <div className="mt-1 text-[10px] opacity-70">
+              R:R ≈ 1:{levLevels.riskReward.toFixed(1)} · {levLevels.note}
+            </div>
+          )}
+
           <ul className="mt-3 max-h-24 space-y-0.5 overflow-y-auto text-[11px] opacity-90">
             {(analysis?.reasons ?? []).slice(0, 5).map((r, i) => (
               <li key={i}>· {r}</li>
