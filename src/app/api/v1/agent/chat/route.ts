@@ -12,6 +12,7 @@ import {
   llmEnvDiagnostics,
   smoothAgentAnswer,
   agentNarrativeDetailed,
+  buildAdvisorFallback,
 } from "@/lib/llm";
 import {
   getHistory,
@@ -222,6 +223,25 @@ function fmt(n: number | null | undefined, digits = 2): string {
   return n === null || n === undefined || !Number.isFinite(n) ? "n/a" : n.toFixed(digits);
 }
 
+/** Human-readable lines for rule-engine fallback when LLM is rate-limited. */
+function composeHumanDataSummary(contexts: SymbolContext[]): string {
+  const lines: string[] = [];
+  for (const c of contexts) {
+    const a = c.analysis;
+    lines.push(
+      `Với ${c.symbol}, khuyến nghị kỹ thuật ${a.recommendation} (độ tin cậy ${(a.confidence * 100).toFixed(0)}%). ` +
+        `Giá ${fmt(a.lastClose)}, 1D ${fmt(a.changePct1d)}%, 1M ${fmt(a.changePct1m)}%.` +
+        (a.rsi14 != null ? ` RSI(14) ${fmt(a.rsi14, 1)}.` : ""),
+    );
+    if (c.fundamental) {
+      lines.push(
+        `Sức khỏe tài chính ${c.fundamental.financialHealth.rating} (điểm ${c.fundamental.financialHealth.overallScore}).`,
+      );
+    }
+  }
+  return lines.join(" ");
+}
+
 function composeDataContext(
   message: string,
   intent: AgentIntent,
@@ -288,6 +308,21 @@ function newRequestId(): string {
   } catch {
     return `r${Date.now().toString(36)}`;
   }
+}
+
+/** Strip raw JSON / model ids from user-facing rate-limit hints. */
+function publicLlmHint(errors: string[] | undefined, transient: boolean): string {
+  if (transient) {
+    return (
+      "Hệ thống AI đang quá tải tạm thời (giới hạn tốc độ của nhà cung cấp). " +
+      "Bạn thử lại sau khoảng 10–20 giây, hoặc hỏi lại câu ngắn hơn."
+    );
+  }
+  const raw = errors?.[0] ?? "";
+  if (/api.?key|not configured|missing/i.test(raw)) {
+    return "Chưa cấu hình hoặc khóa API LLM không hợp lệ. Kiểm tra GROQ_API_KEY / OPENROUTER_API_KEY trên Vercel.";
+  }
+  return "Không kết nối được mô hình AI lúc này. Vui lòng thử lại sau ít phút.";
 }
 
 export async function POST(req: NextRequest) {
@@ -406,7 +441,6 @@ export async function POST(req: NextRequest) {
     const needMarket = intent === "market_ticker" || intent === "market_overview";
     const playbookContext = retrievePlaybookContext(message, intent) || null;
 
-    // Parallel data plane — hard budget so serverless stays under maxDuration
     const DATA_BUDGET_MS = 10_000;
 
     const dataStarted = Date.now();
@@ -499,42 +533,72 @@ export async function POST(req: NextRequest) {
       });
       const llmResult = narrative.result;
 
-      if (!llmResult?.text?.trim()) {
-        logger.error("agent_llm_unavailable", {
-          requestId,
-          errors: narrative.errors.slice(0, 4),
-          attempted: narrative.attempted,
-          transient: narrative.transient,
-        });
-        throw Object.assign(new Error("LLM_FAILED"), {
-          llmErrors: narrative.errors,
-          llmAttempted: narrative.attempted,
-          keysPresent: envDiag.keysPresent,
-          transient: narrative.transient,
-        });
+      if (llmResult?.text?.trim()) {
+        const answer = smoothAgentAnswer(llmResult.text);
+        const model = `${llmResult.provider}/${llmResult.model}`;
+        return {
+          answer,
+          model,
+          intent,
+          symbols: validated,
+          cachedAt: Date.now(),
+          _llmAttempted: narrative.attempted,
+          _llmProvider: llmResult.provider,
+          _llmMs: Date.now() - llmStarted,
+          _soft: false,
+        } as const;
       }
 
-      const answer = smoothAgentAnswer(llmResult.text);
-      const model = `${llmResult.provider}/${llmResult.model}`;
+      // Soft path: rate-limit / transient LLM failure but we already have market data
+      const humanSummary = composeHumanDataSummary(contexts);
+      const softCtx = humanSummary || dataContext;
+      if (softCtx.length > 40) {
+        const softAnswer = buildAdvisorFallback(message, softCtx);
+        logger.warn("agent_llm_soft_fallback", {
+          requestId,
+          transient: narrative.transient,
+          errors: narrative.errors.slice(0, 3),
+          attempted: narrative.attempted,
+        });
+        return {
+          answer: softAnswer,
+          model: "rule-engine/soft",
+          intent,
+          symbols: validated,
+          cachedAt: Date.now(),
+          _llmAttempted: narrative.attempted,
+          _llmProvider: null as string | null,
+          _llmMs: Date.now() - llmStarted,
+          _soft: true,
+          _llmErrors: narrative.errors,
+        } as const;
+      }
 
-      return {
-        answer,
-        model,
-        intent,
-        symbols: validated,
-        cachedAt: Date.now(),
-        _llmAttempted: narrative.attempted,
-        _llmProvider: llmResult.provider,
-        _llmMs: Date.now() - llmStarted,
-      } as const;
+      logger.error("agent_llm_unavailable", {
+        requestId,
+        errors: narrative.errors.slice(0, 4),
+        attempted: narrative.attempted,
+        transient: narrative.transient,
+      });
+      throw Object.assign(new Error("LLM_FAILED"), {
+        llmErrors: narrative.errors,
+        llmAttempted: narrative.attempted,
+        keysPresent: envDiag.keysPresent,
+        transient: narrative.transient,
+      });
     });
 
     const answer = produced.answer;
     const model = produced.model;
     const latencyMs = Date.now() - started;
     const llmMs = (produced as { _llmMs?: number })._llmMs ?? null;
+    const soft = Boolean((produced as { _soft?: boolean })._soft);
 
-    if (shouldCacheAgentAnswer(intent, personalized, message) && answer.length > 40) {
+    if (
+      !soft &&
+      shouldCacheAgentAnswer(intent, personalized, message) &&
+      answer.length > 40
+    ) {
       void setCachedAgentAnswer(message, validated, {
         answer,
         model,
@@ -548,7 +612,6 @@ export async function POST(req: NextRequest) {
       req.cookies.get("refreshToken")?.value?.slice(0, 64) ??
       authedUser.id.slice(0, 64);
 
-    // History is best-effort — never fail the Agent response because DB is down
     let saved: { conversationId: string | null; saved: boolean; error?: string } = {
       conversationId: requestedConversationId,
       saved: false,
@@ -586,7 +649,7 @@ export async function POST(req: NextRequest) {
 
     logger.info("agent_request_complete", {
       requestId,
-      final: "SUCCESS",
+      final: soft ? "SOFT_SUCCESS" : "SUCCESS",
       latencyMs,
       dataMs,
       llmMs,
@@ -613,6 +676,7 @@ export async function POST(req: NextRequest) {
         cacheHit: false,
         personalized,
         rag: Boolean(playbookContext),
+        soft,
         requestId,
         providersConfigured: providers.map((p) => p.id),
         llmAttempted: (produced as { _llmAttempted?: string[] })._llmAttempted,
@@ -623,12 +687,15 @@ export async function POST(req: NextRequest) {
           dbStatus: dbHealth.status,
           sources: allSources,
           partial: failedSources.length > 0,
+          soft,
         },
       },
       {
         latencyMs,
-        source: "data-engine→llm",
-        confidence: contexts[0]?.analysis.confidence ?? 0.85,
+        source: soft ? "data-engine→rule-soft" : "data-engine→llm",
+        confidence: soft
+          ? 0.55
+          : contexts[0]?.analysis.confidence ?? 0.85,
         llmProvider: (produced as { _llmProvider?: string | null })._llmProvider ?? null,
         requestId,
       },
@@ -642,10 +709,8 @@ export async function POST(req: NextRequest) {
         keysPresent?: Record<string, boolean>;
         transient?: boolean;
       };
-      const detail = e.llmErrors?.[0]?.slice(0, 120);
-      const retryHint = e.transient
-        ? `Mô hình đang bận hoặc quá tải. ${detail ? `(${detail}) ` : ""}Thử lại sau 5–10 giây.`
-        : `Không kết nối được mô hình AI. Kiểm tra GROQ_API_KEY / OPENROUTER_API_KEY. ${detail ?? ""}`;
+
+      const retryHint = publicLlmHint(e.llmErrors, Boolean(e.transient));
 
       logger.error("agent_request_failed", {
         requestId,
