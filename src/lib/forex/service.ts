@@ -1,6 +1,6 @@
 import { desc, eq, sql, and } from "drizzle-orm";
 import { db } from "@/db";
-import { FOREX_PAIRS } from "./data";
+import { FOREX_PAIRS, FOREX_BY_SYMBOL } from "./data";
 import {
   forexAnalysis,
   forexOhlcv,
@@ -10,11 +10,14 @@ import {
 import {
   fetchForexBars,
   fetchForexSnapshot,
+  type ForexQuote,
 } from "./connectors";
 import { analyzeForex } from "./analysis";
 import { forProvider } from "@/lib/logger";
 import type { Ohlcv } from "@/lib/connectors/core";
 import { timeframesFor } from "./timeframes";
+import { patchLastCandle, toQuoteContract } from "./normalize";
+import type { ForexQuoteContract } from "./types";
 
 const log = forProvider("forex-service");
 
@@ -22,6 +25,7 @@ const FRESHNESS_CACHE_TTL = 5_000;
 const LATEST_PRICES_CACHE_TTL = 5_000;
 const PAIRS_CACHE_TTL = 5 * 60_000;
 const PAIR_CACHE_TTL = 5_000;
+const LIVE_QUOTE_CACHE_TTL = 3_000;
 
 /** Soft TTL — serve DB/memory instantly; refresh network in background. */
 const OHLCV_SOFT_TTL: Record<string, number> = {
@@ -53,6 +57,13 @@ const memOhlcv = new Map<
   string,
   { bars: Ohlcv[]; source: string; newestMs: number; at: number }
 >();
+
+/** In-memory SSOT for latest snapshot quotes (symbol → quote). */
+let liveSnapshotCache: {
+  bySymbol: Map<string, ForexQuote>;
+  source: string;
+  at: number;
+} | null = null;
 
 interface ForexSyncResult {
   source: string;
@@ -89,6 +100,7 @@ let freshnessCache: CacheEntry<{
 }> | null = null;
 
 const pairCache = new Map<string, CacheEntry<ForexPairDetail>>();
+const quoteContractCache = new Map<string, CacheEntry<ForexQuoteContract>>();
 
 function cacheIsFresh<T>(entry: CacheEntry<T> | null | undefined, ttl: number) {
   return Boolean(entry && Date.now() - entry.timestamp < ttl);
@@ -98,6 +110,7 @@ function invalidatePriceCaches() {
   freshnessCache = null;
   latestPricesCache = null;
   pairCache.clear();
+  quoteContractCache.clear();
 }
 
 function memKey(symbol: string, timeframe: string, limit: number) {
@@ -158,6 +171,12 @@ export async function initializeForexPairs() {
   return initializePromise;
 }
 
+function rememberSnapshot(quotes: ForexQuote[], source: string) {
+  const bySymbol = new Map<string, ForexQuote>();
+  for (const q of quotes) bySymbol.set(q.symbol.toUpperCase(), q);
+  liveSnapshotCache = { bySymbol, source, at: Date.now() };
+}
+
 export async function syncForexPrices() {
   if (syncPromise) return syncPromise;
 
@@ -167,6 +186,8 @@ export async function syncForexPrices() {
       await initializeForexPairs();
     }
     const snapshot = await fetchForexSnapshot();
+    rememberSnapshot(snapshot.quotes, snapshot.source);
+
     const pairs = await getCachedForexPairs();
     const by = new Map(pairs.map((p) => [p.symbol, p]));
     const timestamp = new Date(Math.floor(Date.now() / 5000) * 5000);
@@ -283,6 +304,116 @@ export async function latestForexPrices() {
   `);
   latestPricesCache = { value: r.rows, timestamp: Date.now() };
   return r.rows;
+}
+
+/**
+ * Single source of truth for live quote → ForexQuoteContract.
+ * Order: memory snapshot → DB latest → network snapshot.
+ */
+export async function getLiveQuoteContract(
+  symbol: string,
+): Promise<ForexQuoteContract | null> {
+  const sym = symbol.toUpperCase();
+  const cached = quoteContractCache.get(sym);
+  if (cached && Date.now() - cached.timestamp < LIVE_QUOTE_CACHE_TTL) {
+    return cached.value;
+  }
+
+  const def = FOREX_BY_SYMBOL.get(sym);
+
+  // 1) Hot snapshot from recent sync
+  if (liveSnapshotCache && Date.now() - liveSnapshotCache.at < 12_000) {
+    const q = liveSnapshotCache.bySymbol.get(sym);
+    if (q) {
+      const contract = toQuoteContract(q, {
+        name: def?.name,
+        category: def?.category,
+        baseCurrency: def?.baseCurrency,
+        quoteCurrency: def?.quoteCurrency,
+        forceDegraded: q.degraded,
+      });
+      quoteContractCache.set(sym, { value: contract, timestamp: Date.now() });
+      return contract;
+    }
+  }
+
+  // 2) DB latest row
+  const found = await getForexPair(sym);
+  if (found?.price) {
+    const p = found.price;
+    const contract = toQuoteContract(
+      {
+        symbol: sym,
+        price: p.price,
+        bid: p.bid,
+        ask: p.ask,
+        change: p.change,
+        changePercent: p.changePercent,
+        source: p.source,
+        timestamp: new Date(p.timestamp),
+      },
+      {
+        name: found.pair.name,
+        category: found.pair.category,
+        baseCurrency: found.pair.baseCurrency,
+        quoteCurrency: found.pair.quoteCurrency,
+      },
+    );
+    // If stale, kick background refresh but still return
+    if (contract.ageMs > 15_000) {
+      void syncForexPrices().catch(() => undefined);
+    }
+    quoteContractCache.set(sym, { value: contract, timestamp: Date.now() });
+    return contract;
+  }
+
+  // 3) Network
+  try {
+    const snap = await fetchForexSnapshot();
+    rememberSnapshot(snap.quotes, snap.source);
+    const q = snap.quotes.find((x) => x.symbol === sym);
+    if (!q) return null;
+    const contract = toQuoteContract(q, {
+      name: def?.name,
+      category: def?.category,
+      baseCurrency: def?.baseCurrency,
+      quoteCurrency: def?.quoteCurrency,
+      forceDegraded: q.degraded,
+    });
+    quoteContractCache.set(sym, { value: contract, timestamp: Date.now() });
+    return contract;
+  } catch (e) {
+    log.warn("live_quote_network_failed", { symbol: sym, error: String(e) });
+    return null;
+  }
+}
+
+/** Map DB/list rows into ForexQuoteContract[]. */
+export function mapRowsToContracts(
+  rows: Array<Record<string, unknown>>,
+): ForexQuoteContract[] {
+  return rows.map((r) => {
+    const symbol = String(r.symbol ?? "").toUpperCase();
+    const def = FOREX_BY_SYMBOL.get(symbol);
+    return toQuoteContract(
+      {
+        symbol,
+        price: Number(r.price),
+        bid: r.bid == null ? null : Number(r.bid),
+        ask: r.ask == null ? null : Number(r.ask),
+        change: r.change == null ? null : Number(r.change),
+        changePercent: r.changePercent == null ? null : Number(r.changePercent),
+        source: String(r.source ?? "db"),
+        timestamp: new Date(String(r.timestamp)),
+      },
+      {
+        name: String(r.name ?? def?.name ?? symbol),
+        category: String(r.category ?? def?.category ?? "usd_cross"),
+        baseCurrency: String(r.baseCurrency ?? def?.baseCurrency ?? ""),
+        quoteCurrency: String(r.quoteCurrency ?? def?.quoteCurrency ?? ""),
+      },
+    );
+  });
 }
 
 export async function getForexPair(symbol: string) {
@@ -407,14 +538,25 @@ export async function syncForexOhlcv(
   const safeLimit = Math.min(200, Math.max(40, limit));
   const key = memKey(sym, timeframe, safeLimit);
 
-  const mem = memOhlcv.get(key);
-  if (mem && Date.now() - mem.at < MEM_OHLCV_TTL) {
+  const applyLivePatch = async (bars: Ohlcv[], source: string, stale: boolean) => {
+    const live = await getLiveQuoteContract(sym).catch(() => null);
+    const patched = live ? patchLastCandle(bars, live.price) : bars;
+    const lastClose = patched.length ? patched[patched.length - 1].close : null;
     return {
       pair: (await getForexPair(sym))?.pair ?? ({ symbol: sym } as ForexPairRow),
-      bars: mem.bars,
-      source: `${mem.source}+mem`,
-      stale: false,
+      bars: patched,
+      source: live ? `${source}+live-patch` : source,
+      stale,
+      quote: live,
+      lastCandleClose: lastClose,
+      priceVsCandleDiff:
+        live && lastClose != null ? live.price - lastClose : null,
     };
+  };
+
+  const mem = memOhlcv.get(key);
+  if (mem && Date.now() - mem.at < MEM_OHLCV_TTL) {
+    return applyLivePatch(mem.bars, `${mem.source}+mem`, false);
   }
 
   let found = await getForexPair(sym);
@@ -436,12 +578,7 @@ export async function syncForexOhlcv(
       newestMs: cached.newestMs,
       at: Date.now(),
     });
-    return {
-      pair: found.pair,
-      bars: cached.bars,
-      source: cached.source,
-      stale: false,
-    };
+    return applyLivePatch(cached.bars, cached.source, false);
   }
 
   if (cached && age <= hard) {
@@ -463,12 +600,7 @@ export async function syncForexOhlcv(
       newestMs: cached.newestMs,
       at: Date.now(),
     });
-    return {
-      pair: found.pair,
-      bars: cached.bars,
-      source: `${cached.source}+swr`,
-      stale: true,
-    };
+    return applyLivePatch(cached.bars, `${cached.source}+swr`, true);
   }
 
   try {
@@ -482,12 +614,7 @@ export async function syncForexOhlcv(
     void persistBars(found.pair.id, timeframe, result.bars, result.source).catch((e) =>
       log.warn("ohlcv_persist_failed", { symbol: sym, error: String(e) }),
     );
-    return {
-      pair: found.pair,
-      bars: result.bars,
-      source: result.source,
-      stale: false,
-    };
+    return applyLivePatch(result.bars, result.source, false);
   } catch (netErr) {
     if (cached && cached.bars.length >= 10) {
       log.warn("ohlcv_network_failed_using_db", {
@@ -495,20 +622,39 @@ export async function syncForexOhlcv(
         timeframe,
         error: String(netErr),
       });
-      return {
-        pair: found.pair,
-        bars: cached.bars,
-        source: `${cached.source}+fallback`,
-        stale: true,
-      };
+      return applyLivePatch(cached.bars, `${cached.source}+fallback`, true);
     }
     throw netErr;
   }
 }
 
 export async function runForexAnalysis(symbol: string, timeframe = "1h") {
-  const { pair, bars, source } = await syncForexOhlcv(symbol, timeframe, 120);
+  const ohlcv = await syncForexOhlcv(symbol, timeframe, 120);
+  const { pair, bars, source, quote } = ohlcv;
   const a = analyzeForex(bars);
+
+  // P0 consistency: entry = live mid when available
+  const entryPrice = quote?.price ?? a.entryPrice;
+  const risk =
+    a.stopLoss !== null && a.recommendation === "BUY"
+      ? entryPrice - a.stopLoss
+      : a.stopLoss !== null && a.recommendation === "SELL"
+        ? a.stopLoss - entryPrice
+        : null;
+
+  const stopLoss =
+    risk !== null && a.recommendation === "BUY"
+      ? entryPrice - risk
+      : risk !== null && a.recommendation === "SELL"
+        ? entryPrice + risk
+        : a.stopLoss;
+  const takeProfit =
+    risk !== null && a.recommendation === "BUY"
+      ? entryPrice + risk * 2
+      : risk !== null && a.recommendation === "SELL"
+        ? entryPrice - risk * 2
+        : a.takeProfit;
+
   void db
     .insert(forexAnalysis)
     .values({
@@ -517,15 +663,26 @@ export async function runForexAnalysis(symbol: string, timeframe = "1h") {
       technicalSignals: a.indicators,
       patterns: { candlestick: a.candlestickPatterns, chart: a.chartPatterns },
       recommendation: a.recommendation,
-      entryPrice: a.entryPrice,
-      stopLoss: a.stopLoss,
-      takeProfit: a.takeProfit,
+      entryPrice,
+      stopLoss,
+      takeProfit,
       confidence: a.confidence,
       reason: a.reasons.join("; "),
       timestamp: new Date(),
     })
     .catch((e) => log.warn("analysis_persist_failed", { symbol, error: String(e) }));
-  return { symbol: pair.symbol, name: pair.name, timeframe, source, ...a };
+
+  return {
+    symbol: pair.symbol,
+    name: pair.name,
+    timeframe,
+    source,
+    ...a,
+    entryPrice,
+    stopLoss,
+    takeProfit,
+    quote: quote ?? null,
+  };
 }
 
 export async function getForexDetailBundle(
@@ -536,20 +693,35 @@ export async function getForexDetailBundle(
   const sym = symbol.toUpperCase();
   const safeLimit = Math.min(limit, 150);
 
-  const [detail, ohlcv, analysis] = await Promise.all([
-    (async () => {
-      void ensureForexFresh(8_000).catch(() => undefined);
-      return getForexPair(sym);
-    })(),
+  const [quote, ohlcv, analysis] = await Promise.all([
+    getLiveQuoteContract(sym),
     syncForexOhlcv(sym, timeframe, safeLimit),
     runForexAnalysis(sym, timeframe).catch(() => null),
   ]);
 
-  if (!detail && !ohlcv) throw new Error("Forex pair not found");
+  if (!quote && !ohlcv) throw new Error("Forex pair not found");
+
+  const pairRow = ohlcv.pair;
 
   return {
-    pair: detail?.pair ?? ohlcv.pair,
-    price: detail?.price ?? null,
+    pair: pairRow,
+    /** @deprecated prefer `quote` — legacy shape for older clients */
+    price: quote
+      ? {
+          price: quote.price,
+          bid: quote.bid,
+          ask: quote.ask,
+          change: quote.change,
+          changePercent: quote.changePercent,
+          source: quote.source,
+          timestamp: quote.timestamp,
+          spread: quote.spread,
+          spreadPips: quote.spreadPips,
+          freshness: quote.freshness,
+          ageMs: quote.ageMs,
+        }
+      : null,
+    quote,
     bars: ohlcv.bars,
     timeframe,
     source: ohlcv.source,

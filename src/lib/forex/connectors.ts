@@ -8,6 +8,8 @@ import {
 } from "@/lib/connectors/core";
 import { FOREX_BY_SYMBOL, FOREX_PAIRS, type ForexPairDef } from "./data";
 import { forProvider } from "@/lib/logger";
+import { alignBarsByTime, combineOhlc } from "./normalize";
+import type { ForexRawQuote } from "./types";
 
 const YAHOO1 = "yahoo-forex-primary";
 const YAHOO2 = "yahoo-forex-fallback";
@@ -19,15 +21,12 @@ const QUOTE_RETRIES = 0;
 const BARS_TIMEOUT_MS = 2_500;
 const BARS_RETRIES = 0;
 
-export interface ForexQuote {
-  symbol: string;
-  price: number;
-  bid: number | null;
-  ask: number | null;
-  change: number | null;
-  changePercent: number | null;
-  source: string;
-  timestamp: Date;
+/** Max age gap between derived legs before marking forceDegraded. */
+const DERIVED_STALE_LEG_MS = 30_000;
+
+export interface ForexQuote extends ForexRawQuote {
+  /** True when a derived leg was stale or missing bid/ask symmetry. */
+  degraded?: boolean;
 }
 
 interface YahooChart {
@@ -76,21 +75,57 @@ function deriveValue(def: ForexPairDef, map: Map<string, ForexQuote>): ForexQuot
   if (!def.derived) return null;
   const l = map.get(def.derived.left);
   const r = map.get(def.derived.right);
-  if (!l || !r || !r.price) return null;
+  if (!l || !r || !r.price || !l.price) return null;
+
   const apply = (a: number, b: number) => (def.derived!.op === "multiply" ? a * b : a / b);
+  if (def.derived.op === "divide" && r.price === 0) return null;
+
   const price = apply(l.price, r.price);
+  if (!Number.isFinite(price) || price <= 0) return null;
+
   const lPrev = l.change !== null ? l.price - l.change : null;
   const rPrev = r.change !== null ? r.price - r.change : null;
-  const prev = lPrev !== null && rPrev !== null && rPrev !== 0 ? apply(lPrev, rPrev) : null;
+  const prev =
+    lPrev !== null && rPrev !== null && rPrev !== 0 ? apply(lPrev, rPrev) : null;
+
+  const legAgeGap = Math.abs(l.timestamp.getTime() - r.timestamp.getTime());
+  const degraded = legAgeGap > DERIVED_STALE_LEG_MS;
+
+  // Derive bid/ask when both legs have them (conservative)
+  let bid: number | null = null;
+  let ask: number | null = null;
+  if (
+    l.bid !== null &&
+    l.ask !== null &&
+    r.bid !== null &&
+    r.ask !== null &&
+    l.bid > 0 &&
+    r.bid > 0
+  ) {
+    if (def.derived.op === "multiply") {
+      bid = l.bid * r.bid;
+      ask = l.ask * r.ask;
+    } else {
+      // USDVND / USDJPY style → JPYVND; use cross extremes
+      bid = Math.min(l.bid / r.ask, l.ask / r.bid, l.bid / r.bid, l.ask / r.ask);
+      ask = Math.max(l.bid / r.ask, l.ask / r.bid, l.bid / r.bid, l.ask / r.ask);
+      if (!Number.isFinite(bid) || !Number.isFinite(ask) || ask < bid) {
+        bid = null;
+        ask = null;
+      }
+    }
+  }
+
   return {
     symbol: def.symbol,
     price,
-    bid: null,
-    ask: null,
+    bid,
+    ask,
     change: prev !== null ? price - prev : null,
     changePercent: prev ? ((price - prev) / prev) * 100 : null,
-    source: l.source,
+    source: `${l.source}+derived`,
     timestamp: new Date(Math.min(l.timestamp.getTime(), r.timestamp.getTime())),
+    degraded,
   };
 }
 
@@ -129,8 +164,8 @@ async function fetchBatchQuotes(base: string, provider: string): Promise<Map<str
     map.set(def.symbol, {
       symbol: def.symbol,
       price,
-      bid: typeof row.bid === "number" && Number.isFinite(row.bid) ? row.bid : null,
-      ask: typeof row.ask === "number" && Number.isFinite(row.ask) ? row.ask : null,
+      bid: typeof row.bid === "number" && Number.isFinite(row.bid) && row.bid > 0 ? row.bid : null,
+      ask: typeof row.ask === "number" && Number.isFinite(row.ask) && row.ask > 0 ? row.ask : null,
       change,
       changePercent,
       source: provider,
@@ -202,7 +237,6 @@ function yahooParams(tf: string, limit: number) {
   if (tf === "1d") return { interval: "1d", range: limit > 200 ? "5y" : "2y" };
   if (tf === "1w") return { interval: "1wk", range: "10y" };
   if (tf === "1mo") return { interval: "1mo", range: "max" };
-  // 12mo yearly bars: pull monthly then aggregate
   if (tf === "12mo") return { interval: "1mo", range: "max" };
   if (tf === "1h") return { interval: "1h", range: "1mo" };
   if (tf === "15m") return { interval: "15m", range: "10d" };
@@ -270,19 +304,17 @@ async function fetchDirectBars(
 }
 
 function deriveBars(def: ForexPairDef, left: Ohlcv[], right: Ohlcv[]): Ohlcv[] {
-  const rm = new Map(right.map((b) => [b.time, b]));
+  const aligned = alignBarsByTime(left, right, 180);
   const out: Ohlcv[] = [];
-  const op = (a: number, b: number) => (def.derived!.op === "multiply" ? a * b : a / b);
-  for (const l of left) {
-    const r = rm.get(l.time);
-    if (!r || !r.open || !r.high || !r.low || !r.close) continue;
-    const values = [op(l.open, r.open), op(l.high, r.high), op(l.low, r.low), op(l.close, r.close)];
+  for (const { left: l, right: r } of aligned) {
+    const ohlc = combineOhlc(def.derived!.op, l, r);
+    if (!ohlc) continue;
     out.push({
       time: l.time,
-      open: values[0],
-      high: Math.max(...values),
-      low: Math.min(...values),
-      close: values[3],
+      open: ohlc.open,
+      high: ohlc.high,
+      low: ohlc.low,
+      close: ohlc.close,
       volume: 0,
     });
   }
@@ -317,7 +349,6 @@ export async function fetchForexBars(
 ): Promise<{ bars: Ohlcv[]; source: string }> {
   if (!VALID.has(timeframe)) throw new Error("Invalid timeframe");
 
-  // Higher TF charts need fewer bars; lower threshold for yearly
   const minBars = timeframe === "12mo" ? 5 : 10;
 
   const attempts: Array<Promise<{ bars: Ohlcv[]; source: string }>> = [
@@ -358,4 +389,17 @@ export async function fetchForexBars(
       });
     }
   });
+}
+
+/**
+ * Fetch a single-symbol live quote (used as SSOT for detail pages).
+ * Prefers batch snapshot map entry when available; falls back to chart meta.
+ */
+export async function fetchSingleQuote(symbol: string): Promise<ForexQuote | null> {
+  try {
+    const snap = await fetchForexSnapshot();
+    return snap.quotes.find((q) => q.symbol === symbol.toUpperCase()) ?? null;
+  } catch {
+    return null;
+  }
 }
