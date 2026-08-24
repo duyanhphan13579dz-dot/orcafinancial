@@ -77,7 +77,7 @@ export type ChatWithFallbackResult = {
   transient: boolean;
 };
 
-/** Sequential fallback (legacy). */
+/** Sequential fallback. */
 export async function chatWithFallbackDetailed(
   messages: LlmMessage[],
   opts: LlmChatOptions = {},
@@ -96,7 +96,7 @@ export async function chatWithFallbackDetailed(
 
   const errors: string[] = [];
   const attempted: LlmProviderId[] = [];
-  const baseTimeout = opts.timeoutMs ?? 22_000;
+  const baseTimeout = opts.timeoutMs ?? 18_000;
 
   for (let i = 0; i < providers.length; i++) {
     const provider = providers[i];
@@ -104,7 +104,7 @@ export async function chatWithFallbackDetailed(
     try {
       const result = await provider.chat(messages, {
         ...opts,
-        timeoutMs: Math.max(12_000, baseTimeout - i * 2_000),
+        timeoutMs: Math.max(10_000, baseTimeout - i * 2_000),
       });
       logger.info("llm_ok", {
         provider: provider.id,
@@ -127,8 +127,8 @@ export async function chatWithFallbackDetailed(
 }
 
 /**
- * Race all configured providers — first successful response wins.
- * Cuts latency when one provider is slow/rate-limited.
+ * True first-success race: return as soon as ANY provider succeeds.
+ * Does NOT wait for the slow loser (fixes 504 when one provider hangs).
  */
 export async function chatRaceProviders(
   messages: LlmMessage[],
@@ -148,42 +148,45 @@ export async function chatRaceProviders(
     return chatWithFallbackDetailed(messages, opts);
   }
 
-  const timeoutMs = opts.timeoutMs ?? 22_000;
+  const timeoutMs = opts.timeoutMs ?? 18_000;
   const errors: string[] = [];
   const attempted = providers.map((p) => p.id);
 
-  type RaceOk = { ok: true; result: LlmChatResult };
-  type RaceFail = { ok: false; error: string };
+  return new Promise<ChatWithFallbackResult>((resolve) => {
+    let pending = providers.length;
+    let settled = false;
 
-  const tasks = providers.map(
-    (provider) =>
+    for (const provider of providers) {
       provider
         .chat(messages, { ...opts, timeoutMs })
-        .then((result): RaceOk => {
+        .then((result) => {
+          if (settled) return;
+          settled = true;
           logger.info("llm_race_ok", {
             provider: provider.id,
             model: result.model,
             latencyMs: result.latencyMs,
           });
-          return { ok: true, result };
+          resolve({
+            result,
+            errors,
+            attempted,
+            transient: false,
+          });
         })
-        .catch((err): RaceFail => {
+        .catch((err) => {
           const msg = err instanceof Error ? err.message : String(err);
           errors.push(`${provider.id}: ${msg.slice(0, 220)}`);
           logger.warn("llm_race_fail", { provider: provider.id, error: msg });
-          return { ok: false, error: msg };
-        }),
-  );
-
-  // First success wins; if all fail, aggregate errors
-  const settled = await Promise.all(tasks);
-  const winner = settled.find((s): s is RaceOk => s.ok);
-  if (winner) {
-    return { result: winner.result, errors, attempted, transient: false };
-  }
-
-  const transient = errors.some((e) => isTransientLlmError(e));
-  return { result: null, errors, attempted, transient };
+          pending -= 1;
+          if (!settled && pending === 0) {
+            settled = true;
+            const transient = errors.some((e) => isTransientLlmError(e));
+            resolve({ result: null, errors, attempted, transient });
+          }
+        });
+    }
+  });
 }
 
 export async function chatWithFallback(

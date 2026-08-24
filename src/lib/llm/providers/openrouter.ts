@@ -1,9 +1,8 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
-/** OpenRouter fallback — prefer free GLM models only. */
 function modelCandidates(): string[] {
   const primary = process.env.OPENROUTER_MODEL?.trim() || "z-ai/glm-4.5-air:free";
-  return [...new Set([primary, "z-ai/glm-5.2:free", "openrouter/free"])];
+  return [primary];
 }
 
 function resolveApiKey(): string | undefined {
@@ -26,7 +25,7 @@ async function chatOne(
 ): Promise<LlmChatResult> {
   const started = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 20_000);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 16_000);
 
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -43,8 +42,8 @@ async function chatOne(
       body: JSON.stringify({
         model,
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
-        max_tokens: opts.maxTokens ?? 2200,
-        temperature: opts.temperature ?? 0.45,
+        max_tokens: opts.maxTokens ?? 1600,
+        temperature: opts.temperature ?? 0.5,
       }),
       signal: controller.signal,
     });
@@ -66,16 +65,7 @@ async function chatOne(
 async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<LlmChatResult> {
   const apiKey = resolveApiKey();
   if (!apiKey) throw new Error("OPENROUTER_API_KEY missing");
-
-  const errors: string[] = [];
-  for (const model of modelCandidates()) {
-    try {
-      return await chatOne(apiKey, model, messages, opts);
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
-    }
-  }
-  throw new Error(errors.slice(0, 3).join(" | ") || "OpenRouter all models failed");
+  return chatOne(apiKey, modelCandidates()[0], messages, opts);
 }
 
 export const openrouterProvider: LlmProvider = {

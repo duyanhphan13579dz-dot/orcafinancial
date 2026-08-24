@@ -128,12 +128,12 @@ function buildUserPrompt(
   if (mode === "rescue") {
     return [
       "Số liệu tham khảo (đừng đọc thành báo cáo):",
-      ctx.slice(0, 1600),
+      ctx.slice(0, 1400),
       "",
       `Bạn vừa hỏi: "${userQuestion}"`,
       "",
       "Trả lời như đang chat với bạn thân. Nói tự nhiên, có số nếu cần, không liệt kê kiểu RSI/Hold template.",
-      "Thiếu số quý thì nói thật. Khoảng 120–250 chữ. Không markdown.",
+      "Thiếu số quý thì nói thật. Khoảng 120–220 chữ. Không markdown.",
     ].join("\n");
   }
 
@@ -144,28 +144,25 @@ function buildUserPrompt(
       "",
       `Câu hỏi tiếp: "${userQuestion}"`,
       "",
-      "Trả lời ngắn, tự nhiên như chat. Nhét số vào câu chuyện, đừng ra template. 100–220 chữ. Không markdown.",
+      "Trả lời ngắn, tự nhiên như chat. Nhét số vào câu chuyện, đừng ra template. 100–200 chữ. Không markdown.",
     ].join("\n");
   }
 
   return [
-    "Dưới đây là số liệu thô — bạn dùng để viết lại thành lời cố vấn, KHÔNG được copy nguyên xi:",
+    "Dưới đây là số liệu thô — viết lại thành lời cố vấn, KHÔNG copy nguyên xi:",
     ctx,
     "",
     "---",
     `Khách hỏi: "${userQuestion}"`,
     "",
-    "Viết như người đang chat:",
-    "- Mở thẳng vào ý chính, giọng thân thiện.",
-    "- Số liệu thì lồng vào câu (vd 'quanh 63–64', 'tăng gần 8% một tháng'), không liệt kê giá / RSI / khuyến nghị kỹ thuật thành dãy máy móc.",
-    "- Nếu hỏi KQKD quý mà thiếu số BCTC: nói thật, rồi đưa góc nhìn từ giá/xu hướng/định giá đang có.",
-    "- Kết bằng gợi ý việc làm hoặc câu hỏi tiếp + disclaimer một câu tự nhiên.",
-    "- 150–350 chữ, không markdown, không lộ hệ thống nội bộ.",
+    "Viết như người đang chat: mở thẳng ý, số liệu lồng trong câu, gợi ý việc làm, disclaimer ngắn.",
+    "Không markdown. 150–300 chữ. Không lộ hệ thống nội bộ.",
   ].join("\n");
 }
 
 /**
- * LLM-first narrative: race providers → short retry → only then null.
+ * Single race pass (no second full pass) to stay under Vercel gateway timeout.
+ * Optional quick rescue only if first race fails fast.
  */
 export async function agentNarrativeDetailed(
   userQuestion: string,
@@ -173,9 +170,10 @@ export async function agentNarrativeDetailed(
   opts: { followUp?: boolean } = {},
 ): Promise<AgentNarrativeMeta> {
   const followUp = Boolean(opts.followUp);
-  const ctx = contextBlock.length > 3200 ? contextBlock.slice(0, 3200) + "\n…" : contextBlock;
+  const ctx = contextBlock.length > 2800 ? contextBlock.slice(0, 2800) + "\n…" : contextBlock;
   const allErrors: string[] = [];
   const allAttempted: string[] = [];
+  const started = Date.now();
 
   const pass1 = await chatRaceProviders(
     [
@@ -186,9 +184,10 @@ export async function agentNarrativeDetailed(
       },
     ],
     {
-      maxTokens: followUp ? 1400 : 2000,
+      maxTokens: followUp ? 1100 : 1600,
       temperature: 0.55,
-      timeoutMs: followUp ? 18_000 : 24_000,
+      // Keep under Vercel limit; race returns on first success
+      timeoutMs: followUp ? 14_000 : 16_000,
     },
   );
   allErrors.push(...pass1.errors);
@@ -203,37 +202,42 @@ export async function agentNarrativeDetailed(
     };
   }
 
-  logger.warn("agent_narrative_pass1_failed", { errors: pass1.errors.slice(0, 3) });
-  const pass2 = await chatWithFallbackDetailed(
-    [
-      { role: "system", content: AGENT_SYSTEM_PROMPT },
+  // Rescue only if we still have budget (< 35s total)
+  const elapsed = Date.now() - started;
+  if (elapsed < 35_000) {
+    logger.warn("agent_narrative_pass1_failed", { errors: pass1.errors.slice(0, 3), elapsed });
+    const pass2 = await chatWithFallbackDetailed(
+      [
+        { role: "system", content: AGENT_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: buildUserPrompt(userQuestion, ctx, "rescue"),
+        },
+      ],
       {
-        role: "user",
-        content: buildUserPrompt(userQuestion, ctx, "rescue"),
+        maxTokens: 900,
+        temperature: 0.5,
+        timeoutMs: Math.min(12_000, 50_000 - elapsed),
       },
-    ],
-    {
-      maxTokens: 1000,
-      temperature: 0.5,
-      timeoutMs: 20_000,
-    },
-  );
-  allErrors.push(...pass2.errors);
-  allAttempted.push(...pass2.attempted);
+    );
+    allErrors.push(...pass2.errors);
+    allAttempted.push(...pass2.attempted);
 
-  if (pass2.result?.text?.trim()) {
-    return {
-      result: pass2.result,
-      errors: allErrors,
-      attempted: allAttempted,
-      transient: false,
-    };
+    if (pass2.result?.text?.trim()) {
+      return {
+        result: pass2.result,
+        errors: allErrors,
+        attempted: allAttempted,
+        transient: false,
+      };
+    }
   }
 
-  const transient = pass1.transient || pass2.transient;
+  const transient = pass1.transient || allErrors.some((e) => isTransientLlmErrorLocal(e));
   logger.error("agent_narrative_all_passes_failed", {
     transient,
     errors: allErrors.slice(0, 6),
+    elapsed: Date.now() - started,
   });
 
   return {
@@ -242,4 +246,10 @@ export async function agentNarrativeDetailed(
     attempted: allAttempted,
     transient,
   };
+}
+
+function isTransientLlmErrorLocal(msg: string): boolean {
+  return /\b(429|503|rate.?limit|timeout|abort|ECONNRESET|ETIMEDOUT|fetch failed|network|overloaded|capacity)\b/i.test(
+    msg,
+  );
 }
