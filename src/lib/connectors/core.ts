@@ -235,6 +235,40 @@ export function getStaleFlags(): StaleFlag[] {
   return [...staleMap.values()];
 }
 
+/** Rate-limit validator_rejected_ohlcv spam (esp. forex null OHLC from Yahoo). */
+const ohlcvRejectLogState = new Map<
+  string,
+  { count: number; lastLogAt: number; reasonsSample: string[] }
+>();
+const OHLCV_REJECT_LOG_WINDOW_MS = 60_000;
+const OHLCV_REJECT_LOG_MAX_PER_WINDOW = 2;
+
+function shouldLogOhlcvReject(provider: string, symbol: string | undefined): {
+  log: boolean;
+  suppressed: number;
+} {
+  const key = `${provider}:${symbol ?? "*"}`;
+  const now = Date.now();
+  let st = ohlcvRejectLogState.get(key);
+  if (!st || now - st.lastLogAt > OHLCV_REJECT_LOG_WINDOW_MS) {
+    st = { count: 0, lastLogAt: 0, reasonsSample: [] };
+    ohlcvRejectLogState.set(key, st);
+  }
+  st.count += 1;
+  if (st.count <= OHLCV_REJECT_LOG_MAX_PER_WINDOW) {
+    st.lastLogAt = now;
+    return { log: true, suppressed: 0 };
+  }
+  // Periodically emit a summary every window
+  if (now - st.lastLogAt >= OHLCV_REJECT_LOG_WINDOW_MS) {
+    const suppressed = st.count - OHLCV_REJECT_LOG_MAX_PER_WINDOW;
+    st.lastLogAt = now;
+    st.count = 1;
+    return { log: true, suppressed };
+  }
+  return { log: false, suppressed: st.count - OHLCV_REJECT_LOG_MAX_PER_WINDOW };
+}
+
 export const DataValidator = {
   ohlcv(b: Partial<Ohlcv>, ctx: { provider: string; symbol?: string }): Ohlcv | null {
     const reasons: string[] = [];
@@ -256,7 +290,15 @@ export const DataValidator = {
     if (high < Math.max(open, close) - 1e-6) reasons.push("high<max(o,c)");
     if (low > Math.min(open, close) + 1e-6) reasons.push("low>min(o,c)");
     if (reasons.length > 0) {
-      logger.warn("validator_rejected_ohlcv", { provider: ctx.provider, symbol: ctx.symbol, reasons });
+      const gate = shouldLogOhlcvReject(ctx.provider, ctx.symbol);
+      if (gate.log) {
+        logger.warn("validator_rejected_ohlcv", {
+          provider: ctx.provider,
+          symbol: ctx.symbol,
+          reasons,
+          ...(gate.suppressed > 0 ? { suppressedSinceLast: gate.suppressed } : {}),
+        });
+      }
       return null;
     }
     return { open, high, low, close, volume, time };
