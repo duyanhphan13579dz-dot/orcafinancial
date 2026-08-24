@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useAuth } from "@/lib/auth/context";
 
 export function UserMenu() {
@@ -50,8 +51,14 @@ export function UserMenu() {
         className="flex items-center gap-2 rounded-full border border-[#1a3558] bg-[#0e2e4f] p-1 pr-3 hover:border-[#00d4ff]/50 transition-colors min-h-[40px]"
       >
         {user.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={user.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
+          <Image
+            src={user.avatarUrl}
+            alt=""
+            width={32}
+            height={32}
+            className="h-8 w-8 rounded-full object-cover"
+            unoptimized={!user.avatarUrl.includes("googleusercontent.com")}
+          />
         ) : (
           <span className="h-8 w-8 rounded-full bg-gradient-to-br from-[#00d4ff] to-[#0073a8] flex items-center justify-center text-xs font-bold text-[#0A2540]">
             {initials}
