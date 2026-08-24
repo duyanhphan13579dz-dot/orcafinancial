@@ -12,6 +12,7 @@ import {
   OrderFlowPanel,
   WhalePanel,
 } from "@/components/crypto-intel-panels";
+import { CryptoOnChainPanel } from "@/components/crypto-onchain-panel";
 import { CryptoSentimentPanel } from "@/components/crypto-sentiment-panel";
 import { api, changeColor, fmtNum, fmtPct } from "@/lib/client";
 import {
@@ -402,6 +403,7 @@ export default function CryptoDetail() {
         {whaleLiq?.available && <WhalePanel data={whaleLiq} />}
         {orderFlow?.available && <OrderFlowPanel data={orderFlow} />}
         <CryptoSentimentPanel symbol={symbol} />
+        <CryptoOnChainPanel symbol={symbol} />
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
