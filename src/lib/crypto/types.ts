@@ -278,7 +278,52 @@ export interface LaunchpadIntelligence {
   fetchedAt: string;
 }
 
-/** Unified object for AI + UI (Phase 0–5). */
+/* ─── On-chain layer ──────────────────────────────────────────────────── */
+
+export interface OnChainIntelligence {
+  symbol: string;
+  defi: {
+    protocolName: string | null;
+    protocolSlug: string | null;
+    tvl: number | null;
+    tvlChange1d: number | null;
+    tvlChange7d: number | null;
+    category: string | null;
+    protocolMcap: number | null;
+    topChains: Array<{ chain: string; tvl: number }>;
+    chainTvl: number | null;
+  };
+  supply: {
+    circulating: number | null;
+    totalSupply: number | null;
+    maxSupply: number | null;
+    circulatingRatio: number | null;
+    marketCap: number | null;
+    fdv: number | null;
+    volume24h: number | null;
+  };
+  activity: {
+    twitterFollowers: number | null;
+    redditSubscribers: number | null;
+    githubStars: number | null;
+    commits4w: number | null;
+    exchangeVolumeConcentration: number | null;
+  };
+  bitcoin: {
+    feeFastSatVb: number | null;
+    feeHalfHourSatVb: number | null;
+    feeHourSatVb: number | null;
+    hashrateEh: number | null;
+    difficulty: number | null;
+  } | null;
+  assessment: string;
+  available: boolean;
+  errors: string[];
+  sources: string[];
+  fetchedAt: string;
+}
+
+/** Unified object for AI + UI. */
 export interface CryptoMarketSnapshot {
   symbol: string;
   name: string;
@@ -287,6 +332,7 @@ export interface CryptoMarketSnapshot {
   orderFlow?: OrderFlowIntelligence | null;
   whaleLiquidation?: WhaleLiquidationIntelligence | null;
   sentimentIntel?: CryptoSentimentIntelligence | null;
+  onChain?: OnChainIntelligence | null;
   sentiment: {
     score: number | null;
     label: string | null;
