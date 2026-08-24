@@ -133,13 +133,66 @@ export interface OrderFlowIntelligence {
   fetchedAt: string;
 }
 
-/** Unified object for AI + UI (Phase 0+2). */
+/* ─── Phase 3: Whale + Liquidation ────────────────────────────────────── */
+
+export type WhaleEventKind = "WHALE" | "LARGE_ORDER" | "ORDER_WALL" | "LIQUIDATION";
+
+export interface WhaleEvent {
+  kind: WhaleEventKind;
+  side: "BUY" | "SELL";
+  price: number;
+  qty: number;
+  notional: number;
+  time: number;
+  tradeId: number | null;
+}
+
+export interface WhaleActivity {
+  windowMinutes: number;
+  buyNotional: number;
+  sellNotional: number;
+  netFlow: number;
+  buyCount: number;
+  sellCount: number;
+  events: WhaleEvent[];
+  bias: "ACCUMULATION" | "DISTRIBUTION" | "NEUTRAL";
+  insight: string;
+}
+
+export interface LiquidationZone {
+  price: number;
+  side: "LONG" | "SHORT";
+  notionalEstimate: number;
+  distancePct: number;
+  source: "estimated" | "order_wall";
+}
+
+export interface WhaleLiquidationIntelligence {
+  symbol: string;
+  binanceSymbol: string;
+  whale: WhaleActivity;
+  liquidation: {
+    markPrice: number | null;
+    zones: LiquidationZone[];
+    insight: string;
+    method: string;
+  };
+  takerInsight: string | null;
+  assessment: string;
+  whaleThresholdUsd: number;
+  available: boolean;
+  errors: string[];
+  fetchedAt: string;
+}
+
+/** Unified object for AI + UI (Phase 0–3). */
 export interface CryptoMarketSnapshot {
   symbol: string;
   name: string;
   spot: SpotSnapshot;
   futures: FuturesIntelligence | null;
   orderFlow?: OrderFlowIntelligence | null;
+  whaleLiquidation?: WhaleLiquidationIntelligence | null;
   sentiment: {
     score: number | null;
     label: string | null;
