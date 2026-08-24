@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, fmtNum } from "@/lib/client";
+import { isDocumentVisible, whenVisible } from "@/lib/client-visibility";
 import type { OnChainIntelligence } from "@/lib/crypto/types";
 
 function fmtUsd(n: number | null | undefined): string {
@@ -27,10 +28,10 @@ function Tile({
   subClass?: string;
 }) {
   return (
-    <div className="rounded-xl border border-slate-700/50 bg-gradient-to-b from-slate-900/80 to-slate-950/60 p-3">
-      <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">{label}</div>
-      <div className="mt-1 truncate font-mono text-lg font-bold text-white">{value}</div>
-      {sub && <div className={`mt-0.5 text-xs ${subClass ?? "text-slate-400"}`}>{sub}</div>}
+    <div className="rounded-lg border border-slate-700/40 bg-slate-900/50 p-2.5">
+      <div className="text-[9px] font-medium uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="mt-0.5 truncate font-mono text-base font-bold text-white">{value}</div>
+      {sub && <div className={`mt-0.5 text-[10px] ${subClass ?? "text-slate-400"}`}>{sub}</div>}
     </div>
   );
 }
@@ -43,24 +44,28 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
     if (!symbol) return;
     let cancelled = false;
     const load = () => {
+      if (!isDocumentVisible()) return;
       void api<OnChainIntelligence>(`/crypto/${encodeURIComponent(symbol)}/onchain`)
         .then((r) => {
           if (!cancelled) setData(r.data);
         })
         .catch(() => undefined);
     };
-    load();
-    const id = setInterval(load, 180_000);
+    const t = setTimeout(load, 600);
+    const id = setInterval(load, 240_000);
+    const off = whenVisible(load);
     return () => {
       cancelled = true;
+      clearTimeout(t);
       clearInterval(id);
+      off();
     };
   }, [symbol]);
 
   if (!data) {
     return (
       <section className="panel overflow-hidden">
-        <div className="px-4 py-3 text-sm text-slate-500">On-chain · đang tải…</div>
+        <div className="px-4 py-2.5 text-xs text-slate-500">On-chain · …</div>
       </section>
     );
   }
@@ -68,12 +73,7 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
   if (!data.available) {
     return (
       <section className="panel overflow-hidden">
-        <div className="px-4 py-3">
-          <div className="text-sm font-semibold text-white">On-chain</div>
-          <p className="mt-1 text-xs text-slate-500">
-            Chưa có dữ liệu free cho {symbol}. Netflow CEX cần provider trả phí.
-          </p>
-        </div>
+        <div className="px-4 py-2.5 text-xs text-slate-500">On-chain · N/A</div>
       </section>
     );
   }
@@ -87,11 +87,11 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left hover:bg-white/[0.02]"
+        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-white/[0.02]"
       >
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-sm font-semibold text-white">On-chain</span>
-          <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">
+          <span className="rounded-full bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
             {data.sources.join(" · ") || "—"}
           </span>
         </div>
@@ -99,8 +99,8 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
       </button>
 
       {open && (
-        <div className="border-t border-slate-800/80 px-4 pb-4 pt-3 space-y-3">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="space-y-2 border-t border-slate-800/80 px-3 pb-3 pt-2.5">
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
             <Tile
               label="DeFi TVL"
               value={fmtUsd(d.tvl)}
@@ -124,13 +124,13 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
                   ? `${(s.circulatingRatio * 100).toFixed(0)}%`
                   : "—"
               }
-              sub={
-                s.circulating != null
-                  ? `${fmtNum(s.circulating, 0)} circ`
-                  : undefined
-              }
+              sub={s.circulating != null ? `${fmtNum(s.circulating, 0)} circ` : undefined}
             />
-            <Tile label="Market Cap" value={fmtUsd(s.marketCap)} sub={s.fdv != null ? `FDV ${fmtUsd(s.fdv)}` : undefined} />
+            <Tile
+              label="Market Cap"
+              value={fmtUsd(s.marketCap)}
+              sub={s.fdv != null ? `FDV ${fmtUsd(s.fdv)}` : undefined}
+            />
             <Tile
               label="CEX vol conc."
               value={
@@ -138,38 +138,12 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
                   ? `${(a.exchangeVolumeConcentration * 100).toFixed(0)}%`
                   : "—"
               }
-              sub="top-3 / 24h vol"
+              sub="top-3 / 24h"
             />
           </div>
 
-          {(a.commits4w != null || a.githubStars != null || a.twitterFollowers != null) && (
-            <div className="flex flex-wrap gap-3 text-[11px] text-slate-400">
-              {a.commits4w != null && <span>Dev {a.commits4w} commits/4w</span>}
-              {a.githubStars != null && <span>★ {fmtNum(a.githubStars, 0)}</span>}
-              {a.twitterFollowers != null && (
-                <span>𝕏 {fmtNum(a.twitterFollowers, 0)}</span>
-              )}
-            </div>
-          )}
-
-          {d.topChains.length > 0 && (
-            <div>
-              <div className="mb-1 text-[10px] uppercase text-slate-500">Protocol chains</div>
-              <div className="flex flex-wrap gap-1.5">
-                {d.topChains.map((c) => (
-                  <span
-                    key={c.chain}
-                    className="rounded-md bg-slate-900/60 px-2 py-1 font-mono text-[10px] text-slate-300"
-                  >
-                    {c.chain} {fmtUsd(c.tvl)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
           {data.bitcoin && (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
               <Tile
                 label="Fee fast"
                 value={
@@ -205,10 +179,7 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
             </div>
           )}
 
-          <p className="text-[11px] leading-relaxed text-slate-400">{data.assessment}</p>
-          <p className="text-[9px] text-slate-600">
-            Free sources only. Exchange netflow / labeled whales cần Glassnode/CryptoQuant.
-          </p>
+          <p className="line-clamp-2 text-[11px] leading-relaxed text-slate-400">{data.assessment}</p>
         </div>
       )}
     </section>
