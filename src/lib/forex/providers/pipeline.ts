@@ -1,21 +1,12 @@
 /**
  * Multi-source quote pipeline (Phase 1):
- *
- *   Primary (Yahoo race)
- *        ↓
- *   Validate
- *        ↓
- *   Secondary (open.er-api / Frankfurter) — parallel when possible
- *        ↓
- *   Cross-check (divergence → DEGRADED)
- *        ↓
- *   Merge → Cache path in service
+ * Primary (Yahoo) → Validate → Secondary → Cross-check → Merge
  */
 
 import { ProviderError } from "@/lib/connectors/core";
 import { FOREX_PAIRS } from "../data";
 import { forProvider } from "@/lib/logger";
-import type { ForexQuote } from "../connectors";
+import type { ForexQuote } from "../types";
 import { fetchSecondarySnapshot } from "./secondary";
 
 const log = forProvider("forex-pipeline");
@@ -52,11 +43,6 @@ function relativeDiff(a: number, b: number): number {
   return Math.abs(a - b) / mid;
 }
 
-/**
- * Merge primary + secondary maps with cross-check.
- * Primary wins on price when both present; divergence flags degraded.
- * Secondary fills gaps when primary missing (Yahoo partial outage).
- */
 export function mergeWithCrossCheck(
   primary: Map<string, ForexQuote>,
   secondary: Map<string, ForexQuote> | null,
@@ -93,7 +79,6 @@ export function mergeWithCrossCheck(
       }
       out.set(sym, {
         ...p,
-        // Prefer primary mid; keep bid/ask from primary
         degraded,
         source:
           diff > CROSS_CHECK_DIVERGENCE
@@ -109,7 +94,6 @@ export function mergeWithCrossCheck(
     }
   }
 
-  // Ensure derived pairs exist if legs were filled from secondary-only
   for (const def of FOREX_PAIRS) {
     if (!def.derived || out.has(def.symbol)) continue;
     const l = out.get(def.derived.left);
@@ -165,10 +149,6 @@ export function mergeWithCrossCheck(
   };
 }
 
-/**
- * Run secondary in parallel with an already-resolved primary map.
- * Never throws for secondary failure — returns primary-only merge.
- */
 export async function enrichWithSecondary(
   primaryQuotes: ForexQuote[],
   primarySource: string,
@@ -215,7 +195,6 @@ export async function enrichWithSecondary(
   return result;
 }
 
-/** Secondary-only path when Yahoo completely fails. */
 export async function secondaryOnlySnapshot(): Promise<PipelineResult> {
   const sec = await fetchSecondarySnapshot();
   const empty = new Map<string, ForexQuote>();

@@ -1,11 +1,6 @@
 /**
  * Secondary FX quote providers (free, no API key).
  * Used for fallback when Yahoo is down and for cross-check on majors.
- *
- * Limitations:
- * - Mid rates only (no bid/ask)
- * - No gold / oil / DXY
- * - Reference-style latency (not HFT)
  */
 
 import {
@@ -16,7 +11,7 @@ import {
 } from "@/lib/connectors/core";
 import { FOREX_PAIRS, type ForexPairDef } from "../data";
 import { forProvider } from "@/lib/logger";
-import type { ForexQuote } from "../connectors";
+import type { ForexQuote } from "../types";
 
 const log = forProvider("forex-secondary");
 const ER_API = "open-er-api";
@@ -61,7 +56,6 @@ function buildFromUsdRates(
 
   for (const def of FOREX_PAIRS) {
     if (def.derived || !def.yahooSymbol) continue;
-    // Skip non-FX (gold, oil, index)
     if (def.category === "gold" || def.category === "oil" || def.category === "index") {
       continue;
     }

@@ -64,6 +64,12 @@ export interface ForexRawQuote {
   timestamp: Date;
 }
 
+/** Connector-level quote (may include quality flags). */
+export interface ForexQuote extends ForexRawQuote {
+  /** True when derived stale-leg, secondary-only, or cross-check diverge. */
+  degraded?: boolean;
+}
+
 export interface ForexNormalizeMeta {
   name?: string;
   category?: string;
