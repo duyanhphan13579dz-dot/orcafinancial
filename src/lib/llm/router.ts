@@ -1,12 +1,13 @@
 import { logger } from "@/lib/logger";
-import { glmProvider } from "./providers/glm";
+import { groqProvider } from "./providers/groq";
 import { openrouterProvider } from "./providers/openrouter";
 import type { LlmChatOptions, LlmMessage, LlmChatResult, LlmProvider, LlmProviderId } from "./types";
 
-const ALL: LlmProvider[] = [glmProvider, openrouterProvider];
+/** Order: Groq (primary) → OpenRouter (fallback). */
+const ALL: LlmProvider[] = [groqProvider, openrouterProvider];
 
 function orderedProviders(prefer?: LlmProviderId): LlmProvider[] {
-  const envOrder = (process.env.LLM_PROVIDER_ORDER ?? "glm,openrouter")
+  const envOrder = (process.env.LLM_PROVIDER_ORDER ?? "groq,openrouter")
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean) as LlmProviderId[];
@@ -36,12 +37,7 @@ export function llmEnvDiagnostics(): {
   order: LlmProviderId[];
 } {
   const keysPresent = {
-    ZAI_API_KEY: Boolean(
-      process.env.ZAI_API_KEY?.trim() ||
-        process.env.ZHIPU_API_KEY?.trim() ||
-        process.env.GLM_API_KEY?.trim() ||
-        process.env.BIGMODEL_API_KEY?.trim(),
-    ),
+    GROQ_API_KEY: Boolean(process.env.GROQ_API_KEY?.trim() || process.env.GROQ_KEY?.trim()),
     OPENROUTER_API_KEY: Boolean(
       process.env.OPENROUTER_API_KEY?.trim() || process.env.OPENROUTES_API_KEY?.trim(),
     ),
@@ -77,7 +73,7 @@ export type ChatWithFallbackResult = {
   transient: boolean;
 };
 
-/** Sequential fallback. */
+/** Sequential: Groq first, then OpenRouter. */
 export async function chatWithFallbackDetailed(
   messages: LlmMessage[],
   opts: LlmChatOptions = {},
@@ -87,7 +83,7 @@ export async function chatWithFallbackDetailed(
     return {
       result: null,
       errors: [
-        "No LLM provider configured. Set ZAI_API_KEY (GLM) and/or OPENROUTER_API_KEY on Vercel Production.",
+        "No LLM provider configured. Set GROQ_API_KEY and/or OPENROUTER_API_KEY on Vercel Production.",
       ],
       attempted: [],
       transient: false,
@@ -96,7 +92,7 @@ export async function chatWithFallbackDetailed(
 
   const errors: string[] = [];
   const attempted: LlmProviderId[] = [];
-  const baseTimeout = opts.timeoutMs ?? 18_000;
+  const baseTimeout = opts.timeoutMs ?? 16_000;
 
   for (let i = 0; i < providers.length; i++) {
     const provider = providers[i];
@@ -127,66 +123,15 @@ export async function chatWithFallbackDetailed(
 }
 
 /**
- * True first-success race: return as soon as ANY provider succeeds.
- * Does NOT wait for the slow loser (fixes 504 when one provider hangs).
+ * First-success race (optional parallel). Default agent path uses sequential
+ * Groq → OpenRouter via chatWithFallbackDetailed for predictable order.
  */
 export async function chatRaceProviders(
   messages: LlmMessage[],
   opts: LlmChatOptions = {},
 ): Promise<ChatWithFallbackResult> {
-  const providers = orderedProviders(opts.prefer);
-  if (providers.length === 0) {
-    return {
-      result: null,
-      errors: ["No LLM provider configured."],
-      attempted: [],
-      transient: false,
-    };
-  }
-
-  if (providers.length === 1) {
-    return chatWithFallbackDetailed(messages, opts);
-  }
-
-  const timeoutMs = opts.timeoutMs ?? 18_000;
-  const errors: string[] = [];
-  const attempted = providers.map((p) => p.id);
-
-  return new Promise<ChatWithFallbackResult>((resolve) => {
-    let pending = providers.length;
-    let settled = false;
-
-    for (const provider of providers) {
-      provider
-        .chat(messages, { ...opts, timeoutMs })
-        .then((result) => {
-          if (settled) return;
-          settled = true;
-          logger.info("llm_race_ok", {
-            provider: provider.id,
-            model: result.model,
-            latencyMs: result.latencyMs,
-          });
-          resolve({
-            result,
-            errors,
-            attempted,
-            transient: false,
-          });
-        })
-        .catch((err) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`${provider.id}: ${msg.slice(0, 220)}`);
-          logger.warn("llm_race_fail", { provider: provider.id, error: msg });
-          pending -= 1;
-          if (!settled && pending === 0) {
-            settled = true;
-            const transient = errors.some((e) => isTransientLlmError(e));
-            resolve({ result: null, errors, attempted, transient });
-          }
-        });
-    }
-  });
+  // Prefer sequential order for this product requirement
+  return chatWithFallbackDetailed(messages, opts);
 }
 
 export async function chatWithFallback(

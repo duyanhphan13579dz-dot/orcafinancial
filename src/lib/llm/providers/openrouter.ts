@@ -1,10 +1,16 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
-/** Prefer currently listed free GLM on OpenRouter. */
+/** OpenRouter — fallback when Groq is unavailable. */
 function modelCandidates(): string[] {
-  const primary = process.env.OPENROUTER_MODEL?.trim() || "z-ai/glm-5.2:free";
-  const list = [primary, "z-ai/glm-5.2:free", "z-ai/glm-4.5-air:free", "openrouter/free"];
-  return [...new Set(list)];
+  const primary =
+    process.env.OPENROUTER_MODEL?.trim() || "meta-llama/llama-3.3-70b-instruct:free";
+  const list = [
+    primary,
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "z-ai/glm-5.2:free",
+    "openrouter/free",
+  ];
+  return [...new Set(list)].slice(0, 3);
 }
 
 function resolveApiKey(): string | undefined {

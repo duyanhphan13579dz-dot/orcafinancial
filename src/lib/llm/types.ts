@@ -1,6 +1,6 @@
 /** Shared types for multi-provider LLM layer. */
 
-export type LlmProviderId = "glm" | "openrouter";
+export type LlmProviderId = "groq" | "openrouter";
 
 export interface LlmMessage {
   role: "system" | "user" | "assistant";
