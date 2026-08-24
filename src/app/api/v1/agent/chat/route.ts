@@ -8,10 +8,8 @@ import {
   type FundamentalReport,
 } from "@/lib/fundamental";
 import {
-  buildAdvisorFallback,
   listConfiguredProviders,
   llmEnvDiagnostics,
-  isLlmStrict,
   smoothAgentAnswer,
   agentNarrativeDetailed,
 } from "@/lib/llm";
@@ -151,7 +149,8 @@ function fmt(n: number | null | undefined, digits = 2): string {
   return n === null || n === undefined || !Number.isFinite(n) ? "n/a" : n.toFixed(digits);
 }
 
-function composeDeterministicAnswer(
+/** Raw numbers for LLM only — never shown directly to user. */
+function composeDataContext(
   message: string,
   intent: AgentIntent,
   contexts: SymbolContext[],
@@ -162,61 +161,47 @@ function composeDeterministicAnswer(
   playbookContext: string | null,
 ): string {
   const parts: string[] = [];
-  parts.push(`Chủ đề gợi ý (nội bộ): ${intent}`);
-  parts.push(`Nội dung khách hỏi: ${message}`);
+  parts.push(`intent: ${intent}`);
+  parts.push(`question: ${message}`);
   if (playbookContext) parts.push(playbookContext);
-  if (intent === "personal_finance") {
-    parts.push(
-      personalContext ??
-        "Chưa có hồ sơ thu nhập/chi tiêu đầy đủ. Vẫn tư vấn từ số liệu trong câu hỏi.",
-    );
-  } else if (intent === "corporate_finance") {
-    parts.push(
-      corporateContext ??
-        "Chưa có BCTC đầy đủ. Đưa khung phân tích (dòng tiền, vốn lưu động, đòn bẩy).",
-    );
-  } else if (intent === "wealth") {
-    parts.push("Wealth: bám khẩu vị rủi ro, chân trời, đa dạng hóa, tái cân bằng.");
-    if (personalContext) parts.push(personalContext);
-  } else if (intent === "general") {
-    parts.push("Trả lời mọi góc độ tiền bạc/tài chính liên quan câu hỏi.");
-  }
+  if (personalContext) parts.push(personalContext);
+  if (corporateContext) parts.push(corporateContext);
   if (market) {
     const idxLine = market.indices
       .map(
         (idx) =>
-          `${idx.name} ở mức ${fmt(idx.close)} (${(idx.changePct ?? 0) >= 0 ? "+" : ""}${fmt(idx.changePct)}%)`,
+          `${idx.name}=${fmt(idx.close)} (${(idx.changePct ?? 0) >= 0 ? "+" : ""}${fmt(idx.changePct)}%)`,
       )
       .join("; ");
-    parts.push(`Chỉ số hiện tại: ${idxLine}.`);
+    parts.push(`indices: ${idxLine}`);
     parts.push(
-      `Độ rộng mẫu ${market.breadth.sample} mã: ${market.breadth.advancers} tăng, ${market.breadth.decliners} giảm.`,
+      `breadth: sample=${market.breadth.sample} up=${market.breadth.advancers} down=${market.breadth.decliners}`,
     );
   }
-  if (headlines.length > 0) parts.push(`Tin gần đây: ${headlines.slice(0, 5).join("; ")}.`);
+  if (headlines.length > 0) parts.push(`news: ${headlines.slice(0, 5).join(" | ")}`);
   for (const c of contexts) {
     const a = c.analysis;
     parts.push(
-      `Với ${c.symbol}, khuyến nghị kỹ thuật ${a.recommendation} (độ tin cậy ${(a.confidence * 100).toFixed(0)}%). Giá ${fmt(a.lastClose)}, 1D ${fmt(a.changePct1d)}%, 1M ${fmt(a.changePct1m)}% (nguồn ${c.quote.source}).`,
+      `symbol=${c.symbol} rec=${a.recommendation} conf=${(a.confidence * 100).toFixed(0)}% price=${fmt(a.lastClose)} d1=${fmt(a.changePct1d)}% m1=${fmt(a.changePct1m)}% src=${c.quote.source}`,
     );
-    let tech = `RSI(14) ${fmt(a.rsi14, 1)}, MACD hist ${fmt(a.macd?.histogram, 3)}, SMA20 ${fmt(a.sma20)}, SMA50 ${fmt(a.sma50)}.`;
+    parts.push(
+      `tech rsi14=${fmt(a.rsi14, 1)} macd_hist=${fmt(a.macd?.histogram, 3)} sma20=${fmt(a.sma20)} sma50=${fmt(a.sma50)}`,
+    );
     if (a.supportResistance) {
-      tech += ` Hỗ trợ ${fmt(a.supportResistance.support)}, kháng cự ${fmt(a.supportResistance.resistance)}.`;
+      parts.push(
+        `sr support=${fmt(a.supportResistance.support)} resist=${fmt(a.supportResistance.resistance)}`,
+      );
     }
-    parts.push(tech);
-    if (a.reasons.length) parts.push(`Lý do: ${a.reasons.join("; ")}.`);
+    if (a.reasons.length) parts.push(`reasons: ${a.reasons.join("; ")}`);
     if (c.fundamental) {
       const f = c.fundamental;
       parts.push(
-        `Cơ bản: ${f.financialHealth.rating} (${f.financialHealth.overallScore}/100). EPS ${fmt(f.eps)}, ROE ${fmt(f.roe)}%, P/E ${fmt(f.valuation.pe, 1)}. ${f.valuation.verdictVi}.`,
+        `fund health=${f.financialHealth.rating} score=${f.financialHealth.overallScore} eps=${fmt(f.eps)} roe=${fmt(f.roe)} pe=${fmt(f.valuation.pe, 1)} verdict=${f.valuation.verdictVi}`,
       );
     }
-    parts.push(
-      `Tâm lý tin: ${c.sentimentLabel.toLowerCase()} (${c.sentimentScore >= 0 ? "+" : ""}${c.sentimentScore.toFixed(2)}).`,
-    );
+    parts.push(`sentiment=${c.sentimentLabel} score=${c.sentimentScore.toFixed(2)}`);
   }
-  parts.push("Cuối cùng nhắc nhẹ: nội dung mang tính tham khảo.");
-  return parts.join("\n\n");
+  return parts.join("\n");
 }
 
 export async function POST(req: NextRequest) {
@@ -264,9 +249,8 @@ export async function POST(req: NextRequest) {
       ...new Set([...message.toUpperCase().matchAll(TICKER_RE)].map((m) => m[1])),
     ].slice(0, 2);
 
-    // Early cache probe (symbols unknown yet → try message-only key first)
     const earlyCache = await getCachedAgentAnswer(message, candidates);
-    if (earlyCache) {
+    if (earlyCache && !earlyCache.model.includes("soft") && !earlyCache.model.includes("rule")) {
       const latencyMs = Date.now() - started;
       const sessionId =
         req.cookies.get("vnstock_session")?.value ??
@@ -344,7 +328,8 @@ export async function POST(req: NextRequest) {
       return fail("Không lấy được dữ liệu mã. Thử lại sau vài giây.", 503);
     }
 
-    const deterministic = composeDeterministicAnswer(
+    // Data Engine → raw context only (never user-facing)
+    const dataContext = composeDataContext(
       message,
       intent,
       contexts,
@@ -356,35 +341,28 @@ export async function POST(req: NextRequest) {
     );
 
     const produced = await withAgentSingleFlight(message, validated, async () => {
-      const narrative = await agentNarrativeDetailed(message, deterministic, {
+      const narrative = await agentNarrativeDetailed(message, dataContext, {
         followUp: isFollowUp,
       });
       const llmResult = narrative.result;
 
-      if (!llmResult) {
-        const softOk = narrative.transient || isFollowUp;
-        if (isLlmStrict() && !softOk) {
-          throw Object.assign(new Error("LLM_FAILED"), {
-            llmErrors: narrative.errors,
-            llmAttempted: narrative.attempted,
-            keysPresent: envDiag.keysPresent,
-          });
-        }
-        logger.warn("agent_llm_soft_degrade", {
+      // LLM-first: if no LLM text, do NOT dump data-engine template to user
+      if (!llmResult?.text?.trim()) {
+        logger.error("agent_llm_unavailable", {
+          errors: narrative.errors.slice(0, 4),
+          attempted: narrative.attempted,
           transient: narrative.transient,
-          followUp: isFollowUp,
-          errors: narrative.errors.slice(0, 3),
+        });
+        throw Object.assign(new Error("LLM_FAILED"), {
+          llmErrors: narrative.errors,
+          llmAttempted: narrative.attempted,
+          keysPresent: envDiag.keysPresent,
+          transient: narrative.transient,
         });
       }
 
-      const answer = smoothAgentAnswer(
-        llmResult?.text ?? buildAdvisorFallback(message, deterministic),
-      );
-      const model = llmResult
-        ? `${llmResult.provider}/${llmResult.model}`
-        : narrative.transient
-          ? "data-engine/soft"
-          : "rule-engine";
+      const answer = smoothAgentAnswer(llmResult.text);
+      const model = `${llmResult.provider}/${llmResult.model}`;
 
       return {
         answer,
@@ -392,31 +370,10 @@ export async function POST(req: NextRequest) {
         intent,
         symbols: validated,
         cachedAt: Date.now(),
-        _llmErrors: llmResult ? undefined : narrative.errors.slice(0, 6),
         _llmAttempted: narrative.attempted,
-        _llmSoft: !llmResult && (narrative.transient || isFollowUp),
-        _llmProvider: llmResult?.provider ?? null,
+        _llmProvider: llmResult.provider,
       } as const;
-    }).catch((err: unknown) => {
-      if (err instanceof Error && err.message === "LLM_FAILED") {
-        const e = err as Error & {
-          llmErrors?: string[];
-          llmAttempted?: string[];
-          keysPresent?: Record<string, boolean>;
-        };
-        throw e;
-      }
-      throw err;
     });
-
-    // Handle strict LLM failure
-    if (
-      produced &&
-      "message" in (produced as object) &&
-      (produced as { message?: string }).message === "LLM_FAILED"
-    ) {
-      // unreachable — throw above
-    }
 
     const answer = produced.answer;
     const model = produced.model;
@@ -467,13 +424,11 @@ export async function POST(req: NextRequest) {
         rag: Boolean(playbookContext),
         providersConfigured: providers.map((p) => p.id),
         llmAttempted: (produced as { _llmAttempted?: string[] })._llmAttempted,
-        llmErrors: (produced as { _llmErrors?: string[] })._llmErrors,
-        llmSoft: (produced as { _llmSoft?: boolean })._llmSoft,
         llmKeysPresent: envDiag.keysPresent,
       },
       {
         latencyMs,
-        source: playbookContext ? "rag-playbook+data-engine+llm" : "data-engine+intent+llm",
+        source: "llm+data-context",
         confidence: contexts[0]?.analysis.confidence ?? 0.85,
         llmProvider: (produced as { _llmProvider?: string | null })._llmProvider ?? null,
       },
@@ -484,17 +439,18 @@ export async function POST(req: NextRequest) {
         llmErrors?: string[];
         llmAttempted?: string[];
         keysPresent?: Record<string, boolean>;
+        transient?: boolean;
       };
-      return fail(
-        "LLM (GLM/OpenRouter) không phản hồi. Kiểm tra API key, model và quota trên Vercel Production.",
-        503,
-        {
-          code: "LLM_FAILED",
-          llmErrors: e.llmErrors?.slice(0, 6),
-          llmAttempted: e.llmAttempted,
-          keysPresent: e.keysPresent,
-        },
-      );
+      // Human message — never mechanical data-engine dump
+      const retryHint = e.transient
+        ? "Mô hình đang bận hoặc quá tải. Bạn thử gửi lại câu hỏi sau 5–10 giây nhé."
+        : "Không kết nối được mô hình AI lúc này. Kiểm tra API key GLM/OpenRouter trên Vercel hoặc thử lại sau.";
+      return fail(retryHint, 503, {
+        code: "LLM_FAILED",
+        llmErrors: e.llmErrors?.slice(0, 6),
+        llmAttempted: e.llmAttempted,
+        keysPresent: e.keysPresent,
+      });
     }
     return handleError(err, "agent_chat");
   }
