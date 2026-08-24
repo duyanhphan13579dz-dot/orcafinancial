@@ -31,6 +31,7 @@ import {
   shouldCacheAgentAnswer,
   withAgentSingleFlight,
 } from "@/lib/agent/response-cache";
+import { getDbHealth } from "@/db";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +46,15 @@ type AgentIntent =
   | "corporate_finance"
   | "wealth"
   | "general";
+
+type SourceStatus = "ok" | "timeout" | "error" | "skipped" | "empty";
+
+interface SourceReport {
+  name: string;
+  status: SourceStatus;
+  ms?: number;
+  detail?: string;
+}
 
 function detectIntent(message: string, hasTickers: boolean): AgentIntent {
   const m = message
@@ -103,6 +113,7 @@ interface SymbolContext {
   sentimentScore: number;
   sentimentLabel: string;
   headlines: string[];
+  sources: SourceReport[];
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -119,6 +130,28 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
       },
     );
   });
+}
+
+async function timedSettle<T>(
+  label: string,
+  ms: number,
+  factory: () => Promise<T>,
+): Promise<{ value: T | null; report: SourceReport }> {
+  const t0 = Date.now();
+  try {
+    const value = await withTimeout(factory(), ms, label);
+    return {
+      value,
+      report: { name: label, status: "ok", ms: Date.now() - t0 },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const status: SourceStatus = /timeout/i.test(msg) ? "timeout" : "error";
+    return {
+      value: null,
+      report: { name: label, status, ms: Date.now() - t0, detail: msg.slice(0, 120) },
+    };
+  }
 }
 
 function minimalAnalysis(symbol: string, quote: Quote): AnalysisResult {
@@ -143,45 +176,46 @@ function minimalAnalysis(symbol: string, quote: Quote): AnalysisResult {
   };
 }
 
-/** Lightweight symbol context — capped so chat never hangs the gateway. */
+/** Parallel quote / history / news with tight budgets — partial OK. */
 async function buildSymbolContext(symbol: string): Promise<SymbolContext | null> {
-  try {
-    const to = Math.floor(Date.now() / 1000);
-    const from = to - 86400 * 90;
+  const to = Math.floor(Date.now() / 1000);
+  const from = to - 86400 * 90;
 
-    const [quote, hist, newsRes] = await Promise.all([
-      withTimeout(getQuote(symbol), 6_000, "quote").catch(() => null),
-      withTimeout(getHistory(symbol, from, to, "D"), 8_000, "history").catch(() => ({
-        bars: [] as Awaited<ReturnType<typeof getHistory>>["bars"],
-      })),
-      withTimeout(getNews({ symbol, limit: 2 }), 4_000, "news").catch(() => null),
-    ]);
+  const [quoteRes, histRes, newsRes] = await Promise.all([
+    timedSettle(`${symbol}.quote`, 5_000, () => getQuote(symbol)),
+    timedSettle(`${symbol}.history`, 6_000, () => getHistory(symbol, from, to, "D")),
+    timedSettle(`${symbol}.news`, 3_500, () => getNews({ symbol, limit: 2 })),
+  ]);
 
-    if (!quote) return null;
+  const sources: SourceReport[] = [quoteRes.report, histRes.report, newsRes.report];
 
-    const bars = hist.bars ?? [];
-    const analysis = bars.length >= 20 ? analyze(symbol, bars) : minimalAnalysis(symbol, quote);
-
-    const fundamental = bars.length >= 60 ? generateFundamentalReport(symbol, bars) : null;
-    const headlineText = (newsRes?.items ?? []).map((n) => n.title).join(" ");
-    const sScore = analyzeSentiment(headlineText);
-
-    return {
-      symbol,
-      quote,
-      analysis,
-      fundamental,
-      sentimentScore: sScore,
-      sentimentLabel: sentimentLabel(sScore),
-      headlines: newsRes?.items.map((n) => `${n.title} (${n.sourceName})`) ?? [],
-    };
-  } catch (err) {
-    logger.warn("agent_symbol_context_failed", {
-      symbol,
-      error: err instanceof Error ? err.message : String(err),
-    });
+  if (!quoteRes.value) {
+    logger.warn("agent_symbol_no_quote", { symbol, sources });
     return null;
   }
+
+  const quote = quoteRes.value;
+  const bars = histRes.value?.bars ?? [];
+  const analysis = bars.length >= 20 ? analyze(symbol, bars) : minimalAnalysis(symbol, quote);
+  const fundamental = bars.length >= 60 ? generateFundamentalReport(symbol, bars) : null;
+  const items = newsRes.value?.items ?? [];
+  const headlineText = items.map((n) => n.title).join(" ");
+  const sScore = analyzeSentiment(headlineText);
+
+  if (items.length === 0 && newsRes.report.status === "ok") {
+    sources.push({ name: `${symbol}.news`, status: "empty", ms: newsRes.report.ms });
+  }
+
+  return {
+    symbol,
+    quote,
+    analysis,
+    fundamental,
+    sentimentScore: sScore,
+    sentimentLabel: sentimentLabel(sScore),
+    headlines: items.map((n) => `${n.title} (${n.sourceName})`),
+    sources,
+  };
 }
 
 function fmt(n: number | null | undefined, digits = 2): string {
@@ -197,10 +231,19 @@ function composeDataContext(
   personalContext: string | null,
   corporateContext: string | null,
   playbookContext: string | null,
+  sourceReports: SourceReport[],
 ): string {
   const parts: string[] = [];
   parts.push(`intent: ${intent}`);
   parts.push(`question: ${message}`);
+
+  const failed = sourceReports.filter((s) => s.status === "timeout" || s.status === "error");
+  if (failed.length > 0) {
+    parts.push(
+      `data_gaps: ${failed.map((f) => `${f.name}=${f.status}`).join(", ")} (trả lời dựa trên dữ liệu còn lại)`,
+    );
+  }
+
   if (playbookContext) parts.push(playbookContext.slice(0, 800));
   if (personalContext) parts.push(personalContext.slice(0, 600));
   if (corporateContext) parts.push(corporateContext.slice(0, 600));
@@ -239,11 +282,21 @@ function composeDataContext(
   return parts.join("\n");
 }
 
+function newRequestId(): string {
+  try {
+    return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  } catch {
+    return `r${Date.now().toString(36)}`;
+  }
+}
+
 export async function POST(req: NextRequest) {
   const limited = checkRateLimit(req, 90);
   if (limited) return limited;
 
+  const requestId = newRequestId();
   const started = Date.now();
+  const allSources: SourceReport[] = [];
 
   try {
     const body = (await req.json()) as {
@@ -253,13 +306,14 @@ export async function POST(req: NextRequest) {
     };
 
     const message = body.message?.trim() ?? "";
-    if (!message) return fail("Missing message", 400);
-    if (message.length > 2000) return fail("Message too long", 400);
+    if (!message) return fail("Missing message", 400, { requestId });
+    if (message.length > 2000) return fail("Message too long", 400, { requestId });
 
     const authedUser = await getAuthedUser(req);
     if (!authedUser) {
       return fail("Vui lòng đăng nhập để dùng AI Agent và lưu lịch sử chat.", 401, {
         code: "AUTH_REQUIRED",
+        requestId,
       });
     }
 
@@ -270,7 +324,7 @@ export async function POST(req: NextRequest) {
       return fail(
         "Chưa cấu hình LLM. Thêm GROQ_API_KEY và/hoặc OPENROUTER_API_KEY trên Vercel Production rồi redeploy.",
         503,
-        { code: "LLM_NOT_CONFIGURED", keysPresent: envDiag.keysPresent },
+        { code: "LLM_NOT_CONFIGURED", keysPresent: envDiag.keysPresent, requestId },
       );
     }
 
@@ -299,7 +353,20 @@ export async function POST(req: NextRequest) {
         response: earlyCache.answer,
         model: `${earlyCache.model}+cache`,
         latencyMs,
+      }).catch(() => ({
+        conversationId: requestedConversationId,
+        saved: false as const,
+        error: "history_skipped",
+      }));
+
+      logger.info("agent_request_complete", {
+        requestId,
+        cacheHit: true,
+        latencyMs,
+        intent: earlyCache.intent,
+        symbols: earlyCache.symbols,
       });
+
       return ok(
         {
           answer: earlyCache.answer,
@@ -310,6 +377,7 @@ export async function POST(req: NextRequest) {
           historySaved: saved.saved,
           historyError: saved.error ?? null,
           cacheHit: true,
+          requestId,
           providersConfigured: providers.map((p) => p.id),
         },
         {
@@ -317,6 +385,7 @@ export async function POST(req: NextRequest) {
           source: "redis-agent-cache",
           confidence: 0.9,
           llmProvider: null,
+          requestId,
         },
       );
     }
@@ -325,12 +394,9 @@ export async function POST(req: NextRequest) {
     if (candidates.length > 0) {
       const checks = await Promise.all(
         candidates.map(async (c) => {
-          try {
-            await withTimeout(searchSymbols(c), 3_500, "search");
-            return c;
-          } catch {
-            return c;
-          }
+          const r = await timedSettle(`search.${c}`, 3_000, () => searchSymbols(c));
+          allSources.push(r.report);
+          return c;
         }),
       );
       validated.push(...checks);
@@ -340,50 +406,62 @@ export async function POST(req: NextRequest) {
     const needMarket = intent === "market_ticker" || intent === "market_overview";
     const playbookContext = retrievePlaybookContext(message, intent) || null;
 
-    type DataBudget = [
-      SymbolContext[],
-      Awaited<ReturnType<typeof getMarketOverview>> | null,
-      Awaited<ReturnType<typeof getNews>> | null,
-      string | null,
-      string | null,
-    ];
+    // Parallel data plane — hard budget so serverless stays under maxDuration
+    const DATA_BUDGET_MS = 10_000;
 
-    const emptyBudget: DataBudget = [[], null, null, null, null];
-
-    const dataBudget: DataBudget = await withTimeout(
-      Promise.all([
+    const dataStarted = Date.now();
+    const [
+      contextsSettled,
+      marketSettled,
+      newsSettled,
+      pfSettled,
+      dnSettled,
+    ] = await Promise.all([
+      withTimeout(
         Promise.all(validated.map(buildSymbolContext)).then((list) =>
           list.filter((c): c is SymbolContext => c !== null),
         ),
-        needMarket || intent === "wealth"
-          ? withTimeout(getMarketOverview(), 5_000, "overview").catch(() => null)
-          : Promise.resolve(null),
-        intent === "market_overview" || intent === "market_ticker"
-          ? withTimeout(getNews({ limit: 3 }), 4_000, "news").catch(() => null)
-          : Promise.resolve(null),
-        intent === "personal_finance" || intent === "wealth"
-          ? withTimeout(buildPersonalFinanceContext(authedUser.id), 3_000, "pf").catch(
-              () => null,
-            )
-          : Promise.resolve(null),
-        intent === "corporate_finance"
-          ? withTimeout(
-              buildCorporateFinanceContext(authedUser.id, body.companyName),
-              3_000,
-              "dn",
-            ).catch(() => null)
-          : Promise.resolve(null),
-      ]) as Promise<DataBudget>,
-      12_000,
-      "data_engine",
-    ).catch((err) => {
-      logger.warn("agent_data_engine_budget", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return emptyBudget;
-    });
+        DATA_BUDGET_MS,
+        "symbols",
+      ).catch(() => [] as SymbolContext[]),
+      needMarket || intent === "wealth"
+        ? timedSettle("market.overview", 5_000, () => getMarketOverview())
+        : Promise.resolve({
+            value: null as Awaited<ReturnType<typeof getMarketOverview>> | null,
+            report: { name: "market.overview", status: "skipped" as SourceStatus },
+          }),
+      intent === "market_overview" || intent === "market_ticker"
+        ? timedSettle("news.list", 3_500, () => getNews({ limit: 3 }))
+        : Promise.resolve({
+            value: null as Awaited<ReturnType<typeof getNews>> | null,
+            report: { name: "news.list", status: "skipped" as SourceStatus },
+          }),
+      intent === "personal_finance" || intent === "wealth"
+        ? timedSettle("personal_finance", 2_500, () =>
+            buildPersonalFinanceContext(authedUser.id),
+          )
+        : Promise.resolve({
+            value: null as string | null,
+            report: { name: "personal_finance", status: "skipped" as SourceStatus },
+          }),
+      intent === "corporate_finance"
+        ? timedSettle("corporate_finance", 2_500, () =>
+            buildCorporateFinanceContext(authedUser.id, body.companyName),
+          )
+        : Promise.resolve({
+            value: null as string | null,
+            report: { name: "corporate_finance", status: "skipped" as SourceStatus },
+          }),
+    ]);
 
-    const [contexts, market, newsRes, personalContext, corporateContext] = dataBudget;
+    const contexts = Array.isArray(contextsSettled) ? contextsSettled : [];
+    for (const c of contexts) allSources.push(...c.sources);
+    allSources.push(marketSettled.report, newsSettled.report, pfSettled.report, dnSettled.report);
+
+    const market = marketSettled.value;
+    const newsRes = newsSettled.value;
+    const personalContext = pfSettled.value;
+    const corporateContext = dnSettled.value;
 
     const headlines = newsRes?.items?.map((n) => `${n.title} (${n.sourceName})`) ?? [];
     const personalized = Boolean(personalContext || corporateContext);
@@ -397,15 +475,24 @@ export async function POST(req: NextRequest) {
       personalContext,
       corporateContext,
       playbookContext,
+      allSources,
     );
 
+    const dbHealth = getDbHealth();
+    const dataMs = Date.now() - dataStarted;
+
     logger.info("agent_data_ready", {
+      requestId,
       intent,
       symbols: validated,
       contextChars: dataContext.length,
-      dataMs: Date.now() - started,
+      dataMs,
+      sources: allSources.map((s) => `${s.name}:${s.status}${s.ms != null ? `(${s.ms}ms)` : ""}`),
+      dbStatus: dbHealth.status,
+      failedSources: allSources.filter((s) => s.status === "timeout" || s.status === "error").length,
     });
 
+    const llmStarted = Date.now();
     const produced = await withAgentSingleFlight(message, validated, async () => {
       const narrative = await agentNarrativeDetailed(message, dataContext, {
         followUp: isFollowUp,
@@ -414,6 +501,7 @@ export async function POST(req: NextRequest) {
 
       if (!llmResult?.text?.trim()) {
         logger.error("agent_llm_unavailable", {
+          requestId,
           errors: narrative.errors.slice(0, 4),
           attempted: narrative.attempted,
           transient: narrative.transient,
@@ -437,12 +525,14 @@ export async function POST(req: NextRequest) {
         cachedAt: Date.now(),
         _llmAttempted: narrative.attempted,
         _llmProvider: llmResult.provider,
+        _llmMs: Date.now() - llmStarted,
       } as const;
     });
 
     const answer = produced.answer;
     const model = produced.model;
     const latencyMs = Date.now() - started;
+    const llmMs = (produced as { _llmMs?: number })._llmMs ?? null;
 
     if (shouldCacheAgentAnswer(intent, personalized, message) && answer.length > 40) {
       void setCachedAgentAnswer(message, validated, {
@@ -458,6 +548,7 @@ export async function POST(req: NextRequest) {
       req.cookies.get("refreshToken")?.value?.slice(0, 64) ??
       authedUser.id.slice(0, 64);
 
+    // History is best-effort — never fail the Agent response because DB is down
     let saved: { conversationId: string | null; saved: boolean; error?: string } = {
       conversationId: requestedConversationId,
       saved: false,
@@ -473,11 +564,12 @@ export async function POST(req: NextRequest) {
           model,
           latencyMs,
         }),
-        4_000,
+        3_000,
         "history",
       );
     } catch (err) {
-      logger.error("agent_history_save_failed", {
+      logger.warn("agent_history_save_failed", {
+        requestId,
         error: err instanceof Error ? err.message : String(err),
         userId: authedUser.id,
       });
@@ -487,6 +579,27 @@ export async function POST(req: NextRequest) {
         error: err instanceof Error ? err.message : "history_timeout",
       };
     }
+
+    const failedSources = allSources.filter(
+      (s) => s.status === "timeout" || s.status === "error",
+    );
+
+    logger.info("agent_request_complete", {
+      requestId,
+      final: "SUCCESS",
+      latencyMs,
+      dataMs,
+      llmMs,
+      intent,
+      symbols: validated,
+      model,
+      llmProvider: (produced as { _llmProvider?: string | null })._llmProvider ?? null,
+      dbStatus: dbHealth.status,
+      sourcesOk: allSources.filter((s) => s.status === "ok").length,
+      sourcesFailed: failedSources.length,
+      failed: failedSources.map((f) => `${f.name}:${f.status}`),
+      historySaved: saved.saved,
+    });
 
     return ok(
       {
@@ -500,18 +613,28 @@ export async function POST(req: NextRequest) {
         cacheHit: false,
         personalized,
         rag: Boolean(playbookContext),
+        requestId,
         providersConfigured: providers.map((p) => p.id),
         llmAttempted: (produced as { _llmAttempted?: string[] })._llmAttempted,
         llmKeysPresent: envDiag.keysPresent,
+        diagnostics: {
+          dataMs,
+          llmMs,
+          dbStatus: dbHealth.status,
+          sources: allSources,
+          partial: failedSources.length > 0,
+        },
       },
       {
         latencyMs,
-        source: "data-engine→groq|openrouter",
+        source: "data-engine→llm",
         confidence: contexts[0]?.analysis.confidence ?? 0.85,
         llmProvider: (produced as { _llmProvider?: string | null })._llmProvider ?? null,
+        requestId,
       },
     );
   } catch (err) {
+    const latencyMs = Date.now() - started;
     if (err instanceof Error && err.message === "LLM_FAILED") {
       const e = err as Error & {
         llmErrors?: string[];
@@ -523,13 +646,32 @@ export async function POST(req: NextRequest) {
       const retryHint = e.transient
         ? `Mô hình đang bận hoặc quá tải. ${detail ? `(${detail}) ` : ""}Thử lại sau 5–10 giây.`
         : `Không kết nối được mô hình AI. Kiểm tra GROQ_API_KEY / OPENROUTER_API_KEY. ${detail ?? ""}`;
+
+      logger.error("agent_request_failed", {
+        requestId,
+        final: "LLM_FAILED",
+        latencyMs,
+        llmErrors: e.llmErrors?.slice(0, 4),
+        sources: allSources,
+      });
+
       return fail(retryHint, 503, {
         code: "LLM_FAILED",
+        requestId,
         llmErrors: e.llmErrors?.slice(0, 6),
         llmAttempted: e.llmAttempted,
         keysPresent: e.keysPresent,
       });
     }
-    return handleError(err, "agent_chat");
+
+    logger.error("agent_request_failed", {
+      requestId,
+      final: "ERROR",
+      latencyMs,
+      error: err instanceof Error ? err.message : String(err),
+      sources: allSources,
+    });
+
+    return handleError(err, `agent_chat:${requestId}`);
   }
 }
