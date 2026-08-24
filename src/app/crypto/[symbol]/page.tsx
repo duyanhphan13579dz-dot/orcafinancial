@@ -15,6 +15,7 @@ import {
 import { CryptoOnChainPanel } from "@/components/crypto-onchain-panel";
 import { CryptoSentimentPanel } from "@/components/crypto-sentiment-panel";
 import { api, changeColor, fmtNum, fmtPct } from "@/lib/client";
+import { isDocumentVisible, whenVisible } from "@/lib/client-visibility";
 import {
   createBinanceWebSocket,
   type BinanceKline,
@@ -83,8 +84,17 @@ interface Bundle {
   futures?: FuturesIntelligence | null;
 }
 
+interface IntelPayload {
+  futures: FuturesIntelligence | null;
+  orderFlow: OrderFlowIntelligence | null;
+  whale: WhaleLiquidationIntelligence | null;
+  layersOk: string[];
+  cacheHit?: boolean;
+}
+
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
 const LEVERAGE_PRESETS = [0, 5, 10, 20, 50, 100, 125, 200, 500];
+const INTEL_POLL_MS = 8_000;
 
 export default function CryptoDetail() {
   const params = useParams();
@@ -104,6 +114,7 @@ export default function CryptoDetail() {
   const [wsKline, setWsKline] = useState<BinanceKline | null>(null);
   const [orderFlow, setOrderFlow] = useState<OrderFlowIntelligence | null>(null);
   const [whaleLiq, setWhaleLiq] = useState<WhaleLiquidationIntelligence | null>(null);
+  const [intelFutures, setIntelFutures] = useState<FuturesIntelligence | null>(null);
   const [leverage, setLeverage] = useState(10);
 
   const initialDone = useRef(false);
@@ -155,12 +166,6 @@ export default function CryptoDetail() {
             futures: null,
           });
           setError(null);
-          void api<FuturesIntelligence>(`/crypto/${encodeURIComponent(symbol)}/futures`)
-            .then((f) => {
-              if (!cancelled)
-                setBundle((prev) => (prev ? { ...prev, futures: f.data } : prev));
-            })
-            .catch(() => undefined);
         } catch {
           setError(err instanceof Error ? err.message : String(err));
         }
@@ -174,39 +179,32 @@ export default function CryptoDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
 
+  // Single batched intel poll (futures + orderflow + whale)
   useEffect(() => {
     if (!symbol) return;
     let cancelled = false;
     const load = () => {
-      void api<OrderFlowIntelligence>(`/crypto/${encodeURIComponent(symbol)}/orderflow`)
+      if (!isDocumentVisible()) return;
+      void api<IntelPayload>(`/crypto/${encodeURIComponent(symbol)}/intel`)
         .then((r) => {
-          if (!cancelled) setOrderFlow(r.data);
+          if (cancelled) return;
+          const d = r.data;
+          if (d.orderFlow) setOrderFlow(d.orderFlow);
+          if (d.whale) setWhaleLiq(d.whale);
+          if (d.futures) {
+            setIntelFutures(d.futures);
+            setBundle((prev) => (prev ? { ...prev, futures: d.futures } : prev));
+          }
         })
         .catch(() => undefined);
     };
     load();
-    const id = setInterval(load, 5_000);
+    const id = setInterval(load, INTEL_POLL_MS);
+    const off = whenVisible(load);
     return () => {
       cancelled = true;
       clearInterval(id);
-    };
-  }, [symbol]);
-
-  useEffect(() => {
-    if (!symbol) return;
-    let cancelled = false;
-    const load = () => {
-      void api<WhaleLiquidationIntelligence>(`/crypto/${encodeURIComponent(symbol)}/whale`)
-        .then((r) => {
-          if (!cancelled) setWhaleLiq(r.data);
-        })
-        .catch(() => undefined);
-    };
-    load();
-    const id = setInterval(load, 30_000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
+      off();
     };
   }, [symbol]);
 
@@ -299,7 +297,7 @@ export default function CryptoDetail() {
 
   const coin = bundle?.coin;
   const analysis = bundle?.analysis;
-  const futures = bundle?.futures;
+  const futures = intelFutures ?? bundle?.futures ?? null;
 
   const levLevels = useMemo(() => {
     if (!analysis || !Number.isFinite(analysis.entryPrice)) return null;
@@ -333,29 +331,29 @@ export default function CryptoDetail() {
     v != null && v < 1 ? 6 : v != null && v < 100 ? 4 : 2;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Link href="/crypto" className="inline-block text-xs text-[#00d4ff] hover:underline">
         ← Thị trường Crypto
       </Link>
 
-      <div className="panel flex flex-wrap items-center gap-3 p-4">
+      <div className="panel flex flex-wrap items-center gap-3 p-3 sm:p-4">
         {coin?.logoUrl ? (
           <Image
             src={coin.logoUrl}
             alt=""
-            width={44}
-            height={44}
-            className="h-11 w-11 rounded-full"
+            width={40}
+            height={40}
+            className="h-10 w-10 rounded-full"
             priority
           />
         ) : (
-          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#00d4ff]/15 text-sm font-bold text-[#00d4ff]">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#00d4ff]/15 text-sm font-bold text-[#00d4ff]">
             {symbol.slice(0, 2)}
           </div>
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate text-xl font-black text-white sm:text-2xl">
+            <h1 className="truncate text-lg font-black text-white sm:text-xl">
               {coin?.name ?? symbol}
             </h1>
             <span className="text-sm text-slate-500">{symbol}</span>
@@ -402,21 +400,21 @@ export default function CryptoDetail() {
         {loading && chartBars.length === 0 ? (
           <ChartSkeleton />
         ) : error && chartBars.length === 0 ? (
-          <div className="flex h-[360px] items-center justify-center text-sm text-rose-400">
+          <div className="flex h-[320px] items-center justify-center text-sm text-rose-400">
             {error}
           </div>
         ) : chartBars.length > 0 ? (
           <div className={chartLoading ? "opacity-60 transition-opacity" : ""}>
-            <CandleChart bars={chartBars} height={360} />
+            <CandleChart bars={chartBars} height={320} />
           </div>
         ) : (
-          <div className="flex h-[360px] items-center justify-center text-sm text-slate-500">
+          <div className="flex h-[320px] items-center justify-center text-sm text-slate-500">
             Không có OHLCV
           </div>
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
         {futures?.available && <FuturesPanel data={futures} />}
         {whaleLiq?.available && <WhalePanel data={whaleLiq} />}
         {orderFlow?.available && <OrderFlowPanel data={orderFlow} />}
@@ -424,8 +422,8 @@ export default function CryptoDetail() {
         <CryptoOnChainPanel symbol={symbol} />
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <div className={`panel border p-4 ${recCls}`}>
+      <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+        <div className={`panel border p-3.5 ${recCls}`}>
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="text-[10px] uppercase tracking-wide opacity-70">
@@ -444,7 +442,6 @@ export default function CryptoDetail() {
             </div>
           </div>
 
-          {/* Leverage slider */}
           <div className="mt-3 space-y-1.5">
             <div className="flex items-center justify-between text-[10px] opacity-70">
               <span>Đòn bẩy</span>
@@ -482,13 +479,19 @@ export default function CryptoDetail() {
             <div>
               <div className="opacity-60">Entry</div>
               <div className="font-mono text-sm font-semibold">
-                {fmtNum(levLevels?.entry ?? analysis?.entryPrice, pxDigits(levLevels?.entry ?? analysis?.entryPrice))}
+                {fmtNum(
+                  levLevels?.entry ?? analysis?.entryPrice,
+                  pxDigits(levLevels?.entry ?? analysis?.entryPrice),
+                )}
               </div>
             </div>
             <div>
               <div className="opacity-60">SL</div>
               <div className="font-mono text-sm font-semibold text-rose-300/90">
-                {fmtNum(levLevels?.stopLoss ?? analysis?.stopLoss, pxDigits(levLevels?.stopLoss ?? analysis?.stopLoss))}
+                {fmtNum(
+                  levLevels?.stopLoss ?? analysis?.stopLoss,
+                  pxDigits(levLevels?.stopLoss ?? analysis?.stopLoss),
+                )}
               </div>
               {levLevels?.slPct != null && (
                 <div className="text-[9px] opacity-60">{levLevels.slPct.toFixed(2)}%</div>
@@ -497,7 +500,10 @@ export default function CryptoDetail() {
             <div>
               <div className="opacity-60">TP</div>
               <div className="font-mono text-sm font-semibold text-emerald-300/90">
-                {fmtNum(levLevels?.takeProfit ?? analysis?.takeProfit, pxDigits(levLevels?.takeProfit ?? analysis?.takeProfit))}
+                {fmtNum(
+                  levLevels?.takeProfit ?? analysis?.takeProfit,
+                  pxDigits(levLevels?.takeProfit ?? analysis?.takeProfit),
+                )}
               </div>
               {levLevels?.tpPct != null && (
                 <div className="text-[9px] opacity-60">{levLevels.tpPct.toFixed(2)}%</div>
@@ -520,16 +526,16 @@ export default function CryptoDetail() {
             </div>
           )}
 
-          <ul className="mt-3 max-h-24 space-y-0.5 overflow-y-auto text-[11px] opacity-90">
-            {(analysis?.reasons ?? []).slice(0, 5).map((r, i) => (
+          <ul className="mt-3 max-h-20 space-y-0.5 overflow-y-auto text-[11px] opacity-90">
+            {(analysis?.reasons ?? []).slice(0, 4).map((r, i) => (
               <li key={i}>· {r}</li>
             ))}
           </ul>
         </div>
 
-        <div className="panel p-4">
-          <h2 className="mb-3 text-sm font-semibold text-white">Market</h2>
-          <div className="grid grid-cols-2 gap-y-2.5 text-xs">
+        <div className="panel p-3.5">
+          <h2 className="mb-2.5 text-sm font-semibold text-white">Market</h2>
+          <div className="grid grid-cols-2 gap-y-2 text-xs">
             <span className="text-slate-500">Price</span>
             <span className="text-right font-mono text-white">{fmtNum(price?.price, 6)}</span>
             <span className="text-slate-500">Volume 24h</span>
@@ -541,11 +547,11 @@ export default function CryptoDetail() {
           </div>
         </div>
 
-        <div className="panel p-4 md:col-span-2 xl:col-span-1">
-          <h2 className="mb-3 text-sm font-semibold text-white">Patterns</h2>
-          <div className="max-h-36 space-y-1 overflow-y-auto text-xs">
+        <div className="panel p-3.5 md:col-span-2 xl:col-span-1">
+          <h2 className="mb-2.5 text-sm font-semibold text-white">Patterns</h2>
+          <div className="max-h-32 space-y-1 overflow-y-auto text-xs">
             {[...(analysis?.chartPatterns ?? []), ...(analysis?.candlestickPatterns ?? [])]
-              .slice(0, 6)
+              .slice(0, 5)
               .map((p, i) => (
                 <div key={i} className="flex justify-between rounded bg-slate-900/40 px-2 py-1.5">
                   <span className="text-slate-300">{p.nameVi}</span>
@@ -570,13 +576,13 @@ export default function CryptoDetail() {
       </div>
 
       {analysis && (
-        <div className="panel p-4">
-          <h2 className="mb-3 text-sm font-semibold text-white">Technical indicators</h2>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+        <div className="panel p-3.5">
+          <h2 className="mb-2.5 text-sm font-semibold text-white">Technical indicators</h2>
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
             {Object.entries(analysis.indicators ?? {})
               .filter(([, v]) => typeof v === "number" || v === null)
               .map(([key, value]) => (
-                <div key={key} className="rounded-lg bg-slate-900/50 px-2.5 py-2 text-xs">
+                <div key={key} className="rounded-lg bg-slate-900/50 px-2 py-1.5 text-xs">
                   <div className="text-slate-500">{key}</div>
                   <div className="mt-0.5 font-mono text-white">
                     {typeof value === "number" ? fmtNum(value, 4) : "—"}
