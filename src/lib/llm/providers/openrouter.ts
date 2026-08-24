@@ -1,8 +1,10 @@
 import type { LlmChatOptions, LlmMessage, LlmProvider, LlmChatResult } from "../types";
 
+/** Prefer currently listed free GLM on OpenRouter. */
 function modelCandidates(): string[] {
-  const primary = process.env.OPENROUTER_MODEL?.trim() || "z-ai/glm-4.5-air:free";
-  return [primary];
+  const primary = process.env.OPENROUTER_MODEL?.trim() || "z-ai/glm-5.2:free";
+  const list = [primary, "z-ai/glm-5.2:free", "z-ai/glm-4.5-air:free", "openrouter/free"];
+  return [...new Set(list)];
 }
 
 function resolveApiKey(): string | undefined {
@@ -65,7 +67,16 @@ async function chatOne(
 async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<LlmChatResult> {
   const apiKey = resolveApiKey();
   if (!apiKey) throw new Error("OPENROUTER_API_KEY missing");
-  return chatOne(apiKey, modelCandidates()[0], messages, opts);
+
+  const errors: string[] = [];
+  for (const model of modelCandidates()) {
+    try {
+      return await chatOne(apiKey, model, messages, opts);
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  throw new Error(errors.slice(0, 2).join(" | ") || "OpenRouter failed");
 }
 
 export const openrouterProvider: LlmProvider = {

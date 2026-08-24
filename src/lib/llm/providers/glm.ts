@@ -20,8 +20,9 @@ function baseUrl(): string {
 
 function modelCandidates(): string[] {
   const primary = process.env.GLM_MODEL?.trim() || "glm-4.5-flash";
-  // Single model only — multi-model cascade caused long waits / 504
-  return [primary];
+  // Keep 2 candidates max for direct Z.AI
+  const list = [primary, "glm-4.7-flash", "glm-4.5-flash"];
+  return [...new Set(list)].slice(0, 2);
 }
 
 function isConfigured() {
@@ -64,7 +65,7 @@ async function chatOne(
     if (res.status === 429 || res.status === 503) {
       const errText = await res.text().catch(() => "");
       if (attempt === 0) {
-        await sleep(600);
+        await sleep(700);
         return chatOne(apiKey, model, messages, opts, 1);
       }
       throw new Error(`GLM HTTP ${res.status} rate_limited (${model}): ${errText.slice(0, 160)}`);
@@ -99,8 +100,15 @@ async function chat(messages: LlmMessage[], opts: LlmChatOptions = {}): Promise<
   const apiKey = resolveApiKey();
   if (!apiKey) throw new Error("ZAI_API_KEY / GLM_API_KEY missing");
 
-  const model = modelCandidates()[0];
-  return chatOne(apiKey, model, messages, opts, 0);
+  const errors: string[] = [];
+  for (const model of modelCandidates()) {
+    try {
+      return await chatOne(apiKey, model, messages, opts, 0);
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  throw new Error(errors.slice(0, 2).join(" | ") || "GLM failed");
 }
 
 export const glmProvider: LlmProvider = {
