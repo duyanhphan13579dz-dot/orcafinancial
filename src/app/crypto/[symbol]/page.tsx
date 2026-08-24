@@ -12,7 +12,7 @@ import {
   createBinanceWebSocket,
   type BinanceKline,
 } from "@/lib/crypto/binance-websocket";
-import type { FuturesIntelligence } from "@/lib/crypto/types";
+import type { FuturesIntelligence, OrderFlowIntelligence } from "@/lib/crypto/types";
 
 const ChartSkeleton = () => (
   <div className="h-[380px] w-full animate-pulse rounded-lg bg-slate-800/40" />
@@ -81,8 +81,8 @@ interface Bundle {
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
 function biasColor(bias: string): string {
-  if (bias.includes("LONG")) return "text-emerald-400";
-  if (bias.includes("SHORT")) return "text-rose-400";
+  if (bias.includes("LONG") || bias.includes("BUY")) return "text-emerald-400";
+  if (bias.includes("SHORT") || bias.includes("SELL")) return "text-rose-400";
   return "text-amber-300";
 }
 
@@ -98,6 +98,8 @@ function biasLabel(bias: string): string {
     SHORT_BUILDUP: "Short buildup",
     SHORT_COVERING: "Short covering",
     LONG_LIQUIDATION: "Long liquidation",
+    BUY_DOMINANT: "Buy-side dominant",
+    SELL_DOMINANT: "Sell-side dominant",
     UNKNOWN: "—",
   };
   return map[bias] ?? bias;
@@ -107,7 +109,20 @@ function fmtOiUsd(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
   if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
   return `$${fmtNum(n, 0)}`;
+}
+
+function fmtTime(ms: number): string {
+  try {
+    return new Date(ms).toLocaleTimeString("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
 }
 
 export default function CryptoDetail() {
@@ -126,6 +141,7 @@ export default function CryptoDetail() {
   >("connecting");
   const [wsPrice, setWsPrice] = useState<number | null>(null);
   const [wsKline, setWsKline] = useState<BinanceKline | null>(null);
+  const [orderFlow, setOrderFlow] = useState<OrderFlowIntelligence | null>(null);
 
   const initialDone = useRef(false);
 
@@ -177,7 +193,6 @@ export default function CryptoDetail() {
             futures: null,
           });
           setError(null);
-          // Futures can load independently
           void api<FuturesIntelligence>(`/crypto/${encodeURIComponent(symbol)}/futures`)
             .then((f) => {
               if (!cancelled) {
@@ -196,6 +211,25 @@ export default function CryptoDetail() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
+
+  // Phase 2 — poll order flow every 5s
+  useEffect(() => {
+    if (!symbol) return;
+    let cancelled = false;
+    const load = () => {
+      void api<OrderFlowIntelligence>(`/crypto/${encodeURIComponent(symbol)}/orderflow`)
+        .then((r) => {
+          if (!cancelled) setOrderFlow(r.data);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const id = setInterval(load, 5_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, [symbol]);
 
   const loadTimeframe = useCallback(
@@ -294,6 +328,13 @@ export default function CryptoDetail() {
   const analysis = bundle?.analysis;
   const sentiment = bundle?.sentiment;
   const futures = bundle?.futures;
+  const book = orderFlow?.orderBook;
+
+  const maxDepthNotional = useMemo(() => {
+    if (!book) return 1;
+    const all = [...book.bids, ...book.asks].map((l) => l.notional);
+    return Math.max(1, ...all);
+  }, [book]);
 
   const websocketText =
     wsStatus === "connected"
@@ -359,7 +400,6 @@ export default function CryptoDetail() {
         </div>
       </div>
 
-      {/* Phase 1 — Futures Intelligence */}
       {futures?.available && (
         <div className="panel p-4">
           <div className="mb-3 flex items-center justify-between">
@@ -426,6 +466,141 @@ export default function CryptoDetail() {
             <p className="text-slate-500">{futures.funding.insight}</p>
             <p className="text-slate-500">{futures.longShort.insight}</p>
           </div>
+        </div>
+      )}
+
+      {/* Phase 2 — Order Flow */}
+      {orderFlow?.available && (
+        <div className="panel p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-semibold text-white">Order Flow</h2>
+            <span className="text-[10px] text-slate-500">
+              Depth + trades · refresh 5s · whale ≥ {fmtOiUsd(orderFlow.whaleThresholdUsd)}
+            </span>
+          </div>
+
+          {book && (
+            <>
+              <div className="mb-3 rounded-lg bg-slate-900/40 p-3">
+                <div className="mb-1 flex justify-between text-[10px] text-slate-500">
+                  <span>Buy liquidity {book.imbalance.bidPct.toFixed(0)}%</span>
+                  <span className={biasColor(book.imbalance.bias)}>
+                    {biasLabel(book.imbalance.bias)}
+                  </span>
+                  <span>Sell liquidity {book.imbalance.askPct.toFixed(0)}%</span>
+                </div>
+                <div className="flex h-2 overflow-hidden rounded-full bg-slate-800">
+                  <div
+                    className="bg-emerald-500/80 transition-all"
+                    style={{ width: `${book.imbalance.bidPct}%` }}
+                  />
+                  <div
+                    className="bg-rose-500/80 transition-all"
+                    style={{ width: `${book.imbalance.askPct}%` }}
+                  />
+                </div>
+                <p className="mt-2 text-xs text-slate-400">{book.imbalance.insight}</p>
+                {book.spreadBps != null && (
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    Spread {book.spreadBps.toFixed(1)} bps · best {fmtNum(book.bestBid, 2)} /{" "}
+                    {fmtNum(book.bestAsk, 2)}
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div>
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-rose-400">
+                    Asks (Sell)
+                  </div>
+                  <div className="space-y-0.5 font-mono text-[11px]">
+                    {[...book.asks].reverse().slice(0, 10).map((lvl) => {
+                      const isWall = book.sellWalls.some(
+                        (w) => Math.abs(w.price - lvl.price) < lvl.price * 1e-8,
+                      );
+                      return (
+                        <div
+                          key={`a-${lvl.price}`}
+                          className={`relative flex justify-between overflow-hidden rounded px-1 py-0.5 ${isWall ? "ring-1 ring-rose-500/50" : ""}`}
+                        >
+                          <div
+                            className="absolute inset-y-0 right-0 bg-rose-500/15"
+                            style={{
+                              width: `${Math.min(100, (lvl.notional / maxDepthNotional) * 100)}%`,
+                            }}
+                          />
+                          <span className="relative z-10 text-rose-300">{fmtNum(lvl.price, 2)}</span>
+                          <span className="relative z-10 text-slate-400">{fmtNum(lvl.qty, 4)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="my-2 border-t border-dashed border-slate-700" />
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+                    Bids (Buy)
+                  </div>
+                  <div className="space-y-0.5 font-mono text-[11px]">
+                    {book.bids.slice(0, 10).map((lvl) => {
+                      const isWall = book.buyWalls.some(
+                        (w) => Math.abs(w.price - lvl.price) < lvl.price * 1e-8,
+                      );
+                      return (
+                        <div
+                          key={`b-${lvl.price}`}
+                          className={`relative flex justify-between overflow-hidden rounded px-1 py-0.5 ${isWall ? "ring-1 ring-emerald-500/50" : ""}`}
+                        >
+                          <div
+                            className="absolute inset-y-0 right-0 bg-emerald-500/15"
+                            style={{
+                              width: `${Math.min(100, (lvl.notional / maxDepthNotional) * 100)}%`,
+                            }}
+                          />
+                          <span className="relative z-10 text-emerald-300">{fmtNum(lvl.price, 2)}</span>
+                          <span className="relative z-10 text-slate-400">{fmtNum(lvl.qty, 4)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                      Recent trades
+                    </div>
+                    {(orderFlow.whaleSummary.buyCount > 0 ||
+                      orderFlow.whaleSummary.sellCount > 0) && (
+                      <div className="text-[10px] text-amber-300">
+                        🐋 net {fmtOiUsd(orderFlow.whaleSummary.netFlow)} (B
+                        {orderFlow.whaleSummary.buyCount}/S{orderFlow.whaleSummary.sellCount})
+                      </div>
+                    )}
+                  </div>
+                  <div className="max-h-[320px] space-y-0.5 overflow-y-auto font-mono text-[11px]">
+                    {orderFlow.recentTrades.slice(0, 25).map((t) => (
+                      <div
+                        key={t.id}
+                        className={`flex items-center justify-between rounded px-1 py-0.5 ${t.isWhale ? "bg-amber-500/10 ring-1 ring-amber-500/30" : ""}`}
+                      >
+                        <span className="text-slate-500">{fmtTime(t.time)}</span>
+                        <span
+                          className={
+                            t.side === "BUY" ? "text-emerald-400" : "text-rose-400"
+                          }
+                        >
+                          {t.side}
+                          {t.isWhale ? " 🐋" : ""}
+                        </span>
+                        <span className="text-white">{fmtNum(t.price, 2)}</span>
+                        <span className="text-slate-400">{fmtNum(t.qty, 4)}</span>
+                        <span className="text-slate-500">{fmtOiUsd(t.notional)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
