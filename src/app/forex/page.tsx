@@ -13,10 +13,14 @@ interface Row {
   price: number;
   bid: number | null;
   ask: number | null;
+  spread?: number | null;
+  spreadPips?: number | null;
   change: number | null;
   changePercent: number | null;
   source: string;
   timestamp: string;
+  freshness?: string;
+  ageMs?: number;
 }
 
 const LABELS: Record<string, string> = {
@@ -27,8 +31,31 @@ const LABELS: Record<string, string> = {
   index: "Chỉ số",
 };
 
+function freshnessClass(f?: string) {
+  switch (f) {
+    case "LIVE":
+      return "text-emerald-400";
+    case "FRESH":
+      return "text-sky-400";
+    case "STALE":
+      return "text-amber-400";
+    case "DEGRADED":
+      return "text-orange-400";
+    case "OFFLINE":
+      return "text-rose-400";
+    default:
+      return "text-slate-500";
+  }
+}
+
+function formatAge(ageMs?: number) {
+  if (ageMs == null || !Number.isFinite(ageMs)) return "";
+  if (ageMs < 1000) return `${ageMs}ms`;
+  if (ageMs < 60_000) return `${(ageMs / 1000).toFixed(1)}s`;
+  return `${Math.floor(ageMs / 60_000)}m`;
+}
+
 export default function ForexPage() {
-  // Client SWR shows last snapshot instantly; 12s poll is enough for FX list.
   const feed = usePoll<{ prices: Row[]; freshness: Record<string, unknown> }>(
     "/forex/prices",
     12_000,
@@ -57,7 +84,7 @@ export default function ForexPage() {
           </div>
           <h1 className="text-3xl font-black text-white mt-1">Forex, Vàng, Dầu & DXY</h1>
           <p className="text-sm text-slate-400 mt-1">
-            26 cặp/chỉ số · Yahoo Finance · GMT+7
+            26 cặp/chỉ số · Data Contract · GMT+7
           </p>
         </div>
         <span className="inline-flex items-center gap-2 text-xs text-emerald-300">
@@ -109,18 +136,33 @@ export default function ForexPage() {
               <div>
                 <div className="font-black text-white text-lg">{r.name}</div>
                 <div className="text-[10px] text-slate-500">
-                  {LABELS[r.category]} · {r.source}
+                  {LABELS[r.category] ?? r.category} · {r.source}
                 </div>
               </div>
-              <span className={`font-mono font-bold ${changeColor(r.changePercent)}`}>
-                {fmtPct(r.changePercent)}
-              </span>
+              <div className="text-right">
+                <span className={`font-mono font-bold ${changeColor(r.changePercent)}`}>
+                  {fmtPct(r.changePercent)}
+                </span>
+                {r.freshness && (
+                  <div className={`text-[9px] font-mono mt-0.5 ${freshnessClass(r.freshness)}`}>
+                    {r.freshness}
+                    {r.ageMs != null ? ` · ${formatAge(r.ageMs)}` : ""}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="text-2xl font-black text-white mt-4 font-mono">
               {fmtNum(r.price, r.price > 1000 ? 2 : r.price < 10 ? 5 : 3)}
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-slate-500">
+            <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-slate-500">
               <span>Bid {fmtNum(r.bid, 5)}</span>
+              <span className="text-center">
+                {r.spreadPips != null
+                  ? `Spr ${fmtNum(r.spreadPips, 1)}p`
+                  : r.spread != null
+                    ? `Spr ${fmtNum(r.spread, 5)}`
+                    : "—"}
+              </span>
               <span className="text-right">Ask {fmtNum(r.ask, 5)}</span>
             </div>
           </Link>
@@ -128,7 +170,8 @@ export default function ForexPage() {
       </div>
 
       <div className="text-[10px] text-slate-600">
-        Dữ liệu Yahoo Finance primary/query2 fallback. Tín hiệu giao dịch chỉ mang tính tham khảo.
+        Data Contract: price = mid khi có bid/ask · freshness LIVE≤5s / FRESH≤15s / STALE≤60s.
+        Tín hiệu giao dịch chỉ mang tính tham khảo.
       </div>
     </div>
   );

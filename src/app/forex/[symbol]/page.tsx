@@ -21,6 +21,25 @@ const CandleChart = dynamic(
   { ssr: false, loading: ChartSkeleton },
 );
 
+interface QuoteContract {
+  symbol: string;
+  name: string;
+  category: string;
+  baseCurrency: string;
+  quoteCurrency: string;
+  price: number;
+  bid: number | null;
+  ask: number | null;
+  spread: number | null;
+  spreadPips: number | null;
+  change: number | null;
+  changePercent: number | null;
+  source: string;
+  timestamp: string;
+  freshness: string;
+  ageMs: number;
+}
+
 interface Detail {
   pair: {
     symbol: string;
@@ -29,6 +48,7 @@ interface Detail {
     baseCurrency: string;
     quoteCurrency: string;
   };
+  quote?: QuoteContract | null;
   price: {
     price: number;
     bid: number | null;
@@ -37,7 +57,12 @@ interface Detail {
     changePercent: number | null;
     source: string;
     timestamp: string;
+    spread?: number | null;
+    spreadPips?: number | null;
+    freshness?: string;
+    ageMs?: number;
   } | null;
+  freshness?: { state?: string; ageMs?: number; timestamp?: string; source?: string };
 }
 
 interface Analysis {
@@ -57,10 +82,35 @@ interface Analysis {
 interface Bundle {
   pair: Detail["pair"];
   price: Detail["price"];
+  quote?: QuoteContract | null;
   bars: Bar[];
   timeframe: string;
   source: string;
   analysis: Analysis | null;
+}
+
+function freshnessClass(f?: string) {
+  switch (f) {
+    case "LIVE":
+      return "bg-emerald-400";
+    case "FRESH":
+      return "bg-sky-400";
+    case "STALE":
+      return "bg-amber-400";
+    case "DEGRADED":
+      return "bg-orange-400";
+    case "OFFLINE":
+      return "bg-rose-400";
+    default:
+      return "bg-slate-500";
+  }
+}
+
+function formatAge(ageMs?: number) {
+  if (ageMs == null || !Number.isFinite(ageMs)) return "—";
+  if (ageMs < 1000) return `${ageMs}ms ago`;
+  if (ageMs < 60_000) return `${(ageMs / 1000).toFixed(1)}s ago`;
+  return `${Math.floor(ageMs / 60_000)}m ago`;
 }
 
 export default function ForexDetail() {
@@ -75,7 +125,6 @@ export default function ForexDetail() {
   const [bundleError, setBundleError] = useState<string | null>(null);
   const initialDone = useRef(false);
 
-  // Initial load + when symbol changes (EURUSD ↔ DXY)
   useEffect(() => {
     const initialTf = defaultTimeframe(symbol);
     setTf(initialTf);
@@ -86,7 +135,9 @@ export default function ForexDetail() {
     setBundleError(null);
     setBars([]);
 
-    api<{ bars: Bar[] }>(`/forex/${symbol}/ohlcv?timeframe=${initialTf}&limit=120`)
+    api<{ bars: Bar[]; quote?: QuoteContract | null }>(
+      `/forex/${symbol}/ohlcv?timeframe=${initialTf}&limit=120`,
+    )
       .then((env) => {
         if (cancelled) return;
         setBars(env.data.bars ?? []);
@@ -162,7 +213,19 @@ export default function ForexDetail() {
 
   const live = usePoll<Detail>(`/forex/${symbol}/price`, 8_000);
   const pair = bundle?.pair;
-  const p = live.data?.price ?? bundle?.price;
+  const q = live.data?.quote ?? bundle?.quote ?? null;
+  const p = q ?? live.data?.price ?? bundle?.price;
+  const freshness =
+    q?.freshness ??
+    live.data?.freshness?.state ??
+    (p && "freshness" in p ? (p as { freshness?: string }).freshness : undefined);
+  const ageMs =
+    q?.ageMs ??
+    live.data?.freshness?.ageMs ??
+    (p && "ageMs" in p ? (p as { ageMs?: number }).ageMs : undefined);
+  const spreadPips =
+    q?.spreadPips ??
+    (p && "spreadPips" in p ? (p as { spreadPips?: number | null }).spreadPips : null);
   const a = bundle?.analysis;
   const style =
     a?.recommendation === "BUY"
@@ -184,10 +247,19 @@ export default function ForexDetail() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-black text-white">{pair?.name ?? symbol}</h1>
-            <span className="h-2 w-2 rounded-full bg-emerald-400 live-dot" />
+            <span
+              className={`h-2 w-2 rounded-full live-dot ${freshnessClass(freshness)}`}
+              title={freshness ?? "unknown"}
+            />
+            {freshness && (
+              <span className="text-[10px] font-mono text-slate-400">
+                {freshness} · {formatAge(ageMs)}
+              </span>
+            )}
           </div>
           <div className="text-[10px] text-slate-500">
             {(p?.source ?? chartSource) || "multi-source"} · Asia/Ho_Chi_Minh
+            {spreadPips != null ? ` · Spread ${fmtNum(spreadPips, 1)} pips` : ""}
             {symbol === "DXY" ? " · khung dài hạn" : ""}
           </div>
         </div>
