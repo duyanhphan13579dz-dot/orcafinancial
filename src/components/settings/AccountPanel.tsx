@@ -4,6 +4,7 @@ import {
   useEffect,
   useState,
 } from "react";
+import Image from "next/image";
 import { SettingsSection, Row, TextInput, Button, Badge } from "./primitives";
 import { useToast } from "./Toast";
 import { useAuth } from "@/lib/auth/context";
@@ -298,11 +299,13 @@ export function AccountPanel() {
       >
         <div className="flex items-center gap-4 pb-2">
           {avatar ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <Image
               src={avatar}
               alt=""
+              width={64}
+              height={64}
               className="h-16 w-16 rounded-full object-cover border-2 border-[#1a3558]"
+              unoptimized={!avatar.includes("googleusercontent.com")}
             />
           ) : (
             <div className="h-16 w-16 rounded-full bg-gradient-to-br from-[#00d4ff] to-[#0073a8] flex items-center justify-center text-xl font-bold text-[#0A2540]">
