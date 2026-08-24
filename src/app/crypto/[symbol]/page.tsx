@@ -12,6 +12,7 @@ import {
   createBinanceWebSocket,
   type BinanceKline,
 } from "@/lib/crypto/binance-websocket";
+import type { FuturesIntelligence } from "@/lib/crypto/types";
 
 const ChartSkeleton = () => (
   <div className="h-[380px] w-full animate-pulse rounded-lg bg-slate-800/40" />
@@ -74,9 +75,40 @@ interface Bundle {
   source: string;
   analysis: Analysis | null;
   sentiment: SentimentData | null;
+  futures?: FuturesIntelligence | null;
 }
 
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
+
+function biasColor(bias: string): string {
+  if (bias.includes("LONG")) return "text-emerald-400";
+  if (bias.includes("SHORT")) return "text-rose-400";
+  return "text-amber-300";
+}
+
+function biasLabel(bias: string): string {
+  const map: Record<string, string> = {
+    LONG_CROWDED: "LONG crowded",
+    SHORT_CROWDED: "SHORT crowded",
+    NEUTRAL: "NEUTRAL",
+    LONG_DOMINANT: "LONG dominant",
+    SHORT_DOMINANT: "SHORT dominant",
+    BALANCED: "Balanced",
+    LONG_BUILDUP: "Long buildup",
+    SHORT_BUILDUP: "Short buildup",
+    SHORT_COVERING: "Short covering",
+    LONG_LIQUIDATION: "Long liquidation",
+    UNKNOWN: "—",
+  };
+  return map[bias] ?? bias;
+}
+
+function fmtOiUsd(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  return `$${fmtNum(n, 0)}`;
+}
 
 export default function CryptoDetail() {
   const params = useParams();
@@ -97,7 +129,6 @@ export default function CryptoDetail() {
 
   const initialDone = useRef(false);
 
-  /** Initial paint: one bundle (chart + meta). */
   useEffect(() => {
     if (!symbol) return;
     let cancelled = false;
@@ -117,7 +148,6 @@ export default function CryptoDetail() {
       })
       .catch(async (err) => {
         if (cancelled) return;
-        // Bundle failed → still try OHLCV-only so chart works
         try {
           const o = await api<{ symbol: string; timeframe: string; bars: Bar[] }>(
             `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(timeframe)}&limit=200`,
@@ -144,8 +174,17 @@ export default function CryptoDetail() {
             source: String(o.meta?.source ?? "binance"),
             analysis: null,
             sentiment: null,
+            futures: null,
           });
           setError(null);
+          // Futures can load independently
+          void api<FuturesIntelligence>(`/crypto/${encodeURIComponent(symbol)}/futures`)
+            .then((f) => {
+              if (!cancelled) {
+                setBundle((prev) => (prev ? { ...prev, futures: f.data } : prev));
+              }
+            })
+            .catch(() => undefined);
         } catch {
           setError(err instanceof Error ? err.message : String(err));
         }
@@ -156,10 +195,9 @@ export default function CryptoDetail() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- initial only on symbol
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
 
-  /** Timeframe switch: OHLCV only — keep previous bars until new ones arrive. */
   const loadTimeframe = useCallback(
     async (tf: string) => {
       if (!symbol) return;
@@ -172,7 +210,6 @@ export default function CryptoDetail() {
         );
         setBars(o.data.bars ?? []);
         setChartSource(String(o.meta?.source ?? "binance"));
-        // Refresh analysis in background (optional)
         void api<Analysis>(
           `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(tf)}`,
         )
@@ -184,7 +221,6 @@ export default function CryptoDetail() {
           .catch(() => undefined);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
-        // keep existing bars
       } finally {
         setChartLoading(false);
       }
@@ -257,6 +293,7 @@ export default function CryptoDetail() {
   const coin = bundle?.coin;
   const analysis = bundle?.analysis;
   const sentiment = bundle?.sentiment;
+  const futures = bundle?.futures;
 
   const websocketText =
     wsStatus === "connected"
@@ -321,6 +358,76 @@ export default function CryptoDetail() {
           </div>
         </div>
       </div>
+
+      {/* Phase 1 — Futures Intelligence */}
+      {futures?.available && (
+        <div className="panel p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="font-semibold text-white">Futures Intelligence</h2>
+            <span className="text-[10px] text-slate-500">
+              Binance Futures · {futures.binanceFuturesSymbol}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
+              <div className="text-[10px] uppercase tracking-wide text-slate-500">Funding Rate</div>
+              <div className="mt-1 font-mono text-xl font-bold text-white">
+                {futures.funding.ratePct != null
+                  ? `${futures.funding.ratePct >= 0 ? "+" : ""}${futures.funding.ratePct.toFixed(4)}%`
+                  : "—"}
+              </div>
+              <div className={`mt-1 text-xs font-semibold ${biasColor(futures.funding.bias)}`}>
+                {biasLabel(futures.funding.bias)}
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
+              <div className="text-[10px] uppercase tracking-wide text-slate-500">Long / Short</div>
+              <div className="mt-1 font-mono text-xl font-bold text-white">
+                {futures.longShort.longAccountPct != null && futures.longShort.shortAccountPct != null
+                  ? `${futures.longShort.longAccountPct.toFixed(0)} / ${futures.longShort.shortAccountPct.toFixed(0)}`
+                  : "—"}
+              </div>
+              <div className="mt-1 flex items-center justify-between text-xs">
+                <span className={`font-semibold ${biasColor(futures.longShort.bias)}`}>
+                  {biasLabel(futures.longShort.bias)}
+                </span>
+                {futures.longShort.ratio != null && (
+                  <span className="font-mono text-slate-400">
+                    ratio {futures.longShort.ratio.toFixed(2)}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
+              <div className="text-[10px] uppercase tracking-wide text-slate-500">Open Interest</div>
+              <div className="mt-1 font-mono text-xl font-bold text-white">
+                {fmtOiUsd(futures.openInterest.openInterestUsd)}
+              </div>
+              <div className="mt-1 flex items-center justify-between text-xs">
+                <span className={`font-semibold ${biasColor(futures.openInterest.setup)}`}>
+                  {biasLabel(futures.openInterest.setup)}
+                </span>
+                {futures.openInterest.changePct != null && (
+                  <span
+                    className={`font-mono ${
+                      futures.openInterest.changePct >= 0 ? "text-emerald-400" : "text-rose-400"
+                    }`}
+                  >
+                    {futures.openInterest.changePct >= 0 ? "+" : ""}
+                    {futures.openInterest.changePct.toFixed(2)}%
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 space-y-1.5 rounded-lg bg-slate-900/30 p-3 text-xs text-slate-300">
+            <div className="font-semibold text-slate-400">OI + Price Analysis</div>
+            <p>{futures.openInterest.insight}</p>
+            <p className="text-slate-500">{futures.funding.insight}</p>
+            <p className="text-slate-500">{futures.longShort.insight}</p>
+          </div>
+        </div>
+      )}
 
       <div className="panel p-3">
         <div className="mb-3 flex flex-wrap justify-between gap-2">
