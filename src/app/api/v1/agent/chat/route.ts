@@ -121,11 +121,33 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
+function minimalAnalysis(symbol: string, quote: Quote): AnalysisResult {
+  return {
+    symbol,
+    lastClose: quote.close,
+    changePct1d: quote.changePct ?? null,
+    changePct1m: null,
+    volumeVsAvg20: null,
+    rsi14: null,
+    macd: null,
+    sma20: null,
+    sma50: null,
+    bollinger: null,
+    supportResistance: null,
+    volatilityPct: null,
+    maxDrawdownPct: null,
+    recommendation: "Hold",
+    score: 0,
+    confidence: 0.4,
+    reasons: ["Thiếu lịch sử đủ dài — chỉ có giá gần nhất."],
+  };
+}
+
 /** Lightweight symbol context — capped so chat never hangs the gateway. */
 async function buildSymbolContext(symbol: string): Promise<SymbolContext | null> {
   try {
     const to = Math.floor(Date.now() / 1000);
-    const from = to - 86400 * 90; // 90d enough for RSI/SMA
+    const from = to - 86400 * 90;
 
     const [quote, hist, newsRes] = await Promise.all([
       withTimeout(getQuote(symbol), 6_000, "quote").catch(() => null),
@@ -138,26 +160,9 @@ async function buildSymbolContext(symbol: string): Promise<SymbolContext | null>
     if (!quote) return null;
 
     const bars = hist.bars ?? [];
-    const analysis =
-      bars.length >= 20
-        ? analyze(symbol, bars)
-        : ({
-            symbol,
-            recommendation: "Hold",
-            confidence: 0.4,
-            lastClose: quote.price,
-            changePct1d: quote.changePct ?? null,
-            changePct1m: null,
-            rsi14: null,
-            macd: null,
-            sma20: null,
-            sma50: null,
-            supportResistance: null,
-            reasons: ["Thiếu lịch sử đủ dài — chỉ có giá gần nhất."],
-          } as AnalysisResult);
+    const analysis = bars.length >= 20 ? analyze(symbol, bars) : minimalAnalysis(symbol, quote);
 
-    const fundamental =
-      bars.length >= 60 ? generateFundamentalReport(symbol, bars) : null;
+    const fundamental = bars.length >= 60 ? generateFundamentalReport(symbol, bars) : null;
     const headlineText = (newsRes?.items ?? []).map((n) => n.title).join(" ");
     const sScore = analyzeSentiment(headlineText);
 
@@ -316,14 +321,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate tickers with short timeout — if search hangs, still try raw symbols
     const validated: string[] = [];
     if (candidates.length > 0) {
       const checks = await Promise.all(
         candidates.map(async (c) => {
           try {
-            const found = await withTimeout(searchSymbols(c), 3_500, "search");
-            return found.some((f) => f.symbol === c) ? c : c; // keep candidate even if search soft-fails
+            await withTimeout(searchSymbols(c), 3_500, "search");
+            return c;
           } catch {
             return c;
           }
@@ -336,7 +340,6 @@ export async function POST(req: NextRequest) {
     const needMarket = intent === "market_ticker" || intent === "market_overview";
     const playbookContext = retrievePlaybookContext(message, intent) || null;
 
-    // Data Engine phase — hard budget 12s so LLM always has time
     const dataBudget = withTimeout(
       Promise.all([
         Promise.all(validated.map(buildSymbolContext)).then((list) =>
@@ -445,7 +448,6 @@ export async function POST(req: NextRequest) {
       req.cookies.get("refreshToken")?.value?.slice(0, 64) ??
       authedUser.id.slice(0, 64);
 
-    // History save must not block / crash the response
     let saved: { conversationId: string | null; saved: boolean; error?: string } = {
       conversationId: requestedConversationId,
       saved: false,
