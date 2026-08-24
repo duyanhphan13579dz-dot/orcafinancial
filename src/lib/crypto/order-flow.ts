@@ -150,7 +150,8 @@ interface TradeRow {
 
 async function fetchDepth(symbol: string, limit = 20): Promise<DepthResponse> {
   return getBreaker(SPOT).exec(async () => {
-    const url = `${BASE}/api/v3/depth?symbol=${encodeURIComponent(symbol)}&limit=${Math.min(100, Math.max(5, limit)}`;
+    const safeLimit = Math.min(100, Math.max(5, limit));
+    const url = `${BASE}/api/v3/depth?symbol=${encodeURIComponent(symbol)}&limit=${safeLimit}`;
     const res = await fetchWithRetry(url, {
       provider: SPOT,
       timeoutMs: TIMEOUT_MS,
@@ -166,7 +167,8 @@ async function fetchDepth(symbol: string, limit = 20): Promise<DepthResponse> {
 
 async function fetchRecentTrades(symbol: string, limit = 40): Promise<TradeRow[]> {
   return getBreaker(SPOT).exec(async () => {
-    const url = `${BASE}/api/v3/trades?symbol=${encodeURIComponent(symbol)}&limit=${Math.min(100, Math.max(10, limit)}`;
+    const safeLimit = Math.min(100, Math.max(10, limit));
+    const url = `${BASE}/api/v3/trades?symbol=${encodeURIComponent(symbol)}&limit=${safeLimit}`;
     const res = await fetchWithRetry(url, {
       provider: SPOT,
       timeoutMs: TIMEOUT_MS,
