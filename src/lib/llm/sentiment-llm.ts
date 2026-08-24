@@ -127,49 +127,45 @@ function buildUserPrompt(
 ): string {
   if (mode === "rescue") {
     return [
-      "Dữ liệu thô từ hệ thống (chỉ dùng số liệu, không copy khuôn mẫu):",
-      ctx.slice(0, 1800),
+      "Số liệu tham khảo (đừng đọc thành báo cáo):",
+      ctx.slice(0, 1600),
       "",
-      `Câu hỏi: "${userQuestion}"`,
+      `Bạn vừa hỏi: "${userQuestion}"`,
       "",
-      "Viết câu trả lời tự nhiên như cố vấn đang chat. Dùng số liệu ở trên nếu có.",
-      "Không được trả lời kiểu template kỹ thuật (giá / RSI / Hold).",
-      "Nếu thiếu BCTC quý cụ thể, nói rõ và phân tích từ dữ liệu sẵn có + gợi ý khách cần xem thêm gì.",
-      "120–280 chữ, không markdown, disclaimer ngắn.",
+      "Trả lời như đang chat với bạn thân. Nói tự nhiên, có số nếu cần, không liệt kê kiểu RSI/Hold template.",
+      "Thiếu số quý thì nói thật. Khoảng 120–250 chữ. Không markdown.",
     ].join("\n");
   }
 
   if (mode === "compact") {
     return [
-      "Số liệu nội bộ (tham khảo, không trích nhãn):",
+      "Số liệu nội bộ (chỉ để bạn tham khảo):",
       ctx,
       "",
-      `Câu hỏi: "${userQuestion}"`,
+      `Câu hỏi tiếp: "${userQuestion}"`,
       "",
-      "Trả lời như người, thẳng ý, có số, 1–2 việc làm ngay. Không markdown. Không lộ Data Engine.",
+      "Trả lời ngắn, tự nhiên như chat. Nhét số vào câu chuyện, đừng ra template. 100–220 chữ. Không markdown.",
     ].join("\n");
   }
 
   return [
-    "DỮ LIỆU THÔ từ Data Engine (chỉ là input số liệu — bạn phải viết lại hoàn toàn bằng lời cố vấn):",
-    "",
+    "Dưới đây là số liệu thô — bạn dùng để viết lại thành lời cố vấn, KHÔNG được copy nguyên xi:",
     ctx,
     "",
     "---",
     `Khách hỏi: "${userQuestion}"`,
     "",
-    "Yêu cầu bắt buộc:",
-    "1) Bạn là cố vấn tài chính đang chat — viết mạch lạc, tự nhiên, giống người.",
-    "2) Data Engine chỉ cung cấp số liệu thô; KHÔNG được copy nguyên câu kiểu 'giá gần nhất… tín hiệu Hold… RSI…'.",
-    "3) Sắp xếp: mở bài trả lời thẳng câu hỏi → phân tích (kỹ thuật/cơ bản/bối cảnh) → 1–3 việc làm tiếp → disclaimer ngắn.",
-    "4) Nếu câu hỏi về KQKD quý mà chưa có số BCTC đầy đủ trong dữ liệu: nói thẳng là chưa có đủ số liệu quý đó, rồi dùng giá/xu hướng/định giá sẵn có để đưa góc nhìn tham khảo.",
-    "5) 180–400 chữ, không markdown (#, *, bullet), không nhắc intent/API/Data Engine.",
+    "Viết như người đang chat:",
+    "- Mở thẳng vào ý chính, giọng thân thiện.",
+    "- Số liệu thì lồng vào câu (vd 'quanh 63–64', 'tăng gần 8% một tháng'), không liệt kê giá / RSI / khuyến nghị kỹ thuật thành dãy máy móc.",
+    "- Nếu hỏi KQKD quý mà thiếu số BCTC: nói thật, rồi đưa góc nhìn từ giá/xu hướng/định giá đang có.",
+    "- Kết bằng gợi ý việc làm hoặc câu hỏi tiếp + disclaimer một câu tự nhiên.",
+    "- 150–350 chữ, không markdown, không lộ hệ thống nội bộ.",
   ].join("\n");
 }
 
 /**
  * LLM-first narrative: race providers → short retry → only then null.
- * Data-engine text must never be the primary user-facing answer when LLM works.
  */
 export async function agentNarrativeDetailed(
   userQuestion: string,
@@ -181,7 +177,6 @@ export async function agentNarrativeDetailed(
   const allErrors: string[] = [];
   const allAttempted: string[] = [];
 
-  // Pass 1: race GLM + OpenRouter with full/compact prompt
   const pass1 = await chatRaceProviders(
     [
       { role: "system", content: AGENT_SYSTEM_PROMPT },
@@ -192,7 +187,7 @@ export async function agentNarrativeDetailed(
     ],
     {
       maxTokens: followUp ? 1400 : 2000,
-      temperature: 0.45,
+      temperature: 0.55,
       timeoutMs: followUp ? 18_000 : 24_000,
     },
   );
@@ -208,7 +203,6 @@ export async function agentNarrativeDetailed(
     };
   }
 
-  // Pass 2: rescue — shorter prompt, sequential, slightly longer wait
   logger.warn("agent_narrative_pass1_failed", { errors: pass1.errors.slice(0, 3) });
   const pass2 = await chatWithFallbackDetailed(
     [
@@ -220,7 +214,7 @@ export async function agentNarrativeDetailed(
     ],
     {
       maxTokens: 1000,
-      temperature: 0.4,
+      temperature: 0.5,
       timeoutMs: 20_000,
     },
   );
