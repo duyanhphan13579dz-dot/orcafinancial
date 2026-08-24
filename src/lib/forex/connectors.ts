@@ -10,23 +10,30 @@ import { FOREX_BY_SYMBOL, FOREX_PAIRS, type ForexPairDef } from "./data";
 import { forProvider } from "@/lib/logger";
 import { alignBarsByTime, combineOhlc } from "./normalize";
 import type { ForexRawQuote } from "./types";
+import {
+  enrichWithSecondary,
+  secondaryOnlySnapshot,
+  type PipelineResult,
+} from "./providers/pipeline";
 
 const YAHOO1 = "yahoo-forex-primary";
 const YAHOO2 = "yahoo-forex-fallback";
 const log = forProvider("forex-connectors");
 
-/** Tight timeouts — chart target 1–3s end-to-end. */
 const QUOTE_TIMEOUT_MS = 4_000;
 const QUOTE_RETRIES = 0;
 const BARS_TIMEOUT_MS = 2_500;
 const BARS_RETRIES = 0;
-
-/** Max age gap between derived legs before marking forceDegraded. */
 const DERIVED_STALE_LEG_MS = 30_000;
 
 export interface ForexQuote extends ForexRawQuote {
-  /** True when a derived leg was stale or missing bid/ask symmetry. */
   degraded?: boolean;
+}
+
+export interface ForexSnapshotResult {
+  quotes: ForexQuote[];
+  source: string;
+  pipeline?: Omit<PipelineResult, "quotes">;
 }
 
 interface YahooChart {
@@ -89,9 +96,9 @@ function deriveValue(def: ForexPairDef, map: Map<string, ForexQuote>): ForexQuot
     lPrev !== null && rPrev !== null && rPrev !== 0 ? apply(lPrev, rPrev) : null;
 
   const legAgeGap = Math.abs(l.timestamp.getTime() - r.timestamp.getTime());
-  const degraded = legAgeGap > DERIVED_STALE_LEG_MS;
+  const sourceMismatch = l.source !== r.source;
+  const degraded = legAgeGap > DERIVED_STALE_LEG_MS || sourceMismatch;
 
-  // Derive bid/ask when both legs have them (conservative)
   let bid: number | null = null;
   let ask: number | null = null;
   if (
@@ -106,7 +113,6 @@ function deriveValue(def: ForexPairDef, map: Map<string, ForexQuote>): ForexQuot
       bid = l.bid * r.bid;
       ask = l.ask * r.ask;
     } else {
-      // USDVND / USDJPY style → JPYVND; use cross extremes
       bid = Math.min(l.bid / r.ask, l.ask / r.bid, l.bid / r.bid, l.ask / r.ask);
       ask = Math.max(l.bid / r.ask, l.ask / r.bid, l.bid / r.bid, l.ask / r.ask);
       if (!Number.isFinite(bid) || !Number.isFinite(ask) || ask < bid) {
@@ -192,7 +198,7 @@ async function fetchBatchQuotes(base: string, provider: string): Promise<Map<str
   return map;
 }
 
-export async function fetchForexSnapshot(): Promise<{ quotes: ForexQuote[]; source: string }> {
+async function fetchYahooPrimary(): Promise<{ quotes: ForexQuote[]; source: string }> {
   const tryHost = async (base: string, provider: string) => {
     const map = await getBreaker(provider).exec(() => fetchBatchQuotes(base, provider));
     const quotes = FOREX_PAIRS.map((p) => map.get(p.symbol)).filter(
@@ -229,7 +235,42 @@ export async function fetchForexSnapshot(): Promise<{ quotes: ForexQuote[]; sour
   });
 }
 
-/** All supported TFs including DXY higher-timeframe set. */
+/**
+ * Multi-source snapshot:
+ * 1. Yahoo primary race
+ * 2. Enrich + cross-check with secondary (open.er-api / Frankfurter)
+ * 3. If Yahoo dead → secondary-only fallback
+ */
+export async function fetchForexSnapshot(): Promise<ForexSnapshotResult> {
+  try {
+    const primary = await fetchYahooPrimary();
+    try {
+      const merged = await enrichWithSecondary(primary.quotes, primary.source);
+      const { quotes, ...pipeline } = merged;
+      return { quotes, source: merged.source, pipeline };
+    } catch (e) {
+      log.warn("pipeline_enrich_failed_using_primary", {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return { quotes: primary.quotes, source: primary.source };
+    }
+  } catch (primaryErr) {
+    log.warn("yahoo_primary_failed_trying_secondary", {
+      error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
+    });
+    try {
+      const sec = await secondaryOnlySnapshot();
+      const { quotes, ...pipeline } = sec;
+      return { quotes, source: sec.source, pipeline };
+    } catch (secErr) {
+      throw new ProviderError(
+        "forex-snapshot",
+        `primary+secondary failed: ${String(primaryErr)} | ${String(secErr)}`,
+      );
+    }
+  }
+}
+
 const VALID = new Set(["1m", "5m", "15m", "1h", "4h", "1d", "1w", "1mo", "12mo"]);
 
 function yahooParams(tf: string, limit: number) {
@@ -391,10 +432,6 @@ export async function fetchForexBars(
   });
 }
 
-/**
- * Fetch a single-symbol live quote (used as SSOT for detail pages).
- * Prefers batch snapshot map entry when available; falls back to chart meta.
- */
 export async function fetchSingleQuote(symbol: string): Promise<ForexQuote | null> {
   try {
     const snap = await fetchForexSnapshot();

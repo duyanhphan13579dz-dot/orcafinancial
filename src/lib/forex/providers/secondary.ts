@@ -37,17 +37,6 @@ interface FrankfurterResponse {
   rates?: Record<string, number>;
 }
 
-/** Currencies we can build from USD base rates. */
-const USD_QUOTE_SYMBOLS = new Set(
-  FOREX_PAIRS.filter(
-    (p) =>
-      p.yahooSymbol &&
-      (p.baseCurrency === "USD" || p.quoteCurrency === "USD") &&
-      p.category === "usd_cross" ||
-      p.symbol === "USDVND",
-  ).map((p) => p.symbol),
-);
-
 function buildFromUsdRates(
   rates: Record<string, number>,
   ts: Date,
@@ -66,28 +55,30 @@ function buildFromUsdRates(
       changePercent: null,
       source,
       timestamp: ts,
-      degraded: true, // secondary = no bid/ask, mark softer quality
+      degraded: true,
     });
   };
 
   for (const def of FOREX_PAIRS) {
     if (def.derived || !def.yahooSymbol) continue;
+    // Skip non-FX (gold, oil, index)
+    if (def.category === "gold" || def.category === "oil" || def.category === "index") {
+      continue;
+    }
+
     const base = def.baseCurrency;
     const quote = def.quoteCurrency;
 
-    // USD/XXX → rate[XXX]
     if (base === "USD" && rates[quote]) {
       put(def, rates[quote]);
       continue;
     }
-    // XXX/USD → 1 / rate[XXX]
     if (quote === "USD" && rates[base]) {
       put(def, 1 / rates[base]);
       continue;
     }
   }
 
-  // Derived VND pairs after USD legs exist
   for (const def of FOREX_PAIRS) {
     if (!def.derived) continue;
     const l = map.get(def.derived.left);
@@ -145,7 +136,6 @@ async function fetchFrankfurter(): Promise<Map<string, ForexQuote>> {
   if (!data.rates) {
     throw new ProviderError(FRANKFURTER, "Frankfurter returned no rates");
   }
-  // Frankfurter has no VND — still useful for EUR/GBP/JPY majors
   const ts = data.date ? new Date(`${data.date}T16:00:00Z`) : new Date();
   const map = buildFromUsdRates(data.rates, ts, FRANKFURTER);
   if (map.size < 2) {
@@ -155,9 +145,6 @@ async function fetchFrankfurter(): Promise<Map<string, ForexQuote>> {
   return map;
 }
 
-/**
- * Race secondary providers; first usable map wins.
- */
 export async function fetchSecondarySnapshot(): Promise<{
   quotes: ForexQuote[];
   source: string;
@@ -213,4 +200,4 @@ export async function fetchSecondarySnapshot(): Promise<{
   });
 }
 
-export { USD_QUOTE_SYMBOLS, ER_API, FRANKFURTER };
+export { ER_API, FRANKFURTER };
