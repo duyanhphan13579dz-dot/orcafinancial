@@ -12,15 +12,6 @@ import type {
  * 1. User-configured OPENROUTER_MODEL
  * 2. openrouter/free
  * 3. z-ai/glm-5.2:free
- *
- * Important:
- * The user's previous production test showed that:
- *
- * meta-llama/llama-3.3-70b-instruct:free
- *
- * is no longer available as a free endpoint.
- *
- * Therefore it is intentionally NOT used anymore.
  */
 
 function modelCandidates(): string[] {
@@ -105,25 +96,30 @@ async function chatOne(
       },
     );
 
+    if (res.status === 429 || res.status === 503) {
+      await res.text().catch(() => "");
+      throw new Error(
+        `OpenRouter HTTP ${res.status} rate_limited (${model})`,
+      );
+    }
+
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
 
       throw new Error(
-        `OpenRouter HTTP ${res.status} (${model}): ${errText.slice(
-          0,
-          320,
-        )}`,
+        `OpenRouter HTTP ${res.status} (${model}): ${errText.slice(0, 180)}`,
       );
     }
 
     const data = (await res.json()) as OpenRouterResponse;
 
     if (data.error?.message) {
+      const msg = data.error.message;
+      if (/rate.?limit/i.test(msg)) {
+        throw new Error(`OpenRouter rate_limited (${model})`);
+      }
       throw new Error(
-        `OpenRouter API (${model}): ${data.error.message.slice(
-          0,
-          240,
-        )}`,
+        `OpenRouter API (${model}): ${msg.slice(0, 180)}`,
       );
     }
 
@@ -144,7 +140,7 @@ async function chatOne(
             ? `finish_reason=${finishReason}`
             : undefined,
           choice?.message?.refusal
-            ? `refusal=${choice.message.refusal.slice(0, 120)}`
+            ? `refusal=${choice.message.refusal.slice(0, 80)}`
             : undefined,
         ]
           .filter(Boolean)
@@ -191,26 +187,28 @@ async function chat(
   }
 
   const errors: string[] = [];
+  let hitRateLimit = false;
 
   for (const model of modelCandidates()) {
     try {
-      return await chatOne(
-        apiKey,
-        model,
-        messages,
-        opts,
-      );
+      return await chatOne(apiKey, model, messages, opts);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : String(error);
+
+      if (/rate_limited|HTTP 429/i.test(message)) {
+        hitRateLimit = true;
+      }
 
       errors.push(message);
     }
   }
 
-  throw new Error(
-    errors.join(" | ") || "OpenRouter failed",
-  );
+  const summary = hitRateLimit
+    ? `OpenRouter rate_limited: ${errors.map((e) => e.replace(/:\s*\{.*$/, "").slice(0, 80)).join("; ")}`
+    : errors.join(" | ") || "OpenRouter failed";
+
+  throw new Error(summary.slice(0, 400));
 }
 
 export const openrouterProvider: LlmProvider = {
