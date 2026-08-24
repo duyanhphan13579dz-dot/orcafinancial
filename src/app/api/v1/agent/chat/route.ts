@@ -233,7 +233,7 @@ export async function POST(req: NextRequest) {
 
     if (providers.length === 0) {
       return fail(
-        "Chưa cấu hình LLM. Thêm ZAI_API_KEY (hoặc GLM_API_KEY) và/hoặc OPENROUTER_API_KEY trên Vercel Production rồi redeploy.",
+        "Chưa cấu hình LLM. Thêm GROQ_API_KEY và/hoặc OPENROUTER_API_KEY trên Vercel Production rồi redeploy.",
         503,
         { code: "LLM_NOT_CONFIGURED", keysPresent: envDiag.keysPresent },
       );
@@ -346,7 +346,6 @@ export async function POST(req: NextRequest) {
       });
       const llmResult = narrative.result;
 
-      // LLM-first: if no LLM text, do NOT dump data-engine template to user
       if (!llmResult?.text?.trim()) {
         logger.error("agent_llm_unavailable", {
           errors: narrative.errors.slice(0, 4),
@@ -428,7 +427,7 @@ export async function POST(req: NextRequest) {
       },
       {
         latencyMs,
-        source: "llm+data-context",
+        source: "data-engine→groq|openrouter",
         confidence: contexts[0]?.analysis.confidence ?? 0.85,
         llmProvider: (produced as { _llmProvider?: string | null })._llmProvider ?? null,
       },
@@ -441,10 +440,9 @@ export async function POST(req: NextRequest) {
         keysPresent?: Record<string, boolean>;
         transient?: boolean;
       };
-      // Human message — never mechanical data-engine dump
       const retryHint = e.transient
         ? "Mô hình đang bận hoặc quá tải. Bạn thử gửi lại câu hỏi sau 5–10 giây nhé."
-        : "Không kết nối được mô hình AI lúc này. Kiểm tra API key GLM/OpenRouter trên Vercel hoặc thử lại sau.";
+        : "Không kết nối được mô hình AI. Kiểm tra GROQ_API_KEY / OPENROUTER_API_KEY trên Vercel Production rồi redeploy.";
       return fail(retryHint, 503, {
         code: "LLM_FAILED",
         llmErrors: e.llmErrors?.slice(0, 6),
