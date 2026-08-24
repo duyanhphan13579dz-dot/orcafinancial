@@ -64,12 +64,82 @@ export interface FuturesIntelligence {
   errors: string[];
 }
 
-/** Unified object for AI + UI (Phase 0 target). */
+/* ─── Phase 2: Order Flow ─────────────────────────────────────────────── */
+
+export interface DepthLevel {
+  price: number;
+  qty: number;
+  notional: number;
+  side: "bid" | "ask";
+}
+
+export interface WallInfo {
+  side: "bid" | "ask";
+  price: number;
+  qty: number;
+  notional: number;
+  strength: number;
+}
+
+export interface OrderBookImbalance {
+  bidPct: number;
+  askPct: number;
+  ratio: number;
+  bias: "BUY_DOMINANT" | "SELL_DOMINANT" | "BALANCED";
+  insight: string;
+}
+
+export interface OrderBookSnapshot {
+  symbol: string;
+  bids: DepthLevel[];
+  asks: DepthLevel[];
+  bestBid: number | null;
+  bestAsk: number | null;
+  spread: number | null;
+  spreadBps: number | null;
+  imbalance: OrderBookImbalance;
+  buyWalls: WallInfo[];
+  sellWalls: WallInfo[];
+  lastUpdateId: number | null;
+  source: string;
+  fetchedAt: string;
+}
+
+export interface RecentTrade {
+  id: number;
+  price: number;
+  qty: number;
+  notional: number;
+  side: "BUY" | "SELL";
+  time: number;
+  isWhale: boolean;
+}
+
+export interface OrderFlowIntelligence {
+  symbol: string;
+  binanceSymbol: string;
+  orderBook: OrderBookSnapshot | null;
+  recentTrades: RecentTrade[];
+  whaleThresholdUsd: number;
+  whaleSummary: {
+    buyCount: number;
+    sellCount: number;
+    buyNotional: number;
+    sellNotional: number;
+    netFlow: number;
+  };
+  available: boolean;
+  errors: string[];
+  fetchedAt: string;
+}
+
+/** Unified object for AI + UI (Phase 0+2). */
 export interface CryptoMarketSnapshot {
   symbol: string;
   name: string;
   spot: SpotSnapshot;
   futures: FuturesIntelligence | null;
+  orderFlow?: OrderFlowIntelligence | null;
   sentiment: {
     score: number | null;
     label: string | null;
