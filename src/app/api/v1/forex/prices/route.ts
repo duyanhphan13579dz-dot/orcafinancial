@@ -4,23 +4,25 @@ import { ensureMarketTables } from "@/db/ensure-market-tables";
 import {
   ensureForexFresh,
   latestForexPrices,
+  mapRowsToContracts,
+  syncForexPrices,
 } from "@/lib/forex/service";
 import { fetchForexSnapshot } from "@/lib/forex/connectors";
 import { FOREX_BY_SYMBOL } from "@/lib/forex/data";
+import { toQuoteContract } from "@/lib/forex/normalize";
+import type { ForexQuoteContract } from "@/lib/forex/types";
 
 export const dynamic = "force-dynamic";
-/** Vercel function budget — fail fast rather than hang 60s. */
 export const maxDuration = 20;
 
 const MEMORY_TTL_MS = 12_000;
 const MEMORY_HARD_TTL_MS = 45_000;
-/** Absolute ceiling for this handler. */
 const HARD_DEADLINE_MS = 12_000;
 const DB_BUDGET_MS = 4_000;
 
 interface ForexPricesPayload {
-  prices: unknown[];
-  freshness: unknown;
+  prices: ForexQuoteContract[];
+  freshness: Record<string, unknown>;
 }
 
 interface MemoryCacheEntry {
@@ -51,26 +53,28 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 
 async function liveYahooPrices(): Promise<ForexPricesPayload> {
   const snapshot = await withTimeout(fetchForexSnapshot(), 10_000, "yahoo_snapshot");
+  // Persist in background so DB path stays warm
+  void syncForexPrices().catch(() => undefined);
+
   const prices = snapshot.quotes.map((q) => {
     const def = FOREX_BY_SYMBOL.get(q.symbol);
-    return {
-      symbol: q.symbol,
-      name: def?.name ?? q.symbol,
-      category: def?.category ?? "usd_cross",
-      baseCurrency: def?.baseCurrency ?? "",
-      quoteCurrency: def?.quoteCurrency ?? "",
-      price: q.price,
-      bid: q.bid,
-      ask: q.ask,
-      change: q.change,
-      changePercent: q.changePercent,
-      source: snapshot.source,
-      timestamp: q.timestamp.toISOString?.() ?? new Date(q.timestamp).toISOString(),
-    };
+    return toQuoteContract(q, {
+      name: def?.name,
+      category: def?.category,
+      baseCurrency: def?.baseCurrency,
+      quoteCurrency: def?.quoteCurrency,
+      forceDegraded: q.degraded,
+    });
   });
+
   return {
     prices,
-    freshness: { refreshed: true, source: snapshot.source, live: true },
+    freshness: {
+      refreshed: true,
+      source: snapshot.source,
+      live: true,
+      count: prices.length,
+    },
   };
 }
 
@@ -84,11 +88,13 @@ async function loadFromDbFast(): Promise<ForexPricesPayload | null> {
 
     void ensureForexFresh(15_000).catch(() => undefined);
 
-    const prices = await withTimeout(latestForexPrices(), DB_BUDGET_MS, "latest_forex");
-    if (!prices?.length) return null;
+    const rows = await withTimeout(latestForexPrices(), DB_BUDGET_MS, "latest_forex");
+    if (!rows?.length) return null;
+
+    const prices = mapRowsToContracts(rows as Array<Record<string, unknown>>);
     return {
       prices,
-      freshness: { refreshed: false, source: "db-cache" },
+      freshness: { refreshed: false, source: "db-cache", count: prices.length },
     };
   } catch {
     return null;
@@ -103,13 +109,9 @@ async function loadForexPrices(): Promise<ForexPricesPayload> {
 
   if (!refreshPromise) {
     refreshPromise = (async () => {
-      // Race DB vs Yahoo — first usable wins; hard overall deadline
       const dbAttempt = loadFromDbFast();
-      const yahooAttempt = liveYahooPrices().catch((e) => {
-        throw e;
-      });
+      const yahooAttempt = liveYahooPrices();
 
-      // Prefer DB if it returns rows within budget; else Yahoo
       const db = await dbAttempt;
       if (db) return db;
 

@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
-import { syncForexOhlcv } from "@/lib/forex/service";
+import { syncForexOhlcv, getLiveQuoteContract } from "@/lib/forex/service";
 import { fetchForexBars } from "@/lib/forex/connectors";
+import { patchLastCandle } from "@/lib/forex/normalize";
 import {
   defaultTimeframe,
   isValidTimeframe,
@@ -44,15 +45,25 @@ export async function GET(
   try {
     let bars;
     let source = "yahoo-forex";
+    let quote = null as Awaited<ReturnType<typeof getLiveQuoteContract>>;
 
     try {
-      const d = await withTimeout(syncForexOhlcv(sym, tf, limit), HARD_MS, "forex_ohlcv_svc");
+      const d = await withTimeout(
+        syncForexOhlcv(sym, tf, limit),
+        HARD_MS,
+        "forex_ohlcv_svc",
+      );
       bars = d.bars;
       source = d.source;
+      quote = d.quote ?? null;
     } catch (inner) {
-      const live = await withTimeout(fetchForexBars(sym, tf, limit), HARD_MS, "yahoo_bars");
-      bars = live.bars;
-      source = `${live.source}-direct`;
+      const [live, q] = await Promise.all([
+        withTimeout(fetchForexBars(sym, tf, limit), HARD_MS, "yahoo_bars"),
+        getLiveQuoteContract(sym).catch(() => null),
+      ]);
+      bars = q ? patchLastCandle(live.bars, q.price) : live.bars;
+      source = `${live.source}-direct${q ? "+live-patch" : ""}`;
+      quote = q;
       console.warn(
         "[forex_ohlcv] service/timeout → Yahoo direct",
         sym,
@@ -65,9 +76,24 @@ export async function GET(
       return fail(`Không có dữ liệu chart cho ${sym} (${tf})`, 502);
     }
 
+    const lastClose = bars[bars.length - 1]?.close ?? null;
+
     const response = ok(
-      { symbol: sym, timeframe: tf, bars },
-      { source, timezone: "Asia/Ho_Chi_Minh" },
+      {
+        symbol: sym,
+        timeframe: tf,
+        bars,
+        quote,
+        lastCandleClose: lastClose,
+        priceVsCandleDiff:
+          quote && lastClose != null ? quote.price - lastClose : null,
+      },
+      {
+        source,
+        timezone: "Asia/Ho_Chi_Minh",
+        freshness: quote?.freshness,
+        ageMs: quote?.ageMs,
+      },
     );
     response.headers.set(
       "Cache-Control",

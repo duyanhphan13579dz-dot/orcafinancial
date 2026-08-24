@@ -35,6 +35,8 @@ export async function GET(
     const response = ok(data, {
       timezone: "Asia/Ho_Chi_Minh",
       source: data.source,
+      freshness: data.quote?.freshness,
+      ageMs: data.quote?.ageMs,
     });
     response.headers.set(
       "Cache-Control",
