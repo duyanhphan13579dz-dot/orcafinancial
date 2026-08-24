@@ -6,9 +6,9 @@
  */
 import { forProvider } from "@/lib/logger";
 import { getCryptoMarketSnapshot, getCryptoCoin } from "./service";
-import { fetchOrderFlow } from "./order-flow";
-import { fetchWhaleLiquidation } from "./whale-engine";
-import { fetchCryptoSentimentIntelligence } from "./sentiment-engine";
+import { fetchOrderFlowIntelligence } from "./order-flow";
+import { fetchWhaleLiquidationIntelligence } from "./whale-engine";
+import { fetchSentimentIntelligence } from "./sentiment-engine";
 import { fetchOnChainIntelligence, formatOnChainForAgent } from "./onchain";
 import { formatLaunchpadForAgent, fetchLaunchpadIntelligence } from "./launchpad";
 import type {
@@ -34,24 +34,20 @@ const CRYPTO_BASES = new Set([
 export function isLikelyCryptoSymbol(sym: string): boolean {
   const s = sym.trim().toUpperCase().replace(/USDT$/i, "");
   if (CRYPTO_BASES.has(s)) return true;
-  // 2–5 letter all-caps tickers often used as crypto base
   return /^[A-Z]{2,5}$/.test(s) && !["USD", "VND", "API", "CEO", "IPO", "ETF", "GDP"].includes(s);
 }
 
 export function extractCryptoSymbols(message: string, max = 2): string[] {
   const upper = message.toUpperCase();
   const found: string[] = [];
-  // Explicit pairs
   for (const m of upper.matchAll(/\b([A-Z]{2,5})USDT\b/g)) {
     const b = m[1];
     if (!found.includes(b) && isLikelyCryptoSymbol(b)) found.push(b);
   }
-  // Word tokens
   for (const m of upper.matchAll(/\b([A-Z]{2,5})\b/g)) {
     const b = m[1];
     if (CRYPTO_BASES.has(b) && !found.includes(b)) found.push(b);
   }
-  // Vietnamese aliases
   const aliases: Record<string, string> = {
     BITCOIN: "BTC",
     ETHEREUM: "ETH",
@@ -147,9 +143,9 @@ export async function buildCryptoAiBundle(
 
   const [snapR, ofR, whaleR, sentR, onR, launchR] = await Promise.all([
     timed("snapshot", 8_000, () => getCryptoMarketSnapshot(sym, "1h")),
-    timed("orderflow", 6_000, () => fetchOrderFlow(sym)),
-    timed("whale", 8_000, () => fetchWhaleLiquidation(sym)),
-    timed("sentiment", 10_000, () => fetchCryptoSentimentIntelligence(sym)),
+    timed("orderflow", 6_000, () => fetchOrderFlowIntelligence(sym)),
+    timed("whale", 8_000, () => fetchWhaleLiquidationIntelligence(sym)),
+    timed("sentiment", 10_000, () => fetchSentimentIntelligence(sym)),
     timed("onchain", 10_000, async () => {
       let cg: string | null = null;
       try {
@@ -249,7 +245,6 @@ export async function buildCryptoAiContextForAgent(
 ): Promise<{ block: string; symbols: string[]; layersOk: string[] }> {
   const unique = [...new Set(symbols.map((s) => s.toUpperCase()))].slice(0, 2);
   if (!unique.length) {
-    // still try extract from message
     unique.push(...extractCryptoSymbols(message, 2));
   }
   if (!unique.length) return { block: "", symbols: [], layersOk: [] };
