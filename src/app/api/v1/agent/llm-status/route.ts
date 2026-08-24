@@ -4,7 +4,6 @@ import {
   handleError,
   ok,
 } from "@/lib/api";
-import { getAuthedUser } from "@/lib/auth/guard";
 import {
   chatWithFallbackDetailed,
   llmEnvDiagnostics,
@@ -15,7 +14,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 45;
 
 /**
- * Authenticated LLM diagnostic endpoint.
+ * ORCA Financial - LLM Diagnostic Endpoint
  *
  * Basic:
  *   GET /api/v1/agent/llm-status
@@ -23,16 +22,28 @@ export const maxDuration = 45;
  * Live:
  *   GET /api/v1/agent/llm-status?ping=1
  *
- * The endpoint never exposes API keys.
- * It only reports whether a key is present and which
- * provider/model was successfully reached.
+ * IMPORTANT:
+ * - This endpoint is intentionally PUBLIC.
+ * - It does NOT expose API keys.
+ * - It only exposes whether keys exist, configured providers,
+ *   configured model names, and live provider status.
+ * - Rate limiting remains enabled.
+ *
+ * This is a diagnostic endpoint, not a user-data endpoint,
+ * so authentication is intentionally not required.
  */
 export async function GET(
   req: NextRequest,
 ) {
+  /*
+   * Keep rate limiting even though authentication is not required.
+   *
+   * This is especially important because ?ping=1 actually
+   * sends a request to the LLM providers.
+   */
   const limited = checkRateLimit(
     req,
-    30,
+    10,
   );
 
   if (limited) {
@@ -40,9 +51,7 @@ export async function GET(
   }
 
   try {
-    await getAuthedUser(req);
-
-    const diag =
+    const diagnostics =
       llmEnvDiagnostics();
 
     const configured =
@@ -63,18 +72,28 @@ export async function GET(
       snippet?: string;
     } | null = null;
 
+    /*
+     * Only perform an actual LLM request when:
+     *
+     * /api/v1/agent/llm-status?ping=1
+     *
+     * is used.
+     *
+     * Without ?ping=1, this endpoint only checks environment
+     * configuration and does NOT consume LLM requests.
+     */
     if (ping) {
       const started =
         Date.now();
 
-      const detailed =
+      const result =
         await chatWithFallbackDetailed(
           [
             {
               role: "system",
               content:
-                "Bạn là trợ lý kiểm tra hệ thống. " +
-                "Trả lời đúng một câu ngắn bằng tiếng Việt. " +
+                "Bạn là hệ thống kiểm tra LLM của ORCA Financial. " +
+                "Chỉ trả lời đúng một câu ngắn bằng tiếng Việt. " +
                 "Không giải thích thêm.",
             },
             {
@@ -90,22 +109,22 @@ export async function GET(
           },
         );
 
-      if (detailed.result) {
+      if (result.result) {
         live = {
           ok: true,
           provider:
-            detailed.result.provider,
+            result.result.provider,
           model:
-            detailed.result.model,
+            result.result.model,
           latencyMs:
-            detailed.result.latencyMs ??
+            result.result.latencyMs ??
             Date.now() - started,
           attempted:
-            detailed.attempted,
+            result.attempted,
           transient:
-            detailed.transient,
+            result.transient,
           snippet:
-            detailed.result.text.slice(
+            result.result.text.slice(
               0,
               120,
             ),
@@ -114,11 +133,11 @@ export async function GET(
         live = {
           ok: false,
           errors:
-            detailed.errors,
+            result.errors,
           attempted:
-            detailed.attempted,
+            result.attempted,
           transient:
-            detailed.transient,
+            result.transient,
           latencyMs:
             Date.now() - started,
         };
@@ -127,7 +146,7 @@ export async function GET(
 
     return ok({
       keysPresent:
-        diag.keysPresent,
+        diagnostics.keysPresent,
 
       configured:
         configured.map(
@@ -135,16 +154,22 @@ export async function GET(
         ),
 
       order:
-        diag.order,
+        diagnostics.order,
 
       models:
-        diag.models,
+        diagnostics.models,
 
       live,
 
+      meta: {
+        authenticated: false,
+        diagnosticOnly: true,
+        pingRequested: ping,
+      },
+
       hint:
-        "LLM pipeline: Groq → OpenRouter. " +
-        "keysPresent chỉ xác nhận biến môi trường tồn tại, " +
+        "ORCA LLM pipeline: Groq → OpenRouter. " +
+        "keysPresent=true chỉ xác nhận biến môi trường tồn tại, " +
         "không xác nhận API key còn hợp lệ. " +
         "Dùng ?ping=1 để thực hiện live test. " +
         "401/403 = authentication hoặc permission. " +
