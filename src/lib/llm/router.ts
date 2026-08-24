@@ -58,7 +58,6 @@ export function isLlmStrict(): boolean {
   return process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
 }
 
-/** Transient errors: safe to soft-degrade with data-engine answer. */
 export function isTransientLlmError(msg: string): boolean {
   return /\b(429|503|rate.?limit|timeout|abort|ECONNRESET|ETIMEDOUT|fetch failed|network|overloaded|capacity)\b/i.test(
     msg,
@@ -78,6 +77,7 @@ export type ChatWithFallbackResult = {
   transient: boolean;
 };
 
+/** Sequential fallback (legacy). */
 export async function chatWithFallbackDetailed(
   messages: LlmMessage[],
   opts: LlmChatOptions = {},
@@ -96,7 +96,7 @@ export async function chatWithFallbackDetailed(
 
   const errors: string[] = [];
   const attempted: LlmProviderId[] = [];
-  const baseTimeout = opts.timeoutMs ?? 16_000;
+  const baseTimeout = opts.timeoutMs ?? 22_000;
 
   for (let i = 0; i < providers.length; i++) {
     const provider = providers[i];
@@ -104,7 +104,7 @@ export async function chatWithFallbackDetailed(
     try {
       const result = await provider.chat(messages, {
         ...opts,
-        timeoutMs: Math.max(10_000, baseTimeout - i * 2_000),
+        timeoutMs: Math.max(12_000, baseTimeout - i * 2_000),
       });
       logger.info("llm_ok", {
         provider: provider.id,
@@ -123,6 +123,66 @@ export async function chatWithFallbackDetailed(
 
   const transient = errors.some((e) => isTransientLlmError(e));
   logger.warn("llm_all_providers_failed", { errors, transient });
+  return { result: null, errors, attempted, transient };
+}
+
+/**
+ * Race all configured providers — first successful response wins.
+ * Cuts latency when one provider is slow/rate-limited.
+ */
+export async function chatRaceProviders(
+  messages: LlmMessage[],
+  opts: LlmChatOptions = {},
+): Promise<ChatWithFallbackResult> {
+  const providers = orderedProviders(opts.prefer);
+  if (providers.length === 0) {
+    return {
+      result: null,
+      errors: ["No LLM provider configured."],
+      attempted: [],
+      transient: false,
+    };
+  }
+
+  if (providers.length === 1) {
+    return chatWithFallbackDetailed(messages, opts);
+  }
+
+  const timeoutMs = opts.timeoutMs ?? 22_000;
+  const errors: string[] = [];
+  const attempted = providers.map((p) => p.id);
+
+  type RaceOk = { ok: true; result: LlmChatResult };
+  type RaceFail = { ok: false; error: string };
+
+  const tasks = providers.map(
+    (provider) =>
+      provider
+        .chat(messages, { ...opts, timeoutMs })
+        .then((result): RaceOk => {
+          logger.info("llm_race_ok", {
+            provider: provider.id,
+            model: result.model,
+            latencyMs: result.latencyMs,
+          });
+          return { ok: true, result };
+        })
+        .catch((err): RaceFail => {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`${provider.id}: ${msg.slice(0, 220)}`);
+          logger.warn("llm_race_fail", { provider: provider.id, error: msg });
+          return { ok: false, error: msg };
+        }),
+  );
+
+  // First success wins; if all fail, aggregate errors
+  const settled = await Promise.all(tasks);
+  const winner = settled.find((s): s is RaceOk => s.ok);
+  if (winner) {
+    return { result: winner.result, errors, attempted, transient: false };
+  }
+
+  const transient = errors.some((e) => isTransientLlmError(e));
   return { result: null, errors, attempted, transient };
 }
 

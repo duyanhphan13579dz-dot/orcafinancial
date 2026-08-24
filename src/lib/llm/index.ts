@@ -10,6 +10,7 @@ export type {
 export {
   chatWithFallback,
   chatWithFallbackDetailed,
+  chatRaceProviders,
   listConfiguredProviders,
   llmEnvDiagnostics,
   isLlmStrict,
