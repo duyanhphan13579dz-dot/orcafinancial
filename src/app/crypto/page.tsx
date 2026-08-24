@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import {
   useCallback,
   useDeferredValue,
@@ -860,12 +861,13 @@ export default function CryptoPage() {
                     >
 
                       {r.logoUrl ? (
-                        <img
+                        <Image
                           src={r.logoUrl}
                           alt=""
+                          width={32}
+                          height={32}
                           className="h-8 w-8 rounded-full"
                           loading="lazy"
-                          decoding="async"
                         />
                       ) : (
                         <span className="h-8 w-8 rounded-full bg-[#00d4ff]/15 flex items-center justify-center text-xs font-bold text-[#00d4ff]">
