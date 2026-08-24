@@ -247,7 +247,6 @@ export async function fetchCryptoMarketsWithFallback(
   limit = 100,
 ): Promise<{ coins: CryptoCoinSource[]; prices: CryptoTicker[]; source: string }> {
   try {
-    // Tickers alone are enough for list prices; exchangeInfo is heavier
     const binancePrices = await fetchBinanceTickers();
     const coins: CryptoCoinSource[] = binancePrices.map((p) => ({
       symbol: p.symbol,
@@ -358,9 +357,13 @@ export async function fetchCoinGeckoProfile(id: string): Promise<CryptoProfileSo
 }
 
 const rssParser = new Parser();
+/** Phase 4 — multi-source crypto news (Binance Square has no public API). */
 const RSS = [
   { source: "CoinDesk", url: "https://www.coindesk.com/arc/outboundfeeds/rss/" },
   { source: "Cointelegraph", url: "https://cointelegraph.com/rss" },
+  { source: "Decrypt", url: "https://decrypt.co/feed" },
+  { source: "BitcoinMagazine", url: "https://bitcoinmagazine.com/.rss/full/" },
+  { source: "TheBlock", url: "https://www.theblock.co/rss.xml" },
 ];
 export async function fetchCryptoNews(): Promise<CryptoNewsItem[]> {
   const settled = await Promise.allSettled(
@@ -373,7 +376,7 @@ export async function fetchCryptoNews(): Promise<CryptoNewsItem[]> {
       const xml = await readTextSafe(res, source, url);
       const feed = await rssParser.parseString(xml);
       return (feed.items ?? [])
-        .slice(0, 30)
+        .slice(0, 25)
         .map((item) => ({
           title: item.title ?? "",
           link: item.link ?? "",
@@ -391,5 +394,14 @@ export async function fetchCryptoNews(): Promise<CryptoNewsItem[]> {
   );
   const items = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
   if (!items.length) throw new Error("All crypto RSS providers unavailable");
-  return items.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+  // Dedupe by title prefix
+  const seen = new Set<string>();
+  const unique: CryptoNewsItem[] = [];
+  for (const item of items.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())) {
+    const key = item.title.slice(0, 48).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
+  return unique;
 }
