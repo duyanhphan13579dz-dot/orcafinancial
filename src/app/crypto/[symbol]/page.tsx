@@ -297,6 +297,8 @@ export default function CryptoDetail() {
   const analysis = bundle?.analysis;
   const futures = bundle?.futures;
 
+  const sourceLabel = price?.source ?? chartSource ?? "Binance";
+
   const live =
     wsStatus === "connected"
       ? { text: "LIVE", cls: "bg-emerald-400 live-dot" }
@@ -317,7 +319,6 @@ export default function CryptoDetail() {
         ← Thị trường Crypto
       </Link>
 
-      {/* Header */}
       <div className="panel flex flex-wrap items-center gap-3 p-4">
         {coin?.logoUrl ? (
           <Image
@@ -343,7 +344,7 @@ export default function CryptoDetail() {
             <span className="text-[10px] text-slate-500">{live.text}</span>
           </div>
           <div className="mt-0.5 flex flex-wrap gap-x-3 text-[10px] text-slate-500">
-            <span>{price?.source ?? chartSource || "Binance"}</span>
+            <span>{sourceLabel}</span>
             {coin?.marketCapRank != null && <span>Rank #{coin.marketCapRank}</span>}
             {price?.volume24h != null && <span>Vol {fmtNum(price.volume24h, 0)}</span>}
           </div>
@@ -358,7 +359,6 @@ export default function CryptoDetail() {
         </div>
       </div>
 
-      {/* Chart first */}
       <div className="panel p-3 sm:p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-white">Chart · {symbol}</h2>
@@ -397,7 +397,6 @@ export default function CryptoDetail() {
         )}
       </div>
 
-      {/* Intel grid 2×2 */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {futures?.available && <FuturesPanel data={futures} />}
         {whaleLiq?.available && <WhalePanel data={whaleLiq} />}
@@ -405,7 +404,6 @@ export default function CryptoDetail() {
         <CryptoSentimentPanel symbol={symbol} />
       </div>
 
-      {/* Analysis + market */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         <div className={`panel border p-4 ${recCls}`}>
           <div className="text-[10px] uppercase tracking-wide opacity-70">
@@ -478,7 +476,6 @@ export default function CryptoDetail() {
         </div>
       </div>
 
-      {/* Indicators */}
       {analysis && (
         <div className="panel p-4">
           <h2 className="mb-3 text-sm font-semibold text-white">Technical indicators</h2>
