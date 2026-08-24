@@ -340,7 +340,17 @@ export async function POST(req: NextRequest) {
     const needMarket = intent === "market_ticker" || intent === "market_overview";
     const playbookContext = retrievePlaybookContext(message, intent) || null;
 
-    const dataBudget = withTimeout(
+    type DataBudget = [
+      SymbolContext[],
+      Awaited<ReturnType<typeof getMarketOverview>> | null,
+      Awaited<ReturnType<typeof getNews>> | null,
+      string | null,
+      string | null,
+    ];
+
+    const emptyBudget: DataBudget = [[], null, null, null, null];
+
+    const dataBudget: DataBudget = await withTimeout(
       Promise.all([
         Promise.all(validated.map(buildSymbolContext)).then((list) =>
           list.filter((c): c is SymbolContext => c !== null),
@@ -363,17 +373,17 @@ export async function POST(req: NextRequest) {
               "dn",
             ).catch(() => null)
           : Promise.resolve(null),
-      ]),
+      ]) as Promise<DataBudget>,
       12_000,
       "data_engine",
     ).catch((err) => {
       logger.warn("agent_data_engine_budget", {
         error: err instanceof Error ? err.message : String(err),
       });
-      return [[], null, null, null, null] as const;
+      return emptyBudget;
     });
 
-    const [contexts, market, newsRes, personalContext, corporateContext] = await dataBudget;
+    const [contexts, market, newsRes, personalContext, corporateContext] = dataBudget;
 
     const headlines = newsRes?.items?.map((n) => `${n.title} (${n.sourceName})`) ?? [];
     const personalized = Boolean(personalContext || corporateContext);
