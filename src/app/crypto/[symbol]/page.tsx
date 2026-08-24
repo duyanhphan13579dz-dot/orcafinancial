@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import Image from "next/image";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -288,12 +289,13 @@ export default function CryptoDetail() {
 
       <div className="panel flex flex-wrap items-center gap-4 p-4">
         {coin?.logoUrl ? (
-          <img
+          <Image
             src={coin.logoUrl}
             alt=""
+            width={48}
+            height={48}
             className="h-12 w-12 rounded-full"
-            loading="eager"
-            decoding="async"
+            priority
           />
         ) : (
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#00d4ff]/15 font-bold text-[#00d4ff]">
