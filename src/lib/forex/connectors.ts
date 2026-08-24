@@ -9,12 +9,14 @@ import {
 import { FOREX_BY_SYMBOL, FOREX_PAIRS, type ForexPairDef } from "./data";
 import { forProvider } from "@/lib/logger";
 import { alignBarsByTime, combineOhlc } from "./normalize";
-import type { ForexRawQuote } from "./types";
+import type { ForexQuote } from "./types";
 import {
   enrichWithSecondary,
   secondaryOnlySnapshot,
   type PipelineResult,
 } from "./providers/pipeline";
+
+export type { ForexQuote };
 
 const YAHOO1 = "yahoo-forex-primary";
 const YAHOO2 = "yahoo-forex-fallback";
@@ -25,10 +27,6 @@ const QUOTE_RETRIES = 0;
 const BARS_TIMEOUT_MS = 2_500;
 const BARS_RETRIES = 0;
 const DERIVED_STALE_LEG_MS = 30_000;
-
-export interface ForexQuote extends ForexRawQuote {
-  degraded?: boolean;
-}
 
 export interface ForexSnapshotResult {
   quotes: ForexQuote[];
