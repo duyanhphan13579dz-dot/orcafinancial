@@ -12,7 +12,11 @@ import {
   createBinanceWebSocket,
   type BinanceKline,
 } from "@/lib/crypto/binance-websocket";
-import type { FuturesIntelligence, OrderFlowIntelligence } from "@/lib/crypto/types";
+import type {
+  FuturesIntelligence,
+  OrderFlowIntelligence,
+  WhaleLiquidationIntelligence,
+} from "@/lib/crypto/types";
 
 const ChartSkeleton = () => (
   <div className="h-[380px] w-full animate-pulse rounded-lg bg-slate-800/40" />
@@ -81,8 +85,18 @@ interface Bundle {
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
 function biasColor(bias: string): string {
-  if (bias.includes("LONG") || bias.includes("BUY")) return "text-emerald-400";
-  if (bias.includes("SHORT") || bias.includes("SELL")) return "text-rose-400";
+  if (
+    bias.includes("LONG") ||
+    bias.includes("BUY") ||
+    bias.includes("ACCUM")
+  )
+    return "text-emerald-400";
+  if (
+    bias.includes("SHORT") ||
+    bias.includes("SELL") ||
+    bias.includes("DISTRIB")
+  )
+    return "text-rose-400";
   return "text-amber-300";
 }
 
@@ -100,6 +114,8 @@ function biasLabel(bias: string): string {
     LONG_LIQUIDATION: "Long liquidation",
     BUY_DOMINANT: "Buy-side dominant",
     SELL_DOMINANT: "Sell-side dominant",
+    ACCUMULATION: "Accumulation",
+    DISTRIBUTION: "Distribution",
     UNKNOWN: "—",
   };
   return map[bias] ?? bias;
@@ -107,10 +123,12 @@ function biasLabel(bias: string): string {
 
 function fmtOiUsd(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
-  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
-  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
-  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
-  return `$${fmtNum(n, 0)}`;
+  const a = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  if (a >= 1e9) return `${sign}$${(a / 1e9).toFixed(2)}B`;
+  if (a >= 1e6) return `${sign}$${(a / 1e6).toFixed(1)}M`;
+  if (a >= 1e3) return `${sign}$${(a / 1e3).toFixed(0)}K`;
+  return `${sign}$${fmtNum(a, 0)}`;
 }
 
 function fmtTime(ms: number): string {
@@ -142,6 +160,7 @@ export default function CryptoDetail() {
   const [wsPrice, setWsPrice] = useState<number | null>(null);
   const [wsKline, setWsKline] = useState<BinanceKline | null>(null);
   const [orderFlow, setOrderFlow] = useState<OrderFlowIntelligence | null>(null);
+  const [whaleLiq, setWhaleLiq] = useState<WhaleLiquidationIntelligence | null>(null);
 
   const initialDone = useRef(false);
 
@@ -213,7 +232,6 @@ export default function CryptoDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
 
-  // Phase 2 — poll order flow every 5s
   useEffect(() => {
     if (!symbol) return;
     let cancelled = false;
@@ -226,6 +244,27 @@ export default function CryptoDetail() {
     };
     load();
     const id = setInterval(load, 5_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [symbol]);
+
+  // Phase 3 — whale + liquidation every 30s
+  useEffect(() => {
+    if (!symbol) return;
+    let cancelled = false;
+    const load = () => {
+      void api<WhaleLiquidationIntelligence>(
+        `/crypto/${encodeURIComponent(symbol)}/whale`,
+      )
+        .then((r) => {
+          if (!cancelled) setWhaleLiq(r.data);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const id = setInterval(load, 30_000);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -335,6 +374,12 @@ export default function CryptoDetail() {
     const all = [...book.bids, ...book.asks].map((l) => l.notional);
     return Math.max(1, ...all);
   }, [book]);
+
+  const maxZoneNotional = useMemo(() => {
+    const z = whaleLiq?.liquidation.zones ?? [];
+    if (!z.length) return 1;
+    return Math.max(1, ...z.map((x) => x.notionalEstimate));
+  }, [whaleLiq]);
 
   const websocketText =
     wsStatus === "connected"
@@ -469,7 +514,145 @@ export default function CryptoDetail() {
         </div>
       )}
 
-      {/* Phase 2 — Order Flow */}
+      {/* Phase 3 — Whale + Liquidation */}
+      {whaleLiq?.available && (
+        <div className="panel p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-semibold text-white">🐋 Whale & Liquidation</h2>
+            <span className="text-[10px] text-slate-500">
+              {whaleLiq.whale.windowMinutes} phút · ngưỡng {fmtOiUsd(whaleLiq.whaleThresholdUsd)} ·
+              refresh 30s
+            </span>
+          </div>
+
+          <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
+              <div className="text-[10px] uppercase text-slate-500">Whale Buy</div>
+              <div className="mt-1 font-mono text-lg font-bold text-emerald-400">
+                {fmtOiUsd(whaleLiq.whale.buyNotional)}
+              </div>
+              <div className="text-[10px] text-slate-500">{whaleLiq.whale.buyCount} lệnh</div>
+            </div>
+            <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
+              <div className="text-[10px] uppercase text-slate-500">Whale Sell</div>
+              <div className="mt-1 font-mono text-lg font-bold text-rose-400">
+                {fmtOiUsd(whaleLiq.whale.sellNotional)}
+              </div>
+              <div className="text-[10px] text-slate-500">{whaleLiq.whale.sellCount} lệnh</div>
+            </div>
+            <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
+              <div className="text-[10px] uppercase text-slate-500">Net flow</div>
+              <div
+                className={`mt-1 font-mono text-lg font-bold ${
+                  whaleLiq.whale.netFlow >= 0 ? "text-emerald-400" : "text-rose-400"
+                }`}
+              >
+                {whaleLiq.whale.netFlow >= 0 ? "+" : ""}
+                {fmtOiUsd(whaleLiq.whale.netFlow)}
+              </div>
+              <div className={`text-xs font-semibold ${biasColor(whaleLiq.whale.bias)}`}>
+                {biasLabel(whaleLiq.whale.bias)}
+              </div>
+            </div>
+          </div>
+
+          <p className="mb-4 text-xs text-slate-300">{whaleLiq.whale.insight}</p>
+          {whaleLiq.takerInsight && (
+            <p className="mb-4 text-xs text-slate-400">{whaleLiq.takerInsight}</p>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div>
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                Liquidation zones (ước lượng)
+              </div>
+              {whaleLiq.liquidation.markPrice != null && (
+                <div className="mb-2 text-[10px] text-slate-500">
+                  Mark ≈ ${fmtNum(whaleLiq.liquidation.markPrice, 2)}
+                </div>
+              )}
+              <div className="space-y-1">
+                {whaleLiq.liquidation.zones.slice(0, 10).map((z, i) => {
+                  const above =
+                    whaleLiq.liquidation.markPrice != null &&
+                    z.price >= whaleLiq.liquidation.markPrice;
+                  const bar = Math.min(
+                    100,
+                    (z.notionalEstimate / maxZoneNotional) * 100,
+                  );
+                  return (
+                    <div key={`${z.side}-${z.price}-${i}`} className="relative">
+                      <div className="relative flex items-center justify-between overflow-hidden rounded px-2 py-1 text-[11px] font-mono">
+                        <div
+                          className={`absolute inset-y-0 left-0 ${z.side === "SHORT" ? "bg-rose-500/20" : "bg-emerald-500/20"}`}
+                          style={{ width: `${bar}%` }}
+                        />
+                        <span className="relative z-10 text-slate-300">
+                          ${fmtNum(z.price, 0)}
+                        </span>
+                        <span
+                          className={`relative z-10 ${
+                            z.side === "SHORT" ? "text-rose-400" : "text-emerald-400"
+                          }`}
+                        >
+                          {z.side === "SHORT" ? "🔴 shorts" : "🟢 longs"}{" "}
+                          {fmtOiUsd(z.notionalEstimate)}
+                        </span>
+                        <span className="relative z-10 text-slate-500">
+                          {above ? "↑" : "↓"}
+                          {Math.abs(z.distancePct).toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-[10px] text-slate-500">{whaleLiq.liquidation.insight}</p>
+            </div>
+
+            <div>
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                Whale events
+              </div>
+              <div className="max-h-[280px] space-y-0.5 overflow-y-auto font-mono text-[11px]">
+                {whaleLiq.whale.events.slice(0, 15).map((e, i) => (
+                  <div
+                    key={`${e.tradeId ?? "w"}-${e.time}-${i}`}
+                    className="flex items-center justify-between rounded px-1 py-0.5"
+                  >
+                    <span className="text-slate-500">
+                      {e.kind === "ORDER_WALL" ? "WALL" : fmtTime(e.time)}
+                    </span>
+                    <span
+                      className={
+                        e.side === "BUY" ? "text-emerald-400" : "text-rose-400"
+                      }
+                    >
+                      {e.kind === "WHALE"
+                        ? "🐋 "
+                        : e.kind === "ORDER_WALL"
+                          ? "🧱 "
+                          : ""}
+                      {e.side}
+                    </span>
+                    <span className="text-white">{fmtNum(e.price, 2)}</span>
+                    <span className="text-slate-400">{fmtOiUsd(e.notional)}</span>
+                  </div>
+                ))}
+                {whaleLiq.whale.events.length === 0 && (
+                  <div className="text-slate-500">Không có sự kiện whale trong cửa sổ.</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 rounded-lg bg-slate-900/30 p-3 text-xs text-slate-400">
+            <span className="font-semibold text-slate-300">Assessment: </span>
+            {whaleLiq.assessment}
+          </div>
+        </div>
+      )}
+
       {orderFlow?.available && (
         <div className="panel p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
