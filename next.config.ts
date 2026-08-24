@@ -20,12 +20,22 @@ const nextConfig: NextConfig = {
   },
 
   images: {
-    // Crypto/company logos are loaded from external CDNs today via plain
-    // <img> tags. If/when those are migrated to next/image, allow the
-    // common ones so optimization + caching kicks in automatically.
+    // Crypto/company logos and user avatars are loaded from external CDNs.
+    // coingecko: crypto logos (crypto/page.tsx, crypto/[symbol]/page.tsx).
+    // googleusercontent: Google OAuth profile pictures (UserMenu,
+    // settings/AccountPanel) — added so those two now use next/image too.
+    //
+    // Deliberately NOT whitelisting news RSS image hosts (CafeF/Vietstock/
+    // VnExpress) here: those imageUrl values come straight from whatever
+    // <img> tag each RSS article embeds, so the actual CDN host varies per
+    // article and isn't a small fixed set — next/image 400s on any host
+    // not listed here, so DashboardHome's and news/page.tsx's news
+    // thumbnails intentionally stay plain <img> until the real CDN
+    // hostnames in use are confirmed from production data.
     remotePatterns: [
       { protocol: "https", hostname: "**.coingecko.com" },
       { protocol: "https", hostname: "**.githubusercontent.com" },
+      { protocol: "https", hostname: "**.googleusercontent.com" },
     ],
     formats: ["image/avif", "image/webp"],
   },
