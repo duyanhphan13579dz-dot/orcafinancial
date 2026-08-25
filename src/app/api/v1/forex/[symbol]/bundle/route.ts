@@ -9,9 +9,17 @@ import {
   defaultTimeframe,
   isValidTimeframe,
 } from "@/lib/forex/timeframes";
+import {
+  FOREX_CACHE,
+  fxCacheGet,
+  fxCacheSet,
+  ohlcvKey,
+  ohlcvTtlMs,
+  withBudget,
+} from "@/lib/forex/cache";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 10;
 
 export async function GET(
   req: NextRequest,
@@ -31,7 +39,7 @@ export async function GET(
 
   const rawLimit = Number(req.nextUrl.searchParams.get("limit") ?? 90);
   const limit = Math.min(
-    200,
+    150,
     Math.max(30, Number.isFinite(rawLimit) ? Math.floor(rawLimit) : 90),
   );
 
@@ -41,11 +49,79 @@ export async function GET(
 
   try {
     if (light) {
-      const [quote, ohlcv] = await Promise.all([
-        getLiveQuoteContract(sym),
-        syncForexOhlcv(sym, timeframe, limit),
-      ]);
+      const oKey = ohlcvKey(sym, timeframe, limit);
+      const cached = await fxCacheGet<{
+        bars: unknown[];
+        source: string;
+        quote: unknown;
+        pair: unknown;
+      }>(oKey);
+
+      if (cached?.bars && (cached.bars as unknown[]).length) {
+        const quote =
+          (cached.quote as Awaited<ReturnType<typeof getLiveQuoteContract>>) ??
+          (await getLiveQuoteContract(sym).catch(() => null));
+        const data = {
+          pair: cached.pair,
+          price: quote
+            ? {
+                price: quote.price,
+                bid: quote.bid,
+                ask: quote.ask,
+                change: quote.change,
+                changePercent: quote.changePercent,
+                source: quote.source,
+                timestamp: quote.timestamp,
+                spread: quote.spread,
+                spreadPips: quote.spreadPips,
+                freshness: quote.freshness,
+                ageMs: quote.ageMs,
+              }
+            : null,
+          quote,
+          bars: cached.bars,
+          timeframe,
+          source: `${cached.source}+cache`,
+          analysis: null as null,
+          light: true,
+        };
+        const response = ok(data, {
+          timezone: "Asia/Ho_Chi_Minh",
+          source: data.source,
+          freshness: quote?.freshness,
+          ageMs: quote?.ageMs,
+          light: true,
+          cacheHit: "redis",
+        });
+        response.headers.set(
+          "Cache-Control",
+          "public, s-maxage=6, stale-while-revalidate=24",
+        );
+        response.headers.set("X-Cache-Hit", "redis");
+        return response;
+      }
+
+      const [quote, ohlcv] = await withBudget(
+        Promise.all([
+          getLiveQuoteContract(sym),
+          syncForexOhlcv(sym, timeframe, limit),
+        ]),
+        FOREX_CACHE.hardDeadlineMs,
+        "bundle_light",
+      );
+
       if (!quote && !ohlcv) return fail("Forex pair not found", 404);
+
+      await fxCacheSet(
+        oKey,
+        {
+          bars: ohlcv.bars,
+          source: ohlcv.source,
+          quote,
+          pair: ohlcv.pair,
+        },
+        ohlcvTtlMs(timeframe),
+      );
 
       const data = {
         pair: ohlcv.pair,
@@ -78,15 +154,21 @@ export async function GET(
         freshness: data.quote?.freshness,
         ageMs: data.quote?.ageMs,
         light: true,
+        cacheHit: "miss",
       });
       response.headers.set(
         "Cache-Control",
-        "public, s-maxage=8, stale-while-revalidate=30",
+        "public, s-maxage=6, stale-while-revalidate=24",
       );
+      response.headers.set("X-Cache-Hit", "miss");
       return response;
     }
 
-    const data = await getForexDetailBundle(sym, timeframe, limit);
+    const data = await withBudget(
+      getForexDetailBundle(sym, timeframe, limit),
+      FOREX_CACHE.hardDeadlineMs + 2_500,
+      "bundle_full",
+    );
     const response = ok(data, {
       timezone: "Asia/Ho_Chi_Minh",
       source: data.source,
@@ -95,7 +177,7 @@ export async function GET(
     });
     response.headers.set(
       "Cache-Control",
-      "public, s-maxage=12, stale-while-revalidate=40",
+      "public, s-maxage=10, stale-while-revalidate=30",
     );
     return response;
   } catch (error) {

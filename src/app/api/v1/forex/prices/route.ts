@@ -11,49 +11,28 @@ import { fetchForexSnapshot } from "@/lib/forex/connectors";
 import { FOREX_BY_SYMBOL } from "@/lib/forex/data";
 import { toQuoteContract } from "@/lib/forex/normalize";
 import type { ForexQuoteContract } from "@/lib/forex/types";
+import {
+  FOREX_CACHE,
+  fxCacheGet,
+  fxCacheSet,
+  pricesKey,
+  withBudget,
+} from "@/lib/forex/cache";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 20;
-
-const MEMORY_TTL_MS = 12_000;
-const MEMORY_HARD_TTL_MS = 45_000;
-const HARD_DEADLINE_MS = 12_000;
-const DB_BUDGET_MS = 4_000;
+export const maxDuration = 8;
 
 interface ForexPricesPayload {
   prices: ForexQuoteContract[];
   freshness: Record<string, unknown>;
 }
 
-interface MemoryCacheEntry {
-  payload: ForexPricesPayload;
-  createdAt: number;
-}
-
-let memoryCache: MemoryCacheEntry | null = null;
-let refreshPromise: Promise<ForexPricesPayload> | null = null;
-
-function getCachedPayload(allowStale = false): ForexPricesPayload | null {
-  if (!memoryCache) return null;
-  const age = Date.now() - memoryCache.createdAt;
-  if (age < MEMORY_TTL_MS) return memoryCache.payload;
-  if (allowStale && age < MEMORY_HARD_TTL_MS) return memoryCache.payload;
-  if (age >= MEMORY_HARD_TTL_MS) memoryCache = null;
-  return null;
-}
-
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms),
-    ),
-  ]);
-}
-
 async function liveYahooPrices(): Promise<ForexPricesPayload> {
-  const snapshot = await withTimeout(fetchForexSnapshot(), 10_000, "yahoo_snapshot");
-  // Persist in background so DB path stays warm
+  const snapshot = await withBudget(
+    fetchForexSnapshot(),
+    FOREX_CACHE.softDeadlineMs,
+    "yahoo_snapshot",
+  );
   void syncForexPrices().catch(() => undefined);
 
   const prices = snapshot.quotes.map((q) => {
@@ -80,15 +59,19 @@ async function liveYahooPrices(): Promise<ForexPricesPayload> {
 
 async function loadFromDbFast(): Promise<ForexPricesPayload | null> {
   try {
-    await withTimeout(
+    await withBudget(
       ensureMarketTables().catch(() => undefined),
-      2_000,
+      1_500,
       "ensure_tables",
     ).catch(() => undefined);
 
-    void ensureForexFresh(15_000).catch(() => undefined);
+    void ensureForexFresh(12_000).catch(() => undefined);
 
-    const rows = await withTimeout(latestForexPrices(), DB_BUDGET_MS, "latest_forex");
+    const rows = await withBudget(
+      latestForexPrices(),
+      2_500,
+      "latest_forex",
+    );
     if (!rows?.length) return null;
 
     const prices = mapRowsToContracts(rows as Array<Record<string, unknown>>);
@@ -101,42 +84,55 @@ async function loadFromDbFast(): Promise<ForexPricesPayload | null> {
   }
 }
 
-async function loadForexPrices(): Promise<ForexPricesPayload> {
-  const fresh = getCachedPayload(false);
-  if (fresh) return fresh;
-
-  const stale = getCachedPayload(true);
-
-  if (!refreshPromise) {
-    refreshPromise = (async () => {
-      const dbAttempt = loadFromDbFast();
-      const yahooAttempt = liveYahooPrices();
-
-      const db = await dbAttempt;
-      if (db) return db;
-
-      return yahooAttempt;
-    })()
-      .then((payload) => {
-        memoryCache = { payload, createdAt: Date.now() };
-        return payload;
-      })
-      .catch(async (err) => {
-        console.warn("[forex_prices] refresh failed", err);
-        if (stale) return stale;
-        return liveYahooPrices();
-      })
-      .finally(() => {
-        refreshPromise = null;
-      });
+async function loadForexPrices(): Promise<ForexPricesPayload & { cacheHit?: string }> {
+  const key = pricesKey();
+  const cached = await fxCacheGet<ForexPricesPayload>(key);
+  if (cached?.prices?.length) {
+    // Background refresh when cache is older-style payload
+    void (async () => {
+      try {
+        const db = await loadFromDbFast();
+        const payload = db ?? (await liveYahooPrices().catch(() => null));
+        if (payload?.prices?.length) {
+          await fxCacheSet(key, payload, FOREX_CACHE.pricesTtlMs);
+        }
+      } catch {
+        /* ignore bg */
+      }
+    })();
+    return { ...cached, cacheHit: "redis" };
   }
 
-  if (stale) {
-    void refreshPromise;
-    return stale;
+  // Race DB vs Yahoo under hard budget
+  const dbP = loadFromDbFast();
+  const yahooP = liveYahooPrices().catch(() => null);
+
+  const db = await dbP;
+  if (db?.prices?.length) {
+    await fxCacheSet(key, db, FOREX_CACHE.pricesTtlMs);
+    return { ...db, cacheHit: "db" };
   }
 
-  return withTimeout(refreshPromise, HARD_DEADLINE_MS, "forex_prices_total");
+  const yahoo = await withBudget(
+    yahooP.then((x) => x ?? Promise.reject(new Error("yahoo_empty"))),
+    FOREX_CACHE.hardDeadlineMs,
+    "prices_total",
+  ).catch(async () => {
+    // Last resort: any stale redis with longer key read already failed
+    return null;
+  });
+
+  if (yahoo?.prices?.length) {
+    await fxCacheSet(key, yahoo, FOREX_CACHE.pricesTtlMs);
+    return { ...yahoo, cacheHit: "yahoo" };
+  }
+
+  // Empty shell — client shows skeleton
+  return {
+    prices: [],
+    freshness: { refreshed: false, source: "empty", count: 0 },
+    cacheHit: "none",
+  };
 }
 
 export async function GET(req: NextRequest) {
@@ -144,16 +140,25 @@ export async function GET(req: NextRequest) {
   if (limited) return limited;
 
   try {
-    const payload = await loadForexPrices();
-    const response = ok(payload, { timezone: "Asia/Ho_Chi_Minh" });
+    const payload = await withBudget(
+      loadForexPrices(),
+      FOREX_CACHE.hardDeadlineMs,
+      "forex_prices",
+    );
+    const { cacheHit, ...data } = payload;
+    const response = ok(data, {
+      timezone: "Asia/Ho_Chi_Minh",
+      cacheHit: cacheHit ?? "unknown",
+    });
     response.headers.set(
       "Cache-Control",
-      "public, s-maxage=10, stale-while-revalidate=45",
+      "public, s-maxage=4, stale-while-revalidate=20",
     );
     response.headers.set(
       "Vercel-CDN-Cache-Control",
-      "public, s-maxage=10, stale-while-revalidate=45",
+      "public, s-maxage=4, stale-while-revalidate=20",
     );
+    response.headers.set("X-Cache-Hit", String(cacheHit ?? "unknown"));
     return response;
   } catch (err) {
     return handleError(err, "forex_prices");
