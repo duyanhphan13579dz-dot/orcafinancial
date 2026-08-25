@@ -1,4 +1,4 @@
-import { desc, eq, sql, and } from "drizzle-orm";
+import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { FOREX_PAIRS, FOREX_BY_SYMBOL } from "./data";
 import {
@@ -97,8 +97,8 @@ function invalidatePriceCaches() {
   quoteContractCache.clear();
 }
 
-function memKey(symbol: string, timeframe: string, limit: number) {
-  return `${symbol}:${timeframe}:${limit}`;
+function memKey(symbol: string, timeframe: string, limit: number, before?: number) {
+  return `${symbol.toUpperCase()}:${timeframe}:${limit}:${before ?? "latest"}`;
 }
 
 async function getCachedForexPairs() {
@@ -479,12 +479,18 @@ async function readOhlcvFromDb(
   pairId: string,
   timeframe: string,
   limit: number,
+  before?: number,
 ): Promise<DbOhlcv | null> {
   try {
+    const conditions = [
+      eq(forexOhlcv.pairId, pairId),
+      eq(forexOhlcv.timeframe, timeframe),
+      ...(before != null ? [lt(forexOhlcv.time, new Date(before * 1000))] : []),
+    ];
     const rows = await db
       .select()
       .from(forexOhlcv)
-      .where(and(eq(forexOhlcv.pairId, pairId), eq(forexOhlcv.timeframe, timeframe)))
+      .where(and(...conditions))
       .orderBy(desc(forexOhlcv.time))
       .limit(limit);
 
@@ -556,14 +562,15 @@ async function loadForexOhlcv(
   symbol: string,
   timeframe: string,
   limit = 120,
+  before?: number,
 ) {
   const sym = symbol.toUpperCase();
   const safeLimit = Math.min(200, Math.max(40, limit));
-  const key = memKey(sym, timeframe, safeLimit);
+  const key = memKey(sym, timeframe, safeLimit, before);
   const policy = getOhlcvPolicy(timeframe);
 
   const applyLiveTick = async (bars: Ohlcv[], source: string, stale: boolean) => {
-    const live = await getLiveQuoteContract(sym).catch(() => null);
+    const live = before == null ? await getLiveQuoteContract(sym).catch(() => null) : null;
     const patched = live ? applyTickToBars(bars, live.price, timeframe) : bars;
     const existing = memOhlcv.get(key);
     if (existing) {
@@ -597,10 +604,14 @@ async function loadForexOhlcv(
 
   const soft = policy.soft;
   const hard = policy.hard;
-  const cached = await readOhlcvFromDb(found.pair.id, timeframe, safeLimit);
+  const cached = await readOhlcvFromDb(found.pair.id, timeframe, safeLimit, before);
   const age = cached ? Date.now() - cached.newestMs : Infinity;
 
-  if (cached && age <= soft) {
+  if (before != null && cached && cached.bars.length >= safeLimit) {
+    return applyLiveTick(cached.bars, cached.source, false);
+  }
+
+  if (before == null && cached && age <= soft) {
     memOhlcv.set(key, {
       bars: cached.bars,
       source: cached.source,
@@ -610,7 +621,9 @@ async function loadForexOhlcv(
     return applyLiveTick(cached.bars, cached.source, false);
   }
 
-  if (cached && age <= hard) {
+  if (cached && before == null) {
+    // Serve stale history immediately; refresh in the background even beyond
+    // the hard freshness window so a slow upstream never blocks the chart.
     void fetchForexBars(found.pair.symbol, timeframe, safeLimit)
       .then((result) => {
         memOhlcv.set(key, {
@@ -633,7 +646,7 @@ async function loadForexOhlcv(
   }
 
   try {
-    const result = await fetchForexBars(found.pair.symbol, timeframe, safeLimit);
+    const result = await fetchForexBars(found.pair.symbol, timeframe, safeLimit, before);
     memOhlcv.set(key, {
       bars: result.bars,
       source: result.source,
@@ -662,14 +675,19 @@ const ohlcvInflight = new Map<
   Promise<Awaited<ReturnType<typeof loadForexOhlcv>>>
 >();
 
-export function syncForexOhlcv(symbol: string, timeframe: string, limit = 120) {
+export function syncForexOhlcv(
+  symbol: string,
+  timeframe: string,
+  limit = 120,
+  before?: number,
+) {
   const normalized = symbol.toUpperCase();
   const safeLimit = Math.min(200, Math.max(40, limit));
-  const key = memKey(normalized, timeframe, safeLimit);
+  const key = memKey(normalized, timeframe, safeLimit, before);
   const existing = ohlcvInflight.get(key);
   if (existing) return existing;
 
-  const pending = loadForexOhlcv(normalized, timeframe, safeLimit).finally(() => {
+  const pending = loadForexOhlcv(normalized, timeframe, safeLimit, before).finally(() => {
     ohlcvInflight.delete(key);
   });
   ohlcvInflight.set(key, pending);

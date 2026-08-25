@@ -42,6 +42,12 @@ function ageLabel(ageMs?: number | null) {
 
 const BAR_LIMIT = 90;
 
+function mergeBars(older: Bar[], current: Bar[]): Bar[] {
+  const byTime = new Map<number, Bar>();
+  for (const bar of [...older, ...current]) byTime.set(bar.time, bar);
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
+
 export default function ForexDetail() {
   const symbol = String(useParams().symbol).toUpperCase();
   const tfs = useMemo(() => [...timeframesFor(symbol)], [symbol]);
@@ -53,6 +59,8 @@ export default function ForexDetail() {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [chartLoading, setChartLoading] = useState(false);
   const [bundleError, setBundleError] = useState<string | null>(null);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  const [historyHasMore, setHistoryHasMore] = useState(true);
   const [showEma, setShowEma] = useState(true);
   const [showBb, setShowBb] = useState(false);
   const [showRsi, setShowRsi] = useState(true);
@@ -60,6 +68,8 @@ export default function ForexDetail() {
   const [moreOpen, setMoreOpen] = useState(false);
   const initialDone = useRef(false);
   const analysisGen = useRef(0);
+  const historyBeforeRef = useRef<number | null>(null);
+  const historyLoadingRef = useRef(false);
 
   const loadAnalysis = useCallback(
     async (timeframe: string, fast = false) => {
@@ -107,7 +117,10 @@ export default function ForexDetail() {
       .then((env) => {
         if (cancelled) return;
         setBundle(env.data);
-        setBars(env.data.bars ?? []);
+        const initialBars = env.data.bars ?? [];
+        setBars(initialBars);
+        historyBeforeRef.current = initialBars[0]?.time ?? null;
+        setHistoryHasMore(initialBars.length >= BAR_LIMIT);
         setChartSource(env.data.source ?? "");
         setBundleLoading(false);
         initialDone.current = true;
@@ -130,13 +143,18 @@ export default function ForexDetail() {
   const loadTf = useCallback(
     async (next: string) => {
       setChartLoading(true);
+      setHistoryHasMore(true);
+      historyBeforeRef.current = null;
       setBundleError(null);
       try {
         const o = await api<{ bars: Bar[] }>(
           `/forex/${symbol}/ohlcv?timeframe=${next}&limit=${BAR_LIMIT}`,
           { timeoutMs: 12_000 },
         );
-        setBars(o.data.bars ?? []);
+        const nextBars = o.data.bars ?? [];
+        setBars(nextBars);
+        historyBeforeRef.current = nextBars[0]?.time ?? null;
+        setHistoryHasMore(o.meta?.hasMore === true || nextBars.length >= BAR_LIMIT);
         setChartSource(String(o.meta?.source ?? "yahoo"));
         void loadAnalysis(next, true).then(() => {
           void loadAnalysis(next);
@@ -149,6 +167,32 @@ export default function ForexDetail() {
     },
     [symbol, loadAnalysis],
   );
+
+  const loadMoreHistory = useCallback(async () => {
+    if (historyLoadingRef.current || !historyHasMore || historyBeforeRef.current == null) return;
+    historyLoadingRef.current = true;
+    setHistoryLoadingMore(true);
+    const before = historyBeforeRef.current;
+    try {
+      const page = await api<{ bars: Bar[] }>(
+        `/forex/${symbol}/ohlcv?timeframe=${tf}&limit=${BAR_LIMIT}&before=${before}`,
+        { timeoutMs: 6_000 },
+      );
+      const older = page.data.bars ?? [];
+      if (!older.length) {
+        setHistoryHasMore(false);
+        return;
+      }
+      setBars((current) => mergeBars(older, current));
+      historyBeforeRef.current = older[0]?.time ?? before;
+      setHistoryHasMore(page.meta?.hasMore === true || older.length >= BAR_LIMIT);
+    } catch {
+      // Keep the current chart visible; the next edge trigger can retry.
+    } finally {
+      historyLoadingRef.current = false;
+      setHistoryLoadingMore(false);
+    }
+  }, [symbol, tf, historyHasMore]);
 
   const onSelectTf = (x: string) => {
     if (x === tf) return;
@@ -316,6 +360,10 @@ export default function ForexDetail() {
                 <ForexProChart
                   bars={bars}
                   height={520}
+                  onLoadMore={loadMoreHistory}
+                  loadingMore={historyLoadingMore}
+                  hasMore={historyHasMore}
+                  loadMoreThreshold={24}
                   levels={levels}
                   showEma={showEma}
                   showBb={showBb}

@@ -34,15 +34,17 @@ export async function GET(
     return fail(`Invalid timeframe for ${sym}: ${tf}`, 400);
   }
 
+  const requestedLimit = Number(req.nextUrl.searchParams.get("limit") ?? 90);
   const limit = Math.min(
-    150,
-    Math.max(30, Number(req.nextUrl.searchParams.get("limit") ?? 90)),
+    1_000,
+    Math.max(30, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 90),
   );
-
-  const key = ohlcvKey(sym, tf, limit);
+  const beforeRaw = Number(req.nextUrl.searchParams.get("before"));
+  const before = Number.isFinite(beforeRaw) && beforeRaw > 0 ? Math.floor(beforeRaw) : undefined;
+  const key = ohlcvKey(sym, tf, limit, before);
 
   try {
-    type Cached = {
+      type Cached = {
       bars: Array<{
         time: number;
         open: number;
@@ -53,17 +55,19 @@ export async function GET(
       }>;
       source: string;
       quote: Awaited<ReturnType<typeof getLiveQuoteContract>>;
+      hasMore?: boolean;
     };
 
     const cached = await fxCacheGet<Cached>(key);
     if (cached?.bars?.length) {
       // Cheap tick-merge on warm cache
-      const q =
-        cached.quote ??
-        (await getLiveQuoteContract(sym).catch(() => null));
-      const bars = q
+      const q = before
+        ? null
+        : cached.quote ?? (await getLiveQuoteContract(sym).catch(() => null));
+      const bars = q && !before
         ? applyTickToBars(cached.bars, q.price, tf)
         : cached.bars;
+      const hasMore = cached.hasMore ?? bars.length >= limit;
       const lastClose = bars[bars.length - 1]?.close ?? null;
       const policy = getOhlcvPolicy(tf);
       const sMax = Math.max(4, Math.min(20, Math.floor(policy.soft / 1000)));
@@ -84,6 +88,8 @@ export async function GET(
           freshness: q?.freshness,
           ageMs: q?.ageMs,
           cacheHit: "redis",
+          hasMore,
+          oldest: bars[0]?.time ?? null,
         },
       );
       response.headers.set(
@@ -99,22 +105,42 @@ export async function GET(
     let quote = null as Awaited<ReturnType<typeof getLiveQuoteContract>>;
 
     try {
-      const d = await withBudget(
-        syncForexOhlcv(sym, tf, limit),
-        FOREX_CACHE.softDeadlineMs,
-        "forex_ohlcv_svc",
-      );
-      bars = d.bars;
-      source = d.source;
-      quote = d.quote ?? null;
+      if (before !== undefined && limit <= 200) {
+        const historical = await withBudget(
+          syncForexOhlcv(sym, tf, limit, before),
+          FOREX_CACHE.softDeadlineMs,
+          "forex_history_svc",
+        );
+        bars = historical.bars;
+        source = historical.source;
+        quote = null;
+      } else if (limit > 200) {
+        const historical = await withBudget(
+          fetchForexBars(sym, tf, limit, before),
+          FOREX_CACHE.hardDeadlineMs,
+          "yahoo_bars",
+        );
+        bars = historical.bars;
+        source = historical.source;
+        quote = null;
+      } else {
+        const d = await withBudget(
+          syncForexOhlcv(sym, tf, limit),
+          FOREX_CACHE.softDeadlineMs,
+          "forex_ohlcv_svc",
+        );
+        bars = d.bars;
+        source = d.source;
+        quote = d.quote ?? null;
+      }
     } catch (inner) {
       const [live, q] = await Promise.all([
         withBudget(
-          fetchForexBars(sym, tf, limit),
+          fetchForexBars(sym, tf, limit, before),
           FOREX_CACHE.hardDeadlineMs,
           "yahoo_bars",
         ),
-        getLiveQuoteContract(sym).catch(() => null),
+        before ? Promise.resolve(null) : getLiveQuoteContract(sym).catch(() => null),
       ]);
       bars = q ? applyTickToBars(live.bars, q.price, tf) : live.bars;
       source = `${live.source}-direct${q ? "+tick" : ""}`;
@@ -133,7 +159,7 @@ export async function GET(
 
     await fxCacheSet(
       key,
-      { bars, source, quote },
+      { bars, source, quote, hasMore: bars.length >= limit },
       ohlcvTtlMs(tf),
     );
 
@@ -157,6 +183,8 @@ export async function GET(
         freshness: quote?.freshness,
         ageMs: quote?.ageMs,
         cacheHit: "miss",
+        hasMore: bars.length >= limit,
+        oldest: bars[0]?.time ?? null,
       },
     );
     response.headers.set(

@@ -11,6 +11,7 @@ import {
   type IChartApi,
   type ISeriesApi,
   type IPriceLine,
+  type LogicalRange,
   type Time,
 } from "lightweight-charts";
 import type { Bar } from "@/components/candle-chart";
@@ -48,6 +49,10 @@ interface ForexProChartProps {
   showBb?: boolean;
   showRsi?: boolean;
   showMacd?: boolean;
+  onLoadMore?: () => void;
+  loadingMore?: boolean;
+  hasMore?: boolean;
+  loadMoreThreshold?: number;
 }
 
 function setLine(
@@ -69,6 +74,10 @@ export function ForexProChart({
   showBb = true,
   showRsi = true,
   showMacd = true,
+  onLoadMore,
+  loadingMore = false,
+  hasMore = true,
+  loadMoreThreshold = 30,
 }: ForexProChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -85,9 +94,24 @@ export function ForexProChart({
   const macdHistRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const fittedRef = useRef(false);
+  const previousBarsRef = useRef<Bar[]>([]);
+  const loadMoreTriggeredRef = useRef(false);
+  const pendingPrependRangeRef = useRef<LogicalRange | null>(null);
+  const onLoadMoreRef = useRef(onLoadMore);
+  const hasMoreRef = useRef(hasMore);
+  const loadingMoreRef = useRef(loadingMore);
+  const loadMoreThresholdRef = useRef(loadMoreThreshold);
 
   const paneCount = 1 + (showRsi ? 1 : 0) + (showMacd ? 1 : 0);
   const mainH = Math.round(height * (paneCount === 1 ? 1 : paneCount === 2 ? 0.68 : 0.55));
+
+  useEffect(() => {
+    onLoadMoreRef.current = onLoadMore;
+    hasMoreRef.current = hasMore;
+    loadingMoreRef.current = loadingMore;
+    loadMoreThresholdRef.current = loadMoreThreshold;
+    if (!loadingMore) loadMoreTriggeredRef.current = false;
+  }, [onLoadMore, hasMore, loadingMore, loadMoreThreshold]);
 
   const seriesData = useMemo(() => {
     if (!bars.length) {
@@ -251,6 +275,20 @@ export function ForexProChart({
     chartRef.current = chart;
     candleRef.current = candle;
 
+    const handleVisibleRangeChange = (range: LogicalRange | null) => {
+      const loadMore = onLoadMoreRef.current;
+      if (!range || !loadMore || !hasMoreRef.current || loadingMoreRef.current) return;
+      if (range.from <= loadMoreThresholdRef.current) {
+        if (loadMoreTriggeredRef.current) return;
+        pendingPrependRangeRef.current = { from: range.from, to: range.to };
+        loadMoreTriggeredRef.current = true;
+        loadMore();
+      } else {
+        loadMoreTriggeredRef.current = false;
+      }
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
+
     const ro = new ResizeObserver(() => {
       if (!containerRef.current || !chartRef.current) return;
       const w = containerRef.current.clientWidth;
@@ -260,6 +298,7 @@ export function ForexProChart({
 
     return () => {
       ro.disconnect();
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
       chart.remove();
       chartRef.current = null;
       candleRef.current = null;
@@ -275,6 +314,9 @@ export function ForexProChart({
       macdHistRef.current = null;
       priceLinesRef.current = [];
       fittedRef.current = false;
+      previousBarsRef.current = [];
+      pendingPrependRangeRef.current = null;
+      loadMoreTriggeredRef.current = false;
     };
     // recreate when pane layout toggles change
   }, [height, showRsi, showMacd, paneCount]);
@@ -282,6 +324,13 @@ export function ForexProChart({
   // Push bar + indicator data
   useEffect(() => {
     if (!candleRef.current || !bars.length || !seriesData) return;
+
+    const previous = previousBarsRef.current;
+    const savedRange = pendingPrependRangeRef.current;
+    const existingFirstIndex = previous.length
+      ? bars.findIndex((bar) => bar.time === previous[0]?.time)
+      : -1;
+    const prependedCount = existingFirstIndex > 0 ? existingFirstIndex : 0;
 
     candleRef.current.setData(
       bars.map((b) => ({
@@ -321,7 +370,17 @@ export function ForexProChart({
     if (!fittedRef.current) {
       chartRef.current?.timeScale().fitContent();
       fittedRef.current = true;
+    } else if (prependedCount > 0 && savedRange) {
+      requestAnimationFrame(() => {
+        chartRef.current?.timeScale().setVisibleLogicalRange({
+          from: savedRange.from + prependedCount,
+          to: savedRange.to + prependedCount,
+        });
+      });
     }
+
+    previousBarsRef.current = bars.map((bar) => ({ ...bar }));
+    pendingPrependRangeRef.current = null;
   }, [bars, seriesData, showEma, showBb, showRsi, showMacd]);
 
   // Price lines: S/R + trade levels

@@ -455,16 +455,36 @@ export async function fetchForexSnapshot(): Promise<ForexSnapshotResult> {
 
 const VALID = new Set(["1m", "5m", "15m", "1h", "4h", "1d", "1w", "1mo", "12mo"]);
 
-function yahooParams(tf: string, limit: number) {
-  if (tf === "4h") return { interval: "1h", range: limit > 200 ? "3mo" : "1mo" };
-  if (tf === "1d") return { interval: "1d", range: limit > 200 ? "5y" : "2y" };
-  if (tf === "1w") return { interval: "1wk", range: "10y" };
-  if (tf === "1mo") return { interval: "1mo", range: "max" };
-  if (tf === "12mo") return { interval: "1mo", range: "max" };
-  if (tf === "1h") return { interval: "1h", range: "1mo" };
-  if (tf === "15m") return { interval: "15m", range: "10d" };
-  if (tf === "5m") return { interval: "5m", range: "5d" };
-  return { interval: "1m", range: "2d" };
+function yahooParams(tf: string, limit: number, before?: number) {
+  const interval =
+    tf === "4h" ? "1h" :
+    tf === "1d" ? "1d" :
+    tf === "1w" ? "1wk" :
+    tf === "1mo" || tf === "12mo" ? "1mo" :
+    tf;
+  const secondsPerBar =
+    tf === "1m" ? 60 :
+    tf === "5m" ? 300 :
+    tf === "15m" ? 900 :
+    tf === "1h" ? 3600 :
+    tf === "4h" ? 14_400 :
+    tf === "1d" ? 86_400 :
+    tf === "1w" ? 604_800 :
+    tf === "1mo" ? 2_592_000 :
+    31_536_000;
+  const rawBarsPerOutput = tf === "4h" ? 4 : tf === "12mo" ? 12 : 1;
+  const span = Math.max(
+    secondsPerBar * (limit * rawBarsPerOutput + 8),
+    secondsPerBar * 32,
+  );
+  const period2 = before != null && Number.isFinite(before) && before > 0
+    ? Math.floor(before)
+    : Math.floor(Date.now() / 1000);
+  return {
+    interval,
+    period1: Math.max(0, period2 - span),
+    period2,
+  };
 }
 
 function aggregateBars(bars: Ohlcv[], groupSize: number): Ohlcv[] {
@@ -491,21 +511,31 @@ async function fetchDirectBars(
   limit: number,
   base: string,
   provider: string,
+  before?: number,
 ): Promise<Ohlcv[]> {
-  const p = yahooParams(tf, limit);
-  const url = `${base}/v8/finance/chart/${encodeURIComponent(def.yahooSymbol!)}?interval=${p.interval}&range=${p.range}`;
+  const p = yahooParams(tf, limit, before);
+  const query = `interval=${p.interval}&period1=${p.period1}&period2=${p.period2}`;
+  const url = `${base}/v8/finance/chart/${encodeURIComponent(def.yahooSymbol!)}?${query}&events=history&includePrePost=false`;
 
-  const auth = await getYahooAuth({
-    preferHost: base.includes("query2") ? "query2" : "query1",
-  }).catch(() => null);
+  const request = (auth: Awaited<ReturnType<typeof getYahooAuth>> | null) =>
+    fetch(url, {
+      headers: yahooBrowserHeaders(auth),
+      cache: "no-store",
+      signal: AbortSignal.timeout(BARS_TIMEOUT_MS),
+    });
 
-  const res = await fetch(url, {
-    headers: yahooBrowserHeaders(auth),
-    cache: "no-store",
-    signal: AbortSignal.timeout(BARS_TIMEOUT_MS),
-  });
-
-  const data = await readYahooJson<YahooChart>(res, provider, url);
+  let data: YahooChart;
+  try {
+    data = await readYahooJson<YahooChart>(await request(null), provider, url);
+  } catch (error) {
+    const status = error instanceof ProviderError ? Number(error.meta?.status) : 0;
+    if (status !== 401 && status !== 403) throw error;
+    const auth = await getYahooAuth({
+      preferHost: base.includes("query2") ? "query2" : "query1",
+      forceRefresh: status === 401,
+    });
+    data = await readYahooJson<YahooChart>(await request(auth), provider, url);
+  }
   const r = data.chart.result?.[0];
   const q = r?.indicators.quote?.[0];
   if (!r?.timestamp || !q) {
@@ -560,15 +590,16 @@ async function fetchBarsFrom(
   limit: number,
   base: string,
   provider: string,
+  before?: number,
 ): Promise<Ohlcv[]> {
   const def = FOREX_BY_SYMBOL.get(symbol);
   if (!def) throw new Error("Forex pair not found");
-  if (def.yahooSymbol) return fetchDirectBars(def, tf, limit, base, provider);
+  if (def.yahooSymbol) return fetchDirectBars(def, tf, limit, base, provider, before);
   const left = FOREX_BY_SYMBOL.get(def.derived!.left)!;
   const right = FOREX_BY_SYMBOL.get(def.derived!.right)!;
   const [lb, rb] = await Promise.all([
-    fetchDirectBars(left, tf, limit, base, provider),
-    fetchDirectBars(right, tf, limit, base, provider),
+    fetchDirectBars(left, tf, limit, base, provider, before),
+    fetchDirectBars(right, tf, limit, base, provider, before),
   ]);
   const result = deriveBars(def, lb, rb).slice(-limit);
   if (!result.length) throw new ProviderError(provider, `Cannot derive bars ${symbol}`);
@@ -579,6 +610,7 @@ export async function fetchForexBars(
   symbol: string,
   timeframe: string,
   limit = 120,
+  before?: number,
 ): Promise<{ bars: Ohlcv[]; source: string }> {
   if (!VALID.has(timeframe)) throw new Error("Invalid timeframe");
 
@@ -587,12 +619,12 @@ export async function fetchForexBars(
   const attempts: Array<Promise<{ bars: Ohlcv[]; source: string }>> = [
     getBreaker(YAHOO1)
       .exec(() =>
-        fetchBarsFrom(symbol, timeframe, limit, "https://query1.finance.yahoo.com", YAHOO1),
+        fetchBarsFrom(symbol, timeframe, limit, "https://query1.finance.yahoo.com", YAHOO1, before),
       )
       .then((bars) => ({ bars, source: YAHOO1 })),
     getBreaker(YAHOO2)
       .exec(() =>
-        fetchBarsFrom(symbol, timeframe, limit, "https://query2.finance.yahoo.com", YAHOO2),
+        fetchBarsFrom(symbol, timeframe, limit, "https://query2.finance.yahoo.com", YAHOO2, before),
       )
       .then((bars) => ({ bars, source: YAHOO2 })),
   ];

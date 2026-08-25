@@ -96,6 +96,12 @@ const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
 const LEVERAGE_PRESETS = [0, 5, 10, 20, 50, 100, 125, 200, 500];
 const INTEL_POLL_MS = 8_000;
 
+function mergeBars(older: Bar[], current: Bar[]): Bar[] {
+  const byTime = new Map<number, Bar>();
+  for (const bar of [...older, ...current]) byTime.set(bar.time, bar);
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
+
 export default function CryptoDetail() {
   const params = useParams();
   const symbol = String(params.symbol ?? "").toUpperCase();
@@ -112,12 +118,16 @@ export default function CryptoDetail() {
   >("connecting");
   const [wsPrice, setWsPrice] = useState<number | null>(null);
   const [wsKline, setWsKline] = useState<BinanceKline | null>(null);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  const [historyHasMore, setHistoryHasMore] = useState(true);
   const [orderFlow, setOrderFlow] = useState<OrderFlowIntelligence | null>(null);
   const [whaleLiq, setWhaleLiq] = useState<WhaleLiquidationIntelligence | null>(null);
   const [intelFutures, setIntelFutures] = useState<FuturesIntelligence | null>(null);
   const [leverage, setLeverage] = useState(10);
 
   const initialDone = useRef(false);
+  const historyBeforeRef = useRef<number | null>(null);
+  const historyLoadingRef = useRef(false);
 
   useEffect(() => {
     if (!symbol) return;
@@ -131,7 +141,10 @@ export default function CryptoDetail() {
       .then((res) => {
         if (cancelled) return;
         setBundle(res.data);
-        setBars(res.data.bars ?? []);
+        const initialBars = res.data.bars ?? [];
+        setBars(initialBars);
+        historyBeforeRef.current = initialBars[0]?.time ?? null;
+        setHistoryHasMore(initialBars.length >= 120);
         setChartSource(res.data.source ?? "");
         setLoading(false);
         initialDone.current = true;
@@ -157,7 +170,10 @@ export default function CryptoDetail() {
             `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(timeframe)}&limit=200`,
           );
           if (cancelled) return;
-          setBars(o.data.bars ?? []);
+          const fallbackBars = o.data.bars ?? [];
+          setBars(fallbackBars);
+          historyBeforeRef.current = fallbackBars[0]?.time ?? null;
+          setHistoryHasMore(o.meta?.hasMore === true || fallbackBars.length >= 200);
           setChartSource(String(o.meta?.source ?? "binance"));
           setBundle({
             coin: {
@@ -243,12 +259,17 @@ export default function CryptoDetail() {
       if (!symbol) return;
       setChartLoading(true);
       setWsKline(null);
+      setHistoryHasMore(true);
+      historyBeforeRef.current = null;
       setError(null);
       try {
         const o = await api<{ bars: Bar[] }>(
           `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(tf)}&limit=200`,
         );
-        setBars(o.data.bars ?? []);
+        const nextBars = o.data.bars ?? [];
+        setBars(nextBars);
+        historyBeforeRef.current = nextBars[0]?.time ?? null;
+        setHistoryHasMore(o.meta?.hasMore === true || nextBars.length >= 200);
         setChartSource(String(o.meta?.source ?? "binance"));
         void api<Analysis>(
           `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(tf)}&fast=1`,
@@ -267,6 +288,32 @@ export default function CryptoDetail() {
     },
     [symbol],
   );
+
+  const loadMoreHistory = useCallback(async () => {
+    if (historyLoadingRef.current || !historyHasMore || historyBeforeRef.current == null) return;
+    historyLoadingRef.current = true;
+    setHistoryLoadingMore(true);
+    const before = historyBeforeRef.current;
+    try {
+      const page = await api<{ bars: Bar[] }>(
+        `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(timeframe)}&limit=200&before=${before}`,
+        { timeoutMs: 8_000 },
+      );
+      const older = page.data.bars ?? [];
+      if (!older.length) {
+        setHistoryHasMore(false);
+        return;
+      }
+      setBars((current) => mergeBars(older, current));
+      historyBeforeRef.current = older[0]?.time ?? before;
+      setHistoryHasMore(page.meta?.hasMore === true || older.length >= 200);
+    } catch {
+      // Keep the current chart visible and allow retry on the next edge trigger.
+    } finally {
+      historyLoadingRef.current = false;
+      setHistoryLoadingMore(false);
+    }
+  }, [symbol, timeframe, historyHasMore]);
 
   const onSelectTf = (tf: string) => {
     if (tf === timeframe) return;
@@ -435,7 +482,14 @@ export default function CryptoDetail() {
           </div>
         ) : chartBars.length > 0 ? (
           <div className={chartLoading ? "opacity-60 transition-opacity" : ""}>
-            <CandleChart bars={chartBars} height={320} />
+            <CandleChart
+              bars={chartBars}
+              height={320}
+              onLoadMore={loadMoreHistory}
+              loadingMore={historyLoadingMore}
+              hasMore={historyHasMore}
+              loadMoreThreshold={24}
+            />
           </div>
         ) : (
           <div className="flex h-[320px] items-center justify-center text-sm text-slate-500">

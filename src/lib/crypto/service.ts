@@ -1,4 +1,4 @@
-import { desc, eq, ilike, or, sql, and } from "drizzle-orm";
+import { and, desc, eq, ilike, lt, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { exchangeRates } from "@/lib/commodities/schema";
 import {
@@ -416,10 +416,20 @@ export async function enrichCryptoProfile(symbol: string) {
 
 interface DbOhlcv { bars: Ohlcv[]; source: string; newestMs: number; }
 
-async function readCryptoOhlcvFromDb(coinId: string, timeframe: string, limit: number): Promise<DbOhlcv | null> {
+async function readCryptoOhlcvFromDb(
+  coinId: string,
+  timeframe: string,
+  limit: number,
+  before?: number,
+): Promise<DbOhlcv | null> {
   try {
+    const conditions = [
+      eq(cryptoOhlcv.coinId, coinId),
+      eq(cryptoOhlcv.timeframe, timeframe),
+      ...(before != null ? [lt(cryptoOhlcv.time, new Date(before * 1000))] : []),
+    ];
     const rows = await db.select().from(cryptoOhlcv)
-      .where(and(eq(cryptoOhlcv.coinId, coinId), eq(cryptoOhlcv.timeframe, timeframe)))
+      .where(and(...conditions))
       .orderBy(desc(cryptoOhlcv.time)).limit(limit);
     if (rows.length < Math.min(15, limit)) return null;
     const newest = rows[0]?.time;
@@ -451,7 +461,12 @@ async function persistCryptoBars(coinId: string, timeframe: string, bars: Ohlcv[
   }
 }
 
-async function loadCryptoOhlcv(symbol: string, timeframe = "1h", limit = 200) {
+async function loadCryptoOhlcv(
+  symbol: string,
+  timeframe = "1h",
+  limit = 200,
+  before?: number,
+) {
   const normalized = normalizeSymbol(symbol);
   const safeLimit = normalizeLimit(limit, 20, 1000);
 
@@ -476,12 +491,15 @@ async function loadCryptoOhlcv(symbol: string, timeframe = "1h", limit = 200) {
   const hard = OHLCV_HARD_TTL[timeframe] ?? 600_000;
 
   if (found?.coin.id) {
-    const cached = await readCryptoOhlcvFromDb(found.coin.id, timeframe, safeLimit);
+    const cached = await readCryptoOhlcvFromDb(found.coin.id, timeframe, safeLimit, before);
     const age = cached ? Date.now() - cached.newestMs : Infinity;
-    if (cached && age <= soft) {
+    if (before != null && cached && cached.bars.length >= safeLimit) {
       return { coin: found.coin, bars: cached.bars, source: cached.source, stale: false };
     }
-    if (cached && age <= hard) {
+    if (before == null && cached && age <= soft) {
+      return { coin: found.coin, bars: cached.bars, source: cached.source, stale: false };
+    }
+    if (before == null && cached && age <= hard) {
       void fetchBinanceKlines(binanceSymbol, timeframe, safeLimit)
         .then((bars) => persistCryptoBars(found!.coin.id, timeframe, bars, BINANCE_SOURCE))
         .catch((e) => log.warn("ohlcv_bg_refresh_failed", { symbol: normalized, error: String(e) }));
@@ -489,7 +507,7 @@ async function loadCryptoOhlcv(symbol: string, timeframe = "1h", limit = 200) {
     }
   }
 
-  const bars = await fetchBinanceKlines(binanceSymbol, timeframe, safeLimit);
+  const bars = await fetchBinanceKlines(binanceSymbol, timeframe, safeLimit, before);
   if (found?.coin.id) {
     void persistCryptoBars(found.coin.id, timeframe, bars, BINANCE_SOURCE).catch((e) =>
       log.warn("ohlcv_persist_failed", { symbol: normalized, error: String(e) }),
@@ -524,22 +542,32 @@ const ohlcvInflight = new Map<
   Promise<Awaited<ReturnType<typeof loadCryptoOhlcv>>>
 >();
 
-export function syncCryptoOhlcv(symbol: string, timeframe = "1h", limit = 200) {
+export function syncCryptoOhlcv(
+  symbol: string,
+  timeframe = "1h",
+  limit = 200,
+  before?: number,
+) {
   const normalized = normalizeSymbol(symbol);
   const safeLimit = normalizeLimit(limit, 20, 1000);
-  const key = `${normalized}:${timeframe}:${safeLimit}`;
+  const key = `${normalized}:${timeframe}:${safeLimit}:${before ?? "latest"}`;
   const existing = ohlcvInflight.get(key);
   if (existing) return existing;
 
-  const pending = loadCryptoOhlcv(normalized, timeframe, safeLimit).finally(() => {
+  const pending = loadCryptoOhlcv(normalized, timeframe, safeLimit, before).finally(() => {
     ohlcvInflight.delete(key);
   });
   ohlcvInflight.set(key, pending);
   return pending;
 }
 
-export async function getCryptoOhlcv(symbol: string, timeframe: string, limit: number) {
-  return syncCryptoOhlcv(symbol, timeframe, limit);
+export async function getCryptoOhlcv(
+  symbol: string,
+  timeframe: string,
+  limit: number,
+  before?: number,
+) {
+  return syncCryptoOhlcv(symbol, timeframe, limit, before);
 }
 
 export async function updateCryptoSentiment(symbol: string) {

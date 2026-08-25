@@ -32,6 +32,7 @@ interface CachedOhlcv {
   timeframe: string;
   bars: Awaited<ReturnType<typeof getCryptoOhlcv>>["bars"];
   source: string;
+  hasMore?: boolean;
 }
 
 export async function GET(
@@ -48,17 +49,19 @@ export async function GET(
 
   const requestedLimit = Number(req.nextUrl.searchParams.get("limit") ?? 200);
   const limit = Math.min(
-    300,
+    1_000,
     Math.max(50, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 200),
   );
-  const key = `crypto:v1:ohlcv:${normalized}:${timeframe}:${limit}`;
+  const beforeRaw = Number(req.nextUrl.searchParams.get("before"));
+  const before = Number.isFinite(beforeRaw) && beforeRaw > 0 ? Math.floor(beforeRaw) : undefined;
+  const key = `crypto:v1:ohlcv:${normalized}:${timeframe}:${limit}:${before ?? "latest"}`;
   const ttlMs = CACHE_TTL_MS[timeframe] ?? 120_000;
 
   try {
     const cached = await sharedCacheGetOrSet<CachedOhlcv>(key, ttlMs, async () => {
       try {
         const data = await withTimeout(
-          getCryptoOhlcv(normalized, timeframe, limit),
+          getCryptoOhlcv(normalized, timeframe, limit, before),
           HARD_MS,
           "crypto_ohlcv_svc",
         );
@@ -67,11 +70,12 @@ export async function GET(
           timeframe,
           bars: data.bars,
           source: data.source,
+          hasMore: data.bars.length >= limit,
         };
       } catch (inner) {
         const pair = `${normalized}USDT`;
         const bars = await withTimeout(
-          fetchBinanceKlines(pair, timeframe, limit),
+          fetchBinanceKlines(pair, timeframe, limit, before),
           HARD_MS,
           "binance_klines",
         );
@@ -86,6 +90,7 @@ export async function GET(
           timeframe,
           bars,
           source: "binance-crypto-direct",
+          hasMore: bars.length >= limit,
         };
       }
     });
@@ -100,6 +105,8 @@ export async function GET(
         source: cached.value.source,
         timezone: "Asia/Ho_Chi_Minh",
         cacheHit: cached.hit,
+        hasMore: cached.value.hasMore ?? cached.value.bars.length >= limit,
+        oldest: cached.value.bars[0]?.time ?? null,
       },
       { cacheSeconds: Math.max(5, Math.floor(ttlMs / 1000)) },
     );

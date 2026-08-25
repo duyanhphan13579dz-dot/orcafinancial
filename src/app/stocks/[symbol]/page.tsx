@@ -1362,6 +1362,10 @@ export default function StockPage({
                     bars={
                       historyBars
                     }
+                    onLoadMore={loadMoreHistory}
+                    loadingMore={historyLoadingMore}
+                    hasMore={historyHasMore}
+                    loadMoreThreshold={24}
                   />
 
                   {historyLoadingMore && (

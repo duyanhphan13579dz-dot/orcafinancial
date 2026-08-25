@@ -280,10 +280,15 @@ export async function fetchBinanceKlines(
   binanceSymbol: string,
   timeframe: string,
   limit = 300,
+  before?: number,
 ): Promise<Ohlcv[]> {
   if (!VALID_INTERVALS.has(timeframe)) throw new Error("Invalid timeframe");
   return getBreaker(BINANCE).exec(async () => {
-    const url = `${BINANCE_BASE}/api/v3/klines?symbol=${encodeURIComponent(binanceSymbol)}&interval=${timeframe}&limit=${Math.min(1000, Math.max(20, limit))}`;
+    const safeLimit = Math.min(1000, Math.max(20, limit));
+    const endTime = before != null && Number.isFinite(before) && before > 0
+      ? `&endTime=${Math.max(0, Math.floor(before * 1000) - 1)}`
+      : "";
+    const url = `${BINANCE_BASE}/api/v3/klines?symbol=${encodeURIComponent(binanceSymbol)}&interval=${timeframe}&limit=${safeLimit}${endTime}`;
     const res = await fetchWithRetry(url, {
       provider: BINANCE,
       timeoutMs: BARS_TIMEOUT_MS,

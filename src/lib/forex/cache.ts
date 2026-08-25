@@ -32,8 +32,8 @@ export function quoteKey(symbol: string) {
   return `fx:v2:q:${symbol.toUpperCase()}`;
 }
 
-export function ohlcvKey(symbol: string, tf: string, limit: number) {
-  return `fx:v2:ohlcv:${symbol.toUpperCase()}:${tf}:${limit}`;
+export function ohlcvKey(symbol: string, tf: string, limit: number, before?: number) {
+  return `fx:v2:ohlcv:${symbol.toUpperCase()}:${tf}:${limit}:${before ?? "latest"}`;
 }
 
 export function analysisKey(symbol: string, tf: string) {

@@ -353,6 +353,20 @@ export function CandleChart({
    */
   const pendingPrependRangeRef =
     useRef<LogicalRange | null>(null);
+  const onLoadMoreRef = useRef(onLoadMore);
+  const hasMoreRef = useRef(hasMore);
+  const loadingMoreRef = useRef(loadingMore);
+  const loadMoreThresholdRef = useRef(loadMoreThreshold);
+  const onVisibleRangeChangeRef = useRef(onVisibleRangeChange);
+
+  useEffect(() => {
+    onLoadMoreRef.current = onLoadMore;
+    hasMoreRef.current = hasMore;
+    loadingMoreRef.current = loadingMore;
+    loadMoreThresholdRef.current = loadMoreThreshold;
+    onVisibleRangeChangeRef.current = onVisibleRangeChange;
+    if (!loadingMore) loadMoreTriggeredRef.current = false;
+  }, [onLoadMore, hasMore, loadingMore, loadMoreThreshold, onVisibleRangeChange]);
 
   /**
    * --------------------------------------------------------------
@@ -536,15 +550,13 @@ export function CandleChart({
       (
         range: LogicalRange | null,
       ) => {
-        onVisibleRangeChange?.(
-          range,
-        );
+        onVisibleRangeChangeRef.current?.(range);
 
         if (
           !range ||
-          !onLoadMore ||
-          !hasMore ||
-          loadingMore
+          !onLoadMoreRef.current ||
+          !hasMoreRef.current ||
+          loadingMoreRef.current
         ) {
           return;
         }
@@ -555,7 +567,7 @@ export function CandleChart({
          */
         if (
           range.from <=
-          loadMoreThreshold
+          loadMoreThresholdRef.current
         ) {
           /**
            * Prevent duplicate requests
@@ -580,7 +592,7 @@ export function CandleChart({
           loadMoreTriggeredRef.current =
             true;
 
-          onLoadMore();
+          onLoadMoreRef.current();
         } else {
           /**
            * User moved away from the left edge.
@@ -670,14 +682,7 @@ export function CandleChart({
       loadMoreTriggeredRef.current =
         false;
     };
-  }, [
-    height,
-    onLoadMore,
-    hasMore,
-    loadingMore,
-    loadMoreThreshold,
-    onVisibleRangeChange,
-  ]);
+  }, [height]);
 
   /**
    * --------------------------------------------------------------
