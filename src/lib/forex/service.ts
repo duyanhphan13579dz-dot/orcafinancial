@@ -26,6 +26,7 @@ import {
 } from "./realtime";
 import { buildMtfResult, mtfStackFor } from "./mtf";
 import { buildFxIntelligence } from "./fx-intelligence";
+import { buildTradeSetup } from "./trade-setup";
 
 const log = forProvider("forex-service");
 
@@ -35,7 +36,6 @@ const PAIRS_CACHE_TTL = 5 * 60_000;
 const PAIR_CACHE_TTL = 4_000;
 const LIVE_QUOTE_CACHE_TTL = PRICE_REFRESH_MS.memoryTtl;
 
-/** Memory OHLCV cache — tick-merged in place by scheduler. */
 const MEM_OHLCV_TTL = 25_000;
 const memOhlcv = new Map<
   string,
@@ -626,7 +626,6 @@ export async function syncForexOhlcv(
   }
 }
 
-/** Phase 5 — load stacked TFs and compute alignment. */
 export async function runMtfAnalysis(symbol: string) {
   const sym = symbol.toUpperCase();
   const stack = mtfStackFor(sym);
@@ -644,15 +643,12 @@ export async function runMtfAnalysis(symbol: string) {
   return buildMtfResult(results);
 }
 
-/** Phase 6 — session + strength + DXY from latest prices. */
 export async function runFxIntelligence(symbol: string) {
   const rows = (await latestForexPrices()) as Array<Record<string, unknown>>;
   const quotes = rows.map((r) => ({
     symbol: String(r.symbol ?? ""),
-    changePercent:
-      r.changePercent == null ? null : Number(r.changePercent),
+    changePercent: r.changePercent == null ? null : Number(r.changePercent),
   }));
-  // Ensure DXY present if live cache has it
   if (liveSnapshotCache) {
     const dxy = liveSnapshotCache.bySymbol.get("DXY");
     if (dxy && !quotes.some((q) => q.symbol === "DXY")) {
@@ -678,7 +674,6 @@ export async function runForexAnalysis(symbol: string, timeframe = "1h") {
     }),
   ]);
 
-  // Soft MTF modulation of recommendation
   let recommendation = a.recommendation;
   let confidence = a.confidence;
   const extraReasons: string[] = [];
@@ -732,7 +727,7 @@ export async function runForexAnalysis(symbol: string, timeframe = "1h") {
   }
 
   const entryPrice = quote?.price ?? a.entryPrice;
-  const risk =
+  const riskDist =
     a.stopLoss !== null && recommendation === "BUY"
       ? entryPrice - a.stopLoss
       : a.stopLoss !== null && recommendation === "SELL"
@@ -740,17 +735,42 @@ export async function runForexAnalysis(symbol: string, timeframe = "1h") {
         : null;
 
   const stopLoss =
-    risk !== null && recommendation === "BUY"
-      ? entryPrice - risk
-      : risk !== null && recommendation === "SELL"
-        ? entryPrice + risk
+    riskDist !== null && recommendation === "BUY"
+      ? entryPrice - riskDist
+      : riskDist !== null && recommendation === "SELL"
+        ? entryPrice + riskDist
         : a.stopLoss;
   const takeProfit =
-    risk !== null && recommendation === "BUY"
-      ? entryPrice + risk * 2
-      : risk !== null && recommendation === "SELL"
-        ? entryPrice - risk * 2
+    riskDist !== null && recommendation === "BUY"
+      ? entryPrice + riskDist * 2
+      : riskDist !== null && recommendation === "SELL"
+        ? entryPrice - riskDist * 2
         : a.takeProfit;
+  const takeProfit2 =
+    riskDist !== null && recommendation === "BUY"
+      ? entryPrice + riskDist * 3.5
+      : riskDist !== null && recommendation === "SELL"
+        ? entryPrice - riskDist * 3.5
+        : a.takeProfit2;
+
+  const tradeSetup = buildTradeSetup({
+    symbol: pair.symbol,
+    recommendation,
+    confidence,
+    entry: entryPrice,
+    stopLoss,
+    takeProfit,
+    takeProfit2,
+    layers: a.layers ?? [],
+    mtf,
+    fx: fxIntel,
+    regime: a.volatilityRegime,
+  });
+
+  // Prefer explained confidence when directional
+  if (recommendation !== "NEUTRAL") {
+    confidence = tradeSetup.confidenceBreakdown.total / 100;
+  }
 
   void db
     .insert(forexAnalysis)
@@ -780,9 +800,11 @@ export async function runForexAnalysis(symbol: string, timeframe = "1h") {
     entryPrice,
     stopLoss,
     takeProfit,
+    takeProfit2,
     reasons: [...extraReasons, ...a.reasons].slice(0, 14),
     mtf,
     fxIntelligence: fxIntel,
+    tradeSetup,
     quote: quote ?? null,
   };
 }
@@ -803,10 +825,8 @@ export async function getForexDetailBundle(
 
   if (!quote && !ohlcv) throw new Error("Forex pair not found");
 
-  const pairRow = ohlcv.pair;
-
   return {
-    pair: pairRow,
+    pair: ohlcv.pair,
     price: quote
       ? {
           price: quote.price,
