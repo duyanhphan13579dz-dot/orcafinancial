@@ -207,7 +207,16 @@ export async function getMarketHeatmap(): Promise<{
       // price_snapshots has one row per symbol; read the complete latest universe.
       // This avoids silently dropping older-but-valid symbols behind a global LIMIT.
       db
-        .select()
+        .select({
+          symbol: priceSnapshots.symbol,
+          time: priceSnapshots.time,
+          close: priceSnapshots.close,
+          volume: priceSnapshots.volume,
+          changePct: priceSnapshots.changePct,
+          source: priceSnapshots.source,
+          confidence: priceSnapshots.confidence,
+          updatedAt: priceSnapshots.updatedAt,
+        })
         .from(priceSnapshots)
         .orderBy(desc(priceSnapshots.updatedAt)),
     ]);

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { api, fmtNum, fmtPct, fmtVol, usePoll } from "@/lib/client";
 
 type Shape = "rectangle" | "circle";
@@ -209,6 +209,7 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
   const [exchange, setExchange] = useState("all");
   const [sector, setSector] = useState("all");
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [selected, setSelected] = useState<Item | null>(null);
   const marketStatus = String(meta?.marketStatus ?? "PRE_MARKET");
   const stats = meta?.stats as unknown as Stats | undefined;
@@ -217,12 +218,13 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
   const [aiInsight, setAiInsight] = useState<{ insight?: string; provider?: string }>({});
 
   useEffect(() => {
+    if (compact) return;
     let active = true;
-    void api<{ insight?: string; provider?: string }>("/market/heatmap/ai")
+    const timer = window.setTimeout(() => void api<{ insight?: string; provider?: string }>("/market/heatmap/ai")
       .then((result) => { if (active) setAiInsight(result.data); })
-      .catch(() => undefined);
-    return () => { active = false; };
-  }, [marketStatus]);
+      .catch(() => undefined), 350);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [compact, marketStatus]);
 
   useEffect(() => {
     try {
@@ -261,11 +263,11 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
         (item) =>
           (exchange === "all" || item.exchange === exchange) &&
           (sector === "all" || item.sector === sector) &&
-          (!query ||
-            item.symbol.includes(query.toUpperCase()) ||
-            item.name.toLowerCase().includes(query.toLowerCase())),
+          (!deferredQuery ||
+            item.symbol.includes(deferredQuery.toUpperCase()) ||
+            item.name.toLowerCase().includes(deferredQuery.toLowerCase())),
       ),
-    [allItems, exchange, sector, query],
+    [allItems, exchange, sector, deferredQuery],
   );
   const groups = useMemo(() => {
     const map = new Map<string, Item[]>();

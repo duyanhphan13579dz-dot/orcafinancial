@@ -177,7 +177,9 @@ export function usePoll<T>(
   const [isValidating, setIsValidating] = useState(false);
 
   const pathRef = useRef(path);
-  pathRef.current = path;
+  useEffect(() => {
+    pathRef.current = path;
+  }, [path]);
 
   const load = useCallback(
     async (opts?: { background?: boolean }) => {
@@ -209,6 +211,8 @@ export function usePoll<T>(
 
   useEffect(() => {
     if (!path || !enabled) {
+      // Reset loading when a consumer disables polling or clears its path.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLoading(false);
       return;
     }
@@ -233,6 +237,7 @@ export function usePoll<T>(
     if (intervalMs <= 0) return;
 
     const timer = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       void load({ background: true });
     }, intervalMs);
 
