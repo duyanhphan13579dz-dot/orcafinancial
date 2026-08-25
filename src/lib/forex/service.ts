@@ -24,6 +24,8 @@ import {
   getOhlcvPolicy,
   PRICE_REFRESH_MS,
 } from "./realtime";
+import { buildMtfResult, mtfStackFor } from "./mtf";
+import { buildFxIntelligence } from "./fx-intelligence";
 
 const log = forProvider("forex-service");
 
@@ -158,10 +160,6 @@ function rememberSnapshot(quotes: ForexQuote[], source: string) {
   liveSnapshotCache = { bySymbol, source, at: Date.now() };
 }
 
-/**
- * Phase 2: after each price sync, merge live mids into all in-memory OHLCV
- * series so current candle tracks realtime without refetching history.
- */
 export function tickMergeFromLiveSnapshot(): number {
   if (!liveSnapshotCache) return 0;
   const now = Date.now();
@@ -229,7 +227,6 @@ export async function syncForexPrices() {
     }
 
     invalidatePriceCaches();
-    // Tick-merge immediately so next OHLCV read is live
     tickMergeFromLiveSnapshot();
 
     const durationMs = Date.now() - started;
@@ -536,10 +533,7 @@ export async function syncForexOhlcv(
 
   const applyLiveTick = async (bars: Ohlcv[], source: string, stale: boolean) => {
     const live = await getLiveQuoteContract(sym).catch(() => null);
-    const patched = live
-      ? applyTickToBars(bars, live.price, timeframe)
-      : bars;
-    // Keep mem in sync with tick-merged series
+    const patched = live ? applyTickToBars(bars, live.price, timeframe) : bars;
     const existing = memOhlcv.get(key);
     if (existing) {
       existing.bars = patched;
@@ -560,7 +554,6 @@ export async function syncForexOhlcv(
 
   const mem = memOhlcv.get(key);
   if (mem && Date.now() - mem.at < MEM_OHLCV_TTL) {
-    // Already tick-merged by scheduler; still ensure latest mid
     return applyLiveTick(mem.bars, `${mem.source}+mem`, false);
   }
 
@@ -633,29 +626,129 @@ export async function syncForexOhlcv(
   }
 }
 
+/** Phase 5 — load stacked TFs and compute alignment. */
+export async function runMtfAnalysis(symbol: string) {
+  const sym = symbol.toUpperCase();
+  const stack = mtfStackFor(sym);
+  const results = await Promise.all(
+    stack.map(async (s) => {
+      try {
+        const o = await syncForexOhlcv(sym, s.tf, 80);
+        return { timeframe: s.tf, label: s.label, weight: s.weight, bars: o.bars };
+      } catch (e) {
+        log.warn("mtf_tf_failed", { symbol: sym, tf: s.tf, error: String(e) });
+        return { timeframe: s.tf, label: s.label, weight: s.weight, bars: null };
+      }
+    }),
+  );
+  return buildMtfResult(results);
+}
+
+/** Phase 6 — session + strength + DXY from latest prices. */
+export async function runFxIntelligence(symbol: string) {
+  const rows = (await latestForexPrices()) as Array<Record<string, unknown>>;
+  const quotes = rows.map((r) => ({
+    symbol: String(r.symbol ?? ""),
+    changePercent:
+      r.changePercent == null ? null : Number(r.changePercent),
+  }));
+  // Ensure DXY present if live cache has it
+  if (liveSnapshotCache) {
+    const dxy = liveSnapshotCache.bySymbol.get("DXY");
+    if (dxy && !quotes.some((q) => q.symbol === "DXY")) {
+      quotes.push({ symbol: "DXY", changePercent: dxy.changePercent });
+    }
+  }
+  return buildFxIntelligence(symbol.toUpperCase(), quotes);
+}
+
 export async function runForexAnalysis(symbol: string, timeframe = "1h") {
   const ohlcv = await syncForexOhlcv(symbol, timeframe, 120);
   const { pair, bars, source, quote } = ohlcv;
   const a = analyzeForex(bars);
 
+  const [mtf, fxIntel] = await Promise.all([
+    runMtfAnalysis(symbol).catch((e) => {
+      log.warn("mtf_failed", { symbol, error: String(e) });
+      return null;
+    }),
+    runFxIntelligence(symbol).catch((e) => {
+      log.warn("fx_intel_failed", { symbol, error: String(e) });
+      return null;
+    }),
+  ]);
+
+  // Soft MTF modulation of recommendation
+  let recommendation = a.recommendation;
+  let confidence = a.confidence;
+  const extraReasons: string[] = [];
+
+  if (mtf) {
+    extraReasons.push(`[MTF] ${mtf.summary} (${Math.round(mtf.alignment * 100)}% align)`);
+    if (mtf.context.includes("conflict")) {
+      if (recommendation !== "NEUTRAL") {
+        recommendation = "NEUTRAL";
+        confidence = Math.min(confidence, 0.5);
+        extraReasons.push("[MTF] Conflict → force NEUTRAL");
+      }
+    } else if (mtf.overall === "bullish" && recommendation === "SELL") {
+      recommendation = "NEUTRAL";
+      confidence = Math.min(confidence, 0.52);
+      extraReasons.push("[MTF] Against HTF bullish → NEUTRAL");
+    } else if (mtf.overall === "bearish" && recommendation === "BUY") {
+      recommendation = "NEUTRAL";
+      confidence = Math.min(confidence, 0.52);
+      extraReasons.push("[MTF] Against HTF bearish → NEUTRAL");
+    } else if (
+      mtf.alignment >= 0.7 &&
+      ((mtf.overall === "bullish" && recommendation === "BUY") ||
+        (mtf.overall === "bearish" && recommendation === "SELL"))
+    ) {
+      confidence = Math.min(0.93, confidence + 0.06);
+      extraReasons.push("[MTF] Strong alignment boost");
+    }
+  }
+
+  if (fxIntel) {
+    extraReasons.push(
+      `[Session] ${fxIntel.session.label} · vol ${fxIntel.session.volatility} · liq ${fxIntel.session.liquidity}`,
+    );
+    if (fxIntel.dxy.pairExpected !== "n/a" && fxIntel.dxy.dxyBias !== "unknown") {
+      extraReasons.push(`[DXY] ${fxIntel.dxy.note}`);
+      if (
+        (recommendation === "BUY" && fxIntel.dxy.pairExpected === "bearish") ||
+        (recommendation === "SELL" && fxIntel.dxy.pairExpected === "bullish")
+      ) {
+        confidence = Math.max(0.35, confidence - 0.05);
+        extraReasons.push("[DXY] Against DXY correlation — confidence −5%");
+      }
+    }
+    if (fxIntel.pairBiasFromStrength.bias !== "neutral") {
+      extraReasons.push(`[Strength] ${fxIntel.pairBiasFromStrength.note}`);
+    }
+    if (fxIntel.session.liquidity === "LOW" && recommendation !== "NEUTRAL") {
+      confidence = Math.max(0.35, confidence - 0.04);
+    }
+  }
+
   const entryPrice = quote?.price ?? a.entryPrice;
   const risk =
-    a.stopLoss !== null && a.recommendation === "BUY"
+    a.stopLoss !== null && recommendation === "BUY"
       ? entryPrice - a.stopLoss
-      : a.stopLoss !== null && a.recommendation === "SELL"
+      : a.stopLoss !== null && recommendation === "SELL"
         ? a.stopLoss - entryPrice
         : null;
 
   const stopLoss =
-    risk !== null && a.recommendation === "BUY"
+    risk !== null && recommendation === "BUY"
       ? entryPrice - risk
-      : risk !== null && a.recommendation === "SELL"
+      : risk !== null && recommendation === "SELL"
         ? entryPrice + risk
         : a.stopLoss;
   const takeProfit =
-    risk !== null && a.recommendation === "BUY"
+    risk !== null && recommendation === "BUY"
       ? entryPrice + risk * 2
-      : risk !== null && a.recommendation === "SELL"
+      : risk !== null && recommendation === "SELL"
         ? entryPrice - risk * 2
         : a.takeProfit;
 
@@ -666,12 +759,12 @@ export async function runForexAnalysis(symbol: string, timeframe = "1h") {
       timeframe,
       technicalSignals: a.indicators,
       patterns: { candlestick: a.candlestickPatterns, chart: a.chartPatterns },
-      recommendation: a.recommendation,
+      recommendation,
       entryPrice,
       stopLoss,
       takeProfit,
-      confidence: a.confidence,
-      reason: a.reasons.join("; "),
+      confidence,
+      reason: [...extraReasons, ...a.reasons].join("; "),
       timestamp: new Date(),
     })
     .catch((e) => log.warn("analysis_persist_failed", { symbol, error: String(e) }));
@@ -682,9 +775,14 @@ export async function runForexAnalysis(symbol: string, timeframe = "1h") {
     timeframe,
     source,
     ...a,
+    recommendation,
+    confidence: Number(confidence.toFixed(2)),
     entryPrice,
     stopLoss,
     takeProfit,
+    reasons: [...extraReasons, ...a.reasons].slice(0, 14),
+    mtf,
+    fxIntelligence: fxIntel,
     quote: quote ?? null,
   };
 }
