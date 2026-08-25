@@ -1,13 +1,13 @@
 /**
  * Phase 4 — Technical Intelligence Engine
  *
- * Six scoring layers → aggregated recommendation:
- *  1. Trend       (EMA stack, ADX, HH/HL structure)
- *  2. Momentum    (RSI, MACD, ROC)
- *  3. Volatility  (ATR, BB width, regime)
- *  4. Structure   (S/R, breakout, retest, liquidity sweep)
- *  5. Pattern     (candlestick + chart, age-weighted)
- *  6. VolumeProxy (tick vol if any, range expansion, session)
+ * Six scoring layers → optimized composite aggregation:
+ *  1. Trend       (EMA stack, ADX, HH/HL structure)     — directional
+ *  2. Momentum    (RSI, MACD, ROC)                      — directional
+ *  3. Volatility  (ATR, BB width, regime)               — modulator only
+ *  4. Structure   (S/R, breakout, retest, sweep)        — directional
+ *  5. Pattern     (candlestick + chart, age-weighted)   — directional
+ *  6. VolumeProxy (tick vol / range expansion)          — modulator only
  */
 
 import type { Ohlcv } from "@/lib/connectors/core";
@@ -22,8 +22,23 @@ export interface LayerScore {
   /** -1 (strong bear) … +1 (strong bull) */
   score: number;
   bias: LayerBias;
+  /** Base design weight (before adaptive reweight). */
   weight: number;
+  /** Effective weight used in composite (after adaptive). */
+  effectiveWeight?: number;
+  /** directional | modulator */
+  role: "directional" | "modulator";
   detail: string[];
+}
+
+export interface AggregationMeta {
+  rawComposite: number;
+  composite: number;
+  agreement: number;
+  conflict: number;
+  coreAligned: boolean;
+  effectiveWeights: Record<string, number>;
+  gates: string[];
 }
 
 function atr(b: Ohlcv[], p = 14): number | null {
@@ -85,7 +100,6 @@ function momentum(closes: number[], period = 10): number | null {
   return closes[closes.length - 1] - closes[closes.length - 1 - period];
 }
 
-/** Detect swing highs/lows with lookback `order`. */
 function swingStructure(bars: Ohlcv[], order = 3) {
   const highs: number[] = [];
   const lows: number[] = [];
@@ -146,12 +160,10 @@ function detectBreakoutRetest(bars: Ohlcv[], sr: { support: number; resistance: 
   if (prev.close <= sr.resistance && last.close > sr.resistance + eps) breakout = "up";
   if (prev.close >= sr.support && last.close < sr.support - eps) breakout = "down";
 
-  // Retest: touched level then closed back
   let retest = false;
   if (breakout === "up" && last.low <= sr.resistance + eps && last.close > sr.resistance) retest = true;
   if (breakout === "down" && last.high >= sr.support - eps && last.close < sr.support) retest = true;
 
-  // Liquidity sweep: wick beyond S/R then close back inside
   let sweep: "buy" | "sell" | null = null;
   if (last.low < sr.support - eps && last.close > sr.support) sweep = "buy";
   if (last.high > sr.resistance + eps && last.close < sr.resistance) sweep = "sell";
@@ -159,13 +171,13 @@ function detectBreakoutRetest(bars: Ohlcv[], sr: { support: number; resistance: 
   return { breakout, retest, sweep };
 }
 
-/** Rough session activity from bar ranges vs ATR (proxy when no real volume). */
 function volumeProxyScore(bars: Ohlcv[], atrVal: number | null): {
-  score: number;
+  /** 0..1 activity intensity (not directional). */
+  intensity: number;
   detail: string[];
 } {
   const detail: string[] = [];
-  if (bars.length < 20) return { score: 0, detail: ["Insufficient bars for volume proxy"] };
+  if (bars.length < 20) return { intensity: 0.5, detail: ["Insufficient bars for volume proxy"] };
 
   const recent = bars.slice(-20);
   const ranges = recent.map((b) => b.high - b.low);
@@ -173,7 +185,6 @@ function volumeProxyScore(bars: Ohlcv[], atrVal: number | null): {
   const lastRange = ranges[ranges.length - 1];
   const expansion = avgRange > 0 ? lastRange / avgRange : 1;
 
-  // Tick volume if provider filled volume field
   const vols = recent.map((b) => b.volume ?? 0);
   const hasVol = vols.some((v) => v > 0);
   let volRatio = 1;
@@ -187,29 +198,243 @@ function volumeProxyScore(bars: Ohlcv[], atrVal: number | null): {
 
   detail.push(`Range expansion ${expansion.toFixed(2)}x avg20`);
   if (atrVal != null) {
-    detail.push(`ATR context ${(atrVal / bars[bars.length - 1].close * 100).toFixed(3)}%`);
+    detail.push(`ATR context ${((atrVal / bars[bars.length - 1].close) * 100).toFixed(3)}%`);
   }
 
-  // Score is activity intensity, direction-neutral; mild bias if expansion with close location
-  let score = 0;
-  const intensity = Math.min(1.5, (expansion + (hasVol ? volRatio : 1)) / 2) - 1;
-  score = Math.max(-0.3, Math.min(0.3, intensity * 0.4));
+  // Map expansion/vol to 0..1 intensity centered at 1.0x → 0.5
+  const raw = (Math.min(2, Math.max(0.3, expansion)) + Math.min(2, Math.max(0.3, volRatio))) / 2;
+  const intensity = clamp((raw - 0.3) / 1.7, 0, 1);
 
-  // Session heuristic: larger ranges often = more liquid session
   if (expansion > 1.4) detail.push("Elevated session activity");
   if (expansion < 0.6) detail.push("Quiet session / compressed range");
 
-  return { score, detail };
+  return { intensity, detail };
 }
 
 function biasFromScore(score: number): LayerBias {
-  if (score >= 0.2) return "bullish";
-  if (score <= -0.2) return "bearish";
+  if (score >= 0.18) return "bullish";
+  if (score <= -0.18) return "bearish";
   return "neutral";
 }
 
 function clamp(n: number, lo = -1, hi = 1) {
   return Math.max(lo, Math.min(hi, n));
+}
+
+function tanh(x: number) {
+  const e2 = Math.exp(2 * clamp(x, -20, 20));
+  return (e2 - 1) / (e2 + 1);
+}
+
+/**
+ * Optimized composite aggregation.
+ *
+ * Design principles:
+ * 1. Only directional layers vote on side.
+ * 2. Adaptive weights by regime (ADX / vol).
+ * 3. Conflict between Trend & Momentum shrinks magnitude.
+ * 4. Core gate: Trend OR Structure must agree with the side.
+ * 5. Modulators (vol regime, activity) adjust confidence, not direction.
+ */
+export function aggregateLayers(
+  layers: LayerScore[],
+  opts: {
+    adx: number | null;
+    regime: "low" | "normal" | "high" | "extreme";
+    rsi: number | null;
+    activityIntensity: number;
+  },
+): {
+  recommendation: "BUY" | "SELL" | "NEUTRAL";
+  confidence: number;
+  composite: number;
+  layers: LayerScore[];
+  meta: AggregationMeta;
+} {
+  const gates: string[] = [];
+  const byId = new Map(layers.map((l) => [l.id, l]));
+
+  // ── Adaptive weights ───────────────────────────────────────
+  // Base directional weights (sum ≈ 1.0 among directional)
+  const base: Record<string, number> = {
+    trend: 0.34,
+    momentum: 0.26,
+    structure: 0.26,
+    pattern: 0.14,
+  };
+
+  // ADX strong → trust trend more; weak → trust momentum / mean-reversion cues more
+  if (opts.adx != null && opts.adx >= 28) {
+    base.trend += 0.08;
+    base.momentum -= 0.04;
+    base.pattern -= 0.04;
+    gates.push(`ADX ${opts.adx.toFixed(0)} strong → boost Trend`);
+  } else if (opts.adx != null && opts.adx < 18) {
+    base.trend -= 0.08;
+    base.momentum += 0.05;
+    base.structure += 0.03;
+    gates.push(`ADX ${opts.adx.toFixed(0)} weak → boost Momentum/Structure`);
+  }
+
+  // High vol → rely more on structure (levels), less on noisy patterns
+  if (opts.regime === "high" || opts.regime === "extreme") {
+    base.structure += 0.06;
+    base.pattern -= 0.04;
+    base.momentum -= 0.02;
+    gates.push(`Vol ${opts.regime} → boost Structure, cut Pattern`);
+  } else if (opts.regime === "low") {
+    // Squeeze: breakouts matter more when they appear
+    base.structure += 0.03;
+    base.trend -= 0.03;
+    gates.push("Vol low (squeeze) → slight Structure boost");
+  }
+
+  // Renormalize directional weights to 1
+  const dirIds = Object.keys(base);
+  let sumW = dirIds.reduce((a, id) => a + Math.max(0.02, base[id]), 0);
+  const effectiveWeights: Record<string, number> = {};
+  for (const id of dirIds) {
+    effectiveWeights[id] = Math.max(0.02, base[id]) / sumW;
+  }
+  // Modulators keep display weight but 0 vote
+  effectiveWeights.volatility = 0;
+  effectiveWeights.volume = 0;
+
+  const enriched = layers.map((l) => ({
+    ...l,
+    effectiveWeight: effectiveWeights[l.id] ?? 0,
+  }));
+
+  // ── Raw directional composite ──────────────────────────────
+  let raw = 0;
+  for (const l of enriched) {
+    if (l.role !== "directional") continue;
+    raw += l.score * (l.effectiveWeight ?? 0);
+  }
+
+  // ── Trend ↔ Momentum conflict / agreement ──────────────────
+  const trend = byId.get("trend");
+  const mom = byId.get("momentum");
+  let conflict = 0;
+  let agreementBoost = 0;
+  if (trend && mom) {
+    // Product negative → opposite signs
+    if (trend.score * mom.score < -0.04) {
+      conflict = Math.min(1, Math.abs(trend.score - mom.score) / 1.5);
+      // Shrink magnitude up to 45%
+      raw *= 1 - 0.45 * conflict;
+      gates.push(`Trend↔Momentum conflict ${(conflict * 100).toFixed(0)}% → shrink composite`);
+    } else if (trend.bias === mom.bias && trend.bias !== "neutral") {
+      agreementBoost = 0.08;
+      raw *= 1 + agreementBoost;
+      gates.push("Trend & Momentum agree → slight amplify");
+    }
+  }
+
+  // Soft saturation so single layer can't dominate display
+  const composite = clamp(tanh(raw * 1.15));
+
+  // ── Core alignment gate ────────────────────────────────────
+  // Directional call needs Trend OR Structure on the same side
+  const structure = byId.get("structure");
+  const sideOf = (s: number): LayerBias =>
+    s >= 0.12 ? "bullish" : s <= -0.12 ? "bearish" : "neutral";
+
+  let recommendation: "BUY" | "SELL" | "NEUTRAL" = "NEUTRAL";
+  const BUY_TH = 0.18;
+  const SELL_TH = -0.18;
+
+  if (composite >= BUY_TH) recommendation = "BUY";
+  else if (composite <= SELL_TH) recommendation = "SELL";
+
+  const want: LayerBias =
+    recommendation === "BUY" ? "bullish" : recommendation === "SELL" ? "bearish" : "neutral";
+
+  const coreAligned =
+    recommendation === "NEUTRAL"
+      ? true
+      : (trend != null && sideOf(trend.score) === want) ||
+        (structure != null && sideOf(structure.score) === want);
+
+  if (!coreAligned && recommendation !== "NEUTRAL") {
+    gates.push("Core gate fail (Trend/Structure not aligned) → NEUTRAL");
+    recommendation = "NEUTRAL";
+  }
+
+  // RSI hard safety
+  if (recommendation === "BUY" && opts.rsi != null && opts.rsi >= 75) {
+    gates.push(`RSI ${opts.rsi.toFixed(0)} ≥ 75 → block BUY`);
+    recommendation = "NEUTRAL";
+  }
+  if (recommendation === "SELL" && opts.rsi != null && opts.rsi <= 25) {
+    gates.push(`RSI ${opts.rsi.toFixed(0)} ≤ 25 → block SELL`);
+    recommendation = "NEUTRAL";
+  }
+
+  // Extreme vol: only allow if |composite| is very strong AND core aligned
+  if (opts.regime === "extreme" && recommendation !== "NEUTRAL") {
+    if (Math.abs(composite) < 0.42 || !coreAligned) {
+      gates.push("Extreme vol + weak/unconfirmed signal → NEUTRAL");
+      recommendation = "NEUTRAL";
+    } else {
+      gates.push("Extreme vol but strong confirmed signal — keep with lower confidence");
+    }
+  }
+
+  // ── Agreement among directional layers ─────────────────────
+  const dirLayers = enriched.filter((l) => l.role === "directional");
+  const alignedCount = dirLayers.filter((l) => {
+    if (recommendation === "BUY") return l.bias === "bullish";
+    if (recommendation === "SELL") return l.bias === "bearish";
+    return l.bias === "neutral";
+  }).length;
+  const agreement = dirLayers.length ? alignedCount / dirLayers.length : 0;
+
+  // ── Confidence ─────────────────────────────────────────────
+  // Base from |composite| (tanh already soft-capped)
+  let confidence =
+    0.42 +
+    Math.abs(composite) * 0.32 +
+    agreement * 0.18 +
+    (1 - conflict) * 0.06;
+
+  if (opts.adx != null && opts.adx >= 25) confidence += 0.04;
+  if (opts.adx != null && opts.adx < 15) confidence -= 0.04;
+
+  // Activity intensity: very quiet sessions → slightly less confident on breakouts
+  if (opts.activityIntensity < 0.35 && recommendation !== "NEUTRAL") {
+    confidence -= 0.04;
+    gates.push("Low activity — confidence −4%");
+  } else if (opts.activityIntensity > 0.7 && recommendation !== "NEUTRAL") {
+    confidence += 0.03;
+  }
+
+  if (opts.regime === "extreme") confidence -= 0.1;
+  else if (opts.regime === "high") confidence -= 0.04;
+  else if (opts.regime === "low" && recommendation !== "NEUTRAL") confidence -= 0.03;
+
+  if (recommendation === "NEUTRAL") {
+    // Neutral should not look "highly confident directional"
+    confidence = Math.min(confidence, 0.55);
+  }
+
+  confidence = Number(clamp(confidence, 0.32, 0.93).toFixed(2));
+
+  return {
+    recommendation,
+    confidence,
+    composite: Number(composite.toFixed(3)),
+    layers: enriched,
+    meta: {
+      rawComposite: Number(raw.toFixed(3)),
+      composite: Number(composite.toFixed(3)),
+      agreement: Number(agreement.toFixed(3)),
+      conflict: Number(conflict.toFixed(3)),
+      coreAligned,
+      effectiveWeights,
+      gates,
+    },
+  };
 }
 
 export function analyzeForex(bars: Ohlcv[]) {
@@ -265,10 +490,10 @@ export function analyzeForex(bars: Ohlcv[]) {
   }
   if (xx != null) {
     if (xx > 25) {
-      trendScore *= 1.15;
+      trendScore *= 1.12;
       trendDetail.push(`ADX ${xx.toFixed(1)} — trend strength OK`);
     } else {
-      trendScore *= 0.7;
+      trendScore *= 0.75;
       trendDetail.push(`ADX ${xx.toFixed(1)} — weak trend`);
     }
   }
@@ -338,9 +563,8 @@ export function analyzeForex(bars: Ohlcv[]) {
   }
   momScore = clamp(momScore);
 
-  // ── 4.3 Volatility ─────────────────────────────────────────
+  // ── 4.3 Volatility (modulator — score kept for UI, not vote) ─
   const volDetail: string[] = [];
-  let volScore = 0; // directional bias mild; mainly modulates confidence later
   volDetail.push(`Regime: ${regime}`);
   if (aa != null) {
     volDetail.push(`ATR(14) ${aa.toFixed(5)} (${((aa / current) * 100).toFixed(3)}%)`);
@@ -348,16 +572,17 @@ export function analyzeForex(bars: Ohlcv[]) {
   if (bbW != null) {
     volDetail.push(`BB width ${(bbW * 100).toFixed(2)}%`);
   }
-  // Expansion in direction of close vs open of last bar
-  const lastBar = bars[bars.length - 1];
   if (regime === "high" || regime === "extreme") {
-    if (lastBar.close > lastBar.open) volScore += 0.1;
-    else if (lastBar.close < lastBar.open) volScore -= 0.1;
     volDetail.push("High vol — moves less reliable, size down");
   } else if (regime === "low") {
     volDetail.push("Low vol — squeeze / breakout watch");
   }
-  volScore = clamp(volScore);
+  // Display-only score: map regime to mild signed noise of last candle for UI bar
+  const lastBar = bars[bars.length - 1];
+  let volDisplay = 0;
+  if (regime === "high" || regime === "extreme") {
+    volDisplay = lastBar.close >= lastBar.open ? 0.08 : -0.08;
+  }
 
   // ── 4.4 Structure ──────────────────────────────────────────
   const stDetail: string[] = [];
@@ -402,25 +627,32 @@ export function analyzeForex(bars: Ohlcv[]) {
   for (const p of candles) {
     const age = lastIdx - p.barIndex;
     const ageW = Math.max(0.3, 1 - age / 20);
-    const signed = (p.type === "bullish" ? 1 : p.type === "bearish" ? -1 : 0) * p.reliability * ageW * 0.35;
+    const signed =
+      (p.type === "bullish" ? 1 : p.type === "bearish" ? -1 : 0) * p.reliability * ageW * 0.35;
     patScore += signed;
     if (Math.abs(signed) > 0.05) {
-      patDetail.push(`${p.nameVi} (${p.type}, age ${age}, rel ${(p.reliability * 100).toFixed(0)}%)`);
+      patDetail.push(
+        `${p.nameVi} (${p.type}, age ${age}, rel ${(p.reliability * 100).toFixed(0)}%)`,
+      );
     }
   }
   for (const p of charts) {
     const age = lastIdx - p.endIndex;
     const ageW = Math.max(0.25, 1 - age / 40);
-    const signed = (p.type === "bullish" ? 1 : p.type === "bearish" ? -1 : 0) * p.reliability * ageW * 0.45;
+    const signed =
+      (p.type === "bullish" ? 1 : p.type === "bearish" ? -1 : 0) * p.reliability * ageW * 0.45;
     patScore += signed;
-    patDetail.push(`${p.nameVi} (${p.type}, age ${age}, rel ${(p.reliability * 100).toFixed(0)}%)`);
+    patDetail.push(
+      `${p.nameVi} (${p.type}, age ${age}, rel ${(p.reliability * 100).toFixed(0)}%)`,
+    );
   }
   if (!patDetail.length) patDetail.push("No strong recent patterns");
   patScore = clamp(patScore);
 
-  // ── 4.6 Volume proxy ───────────────────────────────────────
+  // ── 4.6 Volume proxy (modulator) ───────────────────────────
   const vp = volumeProxyScore(bars, aa);
-  const volProxyScore = clamp(vp.score);
+  // Map intensity 0..1 → display score -0.2..0.2 around neutral for UI
+  const volProxyDisplay = clamp((vp.intensity - 0.5) * 0.4, -0.25, 0.25);
 
   const layers: LayerScore[] = [
     {
@@ -428,7 +660,8 @@ export function analyzeForex(bars: Ohlcv[]) {
       label: "Trend",
       score: Number(trendScore.toFixed(3)),
       bias: biasFromScore(trendScore),
-      weight: 0.28,
+      weight: 0.34,
+      role: "directional",
       detail: trendDetail,
     },
     {
@@ -436,15 +669,17 @@ export function analyzeForex(bars: Ohlcv[]) {
       label: "Momentum",
       score: Number(momScore.toFixed(3)),
       bias: biasFromScore(momScore),
-      weight: 0.22,
+      weight: 0.26,
+      role: "directional",
       detail: momDetail,
     },
     {
       id: "volatility",
       label: "Volatility",
-      score: Number(volScore.toFixed(3)),
-      bias: biasFromScore(volScore),
-      weight: 0.08,
+      score: Number(volDisplay.toFixed(3)),
+      bias: biasFromScore(volDisplay),
+      weight: 0,
+      role: "modulator",
       detail: volDetail,
     },
     {
@@ -452,7 +687,8 @@ export function analyzeForex(bars: Ohlcv[]) {
       label: "Structure",
       score: Number(stScore.toFixed(3)),
       bias: biasFromScore(stScore),
-      weight: 0.22,
+      weight: 0.26,
+      role: "directional",
       detail: stDetail,
     },
     {
@@ -460,48 +696,38 @@ export function analyzeForex(bars: Ohlcv[]) {
       label: "Pattern",
       score: Number(patScore.toFixed(3)),
       bias: biasFromScore(patScore),
-      weight: 0.15,
+      weight: 0.14,
+      role: "directional",
       detail: patDetail.slice(0, 6),
     },
     {
       id: "volume",
       label: "Volume proxy",
-      score: Number(volProxyScore.toFixed(3)),
-      bias: biasFromScore(volProxyScore),
-      weight: 0.05,
+      score: Number(volProxyDisplay.toFixed(3)),
+      bias: biasFromScore(volProxyDisplay),
+      weight: 0,
+      role: "modulator",
       detail: vp.detail,
     },
   ];
 
-  const weightSum = layers.reduce((a, l) => a + l.weight, 0);
-  const composite =
-    layers.reduce((a, l) => a + l.score * l.weight, 0) / (weightSum || 1);
+  const agg = aggregateLayers(layers, {
+    adx: xx,
+    regime,
+    rsi: rr,
+    activityIntensity: vp.intensity,
+  });
 
-  // Safety gates: never BUY when RSI >= 75, never SELL when RSI <= 25
-  let recommendation: "BUY" | "SELL" | "NEUTRAL" =
-    composite >= 0.22 ? "BUY" : composite <= -0.22 ? "SELL" : "NEUTRAL";
-  if (recommendation === "BUY" && rr != null && rr >= 75) recommendation = "NEUTRAL";
-  if (recommendation === "SELL" && rr != null && rr <= 25) recommendation = "NEUTRAL";
-  // High vol extreme → dampen to neutral unless structure confirms
-  if (regime === "extreme" && Math.abs(composite) < 0.4) recommendation = "NEUTRAL";
+  const recommendation = agg.recommendation;
+  const confidence = agg.confidence;
+  const composite = agg.composite;
 
-  const reasons = layers.flatMap((l) =>
-    l.detail.slice(0, 2).map((d) => `[${l.label}] ${d}`),
-  );
-
-  // Confidence from agreement + ADX + |composite|
-  const aligned = layers.filter((l) =>
-    recommendation === "BUY"
-      ? l.bias === "bullish"
-      : recommendation === "SELL"
-        ? l.bias === "bearish"
-        : l.bias === "neutral",
-  ).length;
-  let confidence = 0.45 + Math.abs(composite) * 0.35 + (aligned / layers.length) * 0.15;
-  if (xx != null && xx > 25) confidence += 0.05;
-  if (regime === "extreme") confidence -= 0.08;
-  if (regime === "low" && recommendation !== "NEUTRAL") confidence -= 0.04;
-  confidence = Number(Math.min(0.93, Math.max(0.35, confidence)).toFixed(2));
+  const reasons = [
+    ...agg.meta.gates.map((g) => `[Gate] ${g}`),
+    ...agg.layers
+      .filter((l) => l.role === "directional")
+      .flatMap((l) => l.detail.slice(0, 2).map((d) => `[${l.label}] ${d}`)),
+  ];
 
   const risk = aa ? Math.max(aa * 1.5, current * 0.001) : current * 0.005;
   let stopLoss: number | null = null;
@@ -546,8 +772,9 @@ export function analyzeForex(bars: Ohlcv[]) {
       support: sr?.support ?? null,
       resistance: sr?.resistance ?? null,
     },
-    layers,
-    compositeScore: Number(composite.toFixed(3)),
+    layers: agg.layers,
+    compositeScore: composite,
+    aggregation: agg.meta,
     marketStructure: swings.structure,
     volatilityRegime: regime,
     structureEvents: structEvents,
@@ -567,7 +794,7 @@ export function analyzeForex(bars: Ohlcv[]) {
     takeProfit,
     takeProfit2,
     confidence,
-    reasons: reasons.slice(0, 10),
+    reasons: reasons.slice(0, 12),
     disclaimer: "Tín hiệu định lượng tham khảo, không phải lời khuyên đầu tư.",
   };
 }
