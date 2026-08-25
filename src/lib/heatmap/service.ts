@@ -7,7 +7,7 @@ import { cached } from "@/lib/connectors/core";
 import { getBenchmarkForSymbol } from "@/lib/industry-benchmarks";
 import { logger } from "@/lib/logger";
 
-export type MarketStatus = "pre-market" | "trading" | "lunch-break" | "post-market" | "closed";
+export type MarketStatus = "PRE_MARKET" | "TRADING" | "LUNCH_BREAK" | "POST_MARKET" | "CLOSED";
 export type HeatColor = "ceiling" | "up" | "unchanged" | "down" | "floor" | "no-data";
 
 export interface HeatmapItem {
@@ -24,11 +24,24 @@ export interface HeatmapItem {
   color: HeatColor;
   intensity: number;
   source: string | null;
+  confidence: number | null;
   updatedAt: string | null;
+  ageSeconds: number | null;
+  isStale: boolean;
 }
 
 /** Soft TTL — enough for UI poll every 12–15s without hammering DB. */
 const HEATMAP_CACHE_MS = 12_000;
+const VALID_EXCHANGES = new Set(["HOSE", "HNX", "UPCOM"]);
+const STALE_AFTER_SECONDS = 90;
+
+function isStockCompany(row: { symbol: string; type?: string | null; exchange?: string | null }) {
+  const type = (row.type ?? "").toLocaleUpperCase("vi-VN");
+  const exchange = (row.exchange ?? "").toLocaleUpperCase("vi-VN");
+  return /^[A-Z]{3}$/.test(row.symbol) &&
+    VALID_EXCHANGES.has(exchange) &&
+    (type === "STOCK" || type.includes("CỔ PHIẾU") || type.includes("CO PHIEU"));
+}
 
 export function vietnamMarketStatus(now = new Date()): MarketStatus {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -39,13 +52,13 @@ export function vietnamMarketStatus(now = new Date()): MarketStatus {
     hour12: false,
   }).formatToParts(now);
   const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  if (["Sat", "Sun"].includes(part("weekday"))) return "closed";
+  if (["Sat", "Sun"].includes(part("weekday"))) return "CLOSED";
   const mins = Number(part("hour")) * 60 + Number(part("minute"));
-  if (mins < 9 * 60) return "pre-market";
-  if (mins <= 11 * 60 + 30) return "trading";
-  if (mins < 13 * 60) return "lunch-break";
-  if (mins <= 15 * 60) return "trading";
-  return "post-market";
+  if (mins < 9 * 60) return "PRE_MARKET";
+  if (mins <= 11 * 60 + 30) return "TRADING";
+  if (mins < 13 * 60) return "LUNCH_BREAK";
+  if (mins <= 15 * 60) return "TRADING";
+  return "POST_MARKET";
 }
 
 function classify(change: number | null, forceNeutral: boolean) {
@@ -134,7 +147,8 @@ async function syncListedUniverse() {
           const type = row.type.toLocaleUpperCase("vi");
           if (
             !/^[A-Z]{3}$/.test(row.symbol) ||
-            (!type.includes("CỔ PHIẾU") && !type.includes("STOCK"))
+            (!type.includes("CỔ PHIẾU") && !type.includes("STOCK")) ||
+            !VALID_EXCHANGES.has(row.exchange.toUpperCase())
           )
             continue;
           const benchmark = getBenchmarkForSymbol(row.symbol);
@@ -168,6 +182,7 @@ export async function getMarketHeatmap(): Promise<{
   marketStatus: MarketStatus;
   timestamp: string;
   stats: Record<HeatColor | "total", number>;
+  dataQuality: { universeCount: number; validQuoteCount: number; staleCount: number; noDataCount: number; exchanges: string[]; staleAfterSeconds: number };
   sectors: Array<{ name: string; count: number; tradingValue: number }>;
 }> {
   return cached("market:heatmap:v3", HEATMAP_CACHE_MS, async () => {
@@ -181,18 +196,18 @@ export async function getMarketHeatmap(): Promise<{
           symbol: companies.symbol,
           name: companies.name,
           exchange: companies.exchange,
+          type: companies.type,
           sector: companies.sector,
           industry: companies.industry,
         })
         .from(companies)
-        .orderBy(asc(companies.symbol))
-        .limit(800),
-      // Latest rows only — full table scan was a major latency source
+        .orderBy(asc(companies.symbol)),
+      // price_snapshots has one row per symbol; read the complete latest universe.
+      // This avoids silently dropping older-but-valid symbols behind a global LIMIT.
       db
         .select()
         .from(priceSnapshots)
-        .orderBy(desc(priceSnapshots.updatedAt))
-        .limit(600),
+        .orderBy(desc(priceSnapshots.updatedAt)),
     ]);
 
     const universe = new Map<
@@ -210,12 +225,12 @@ export async function getMarketHeatmap(): Promise<{
       });
     }
     for (const company of companyRows) {
-      if (/^[A-Z]{3}$/.test(company.symbol)) {
+      if (isStockCompany(company)) {
         const benchmark = getBenchmarkForSymbol(company.symbol);
         universe.set(company.symbol, {
           symbol: company.symbol,
           name: company.name,
-          exchange: company.exchange,
+          exchange: company.exchange.toUpperCase(),
           sector: normalizedSector(company.symbol, company.sector),
           industry: company.industry?.trim() || benchmark.industry || "Khác",
         });
@@ -231,12 +246,14 @@ export async function getMarketHeatmap(): Promise<{
     void warmMissingQuoteBatch(missingSymbols);
 
     const marketStatus = vietnamMarketStatus();
-    const forceNeutral = marketStatus === "pre-market" || marketStatus === "closed";
+    const forceNeutral = marketStatus === "PRE_MARKET";
     const items: HeatmapItem[] = [...universe.values()]
       .map((company) => {
         const snap = latest.get(company.symbol);
         const state = classify(snap?.changePct ?? null, forceNeutral);
         const tradingValue = snap ? Math.max(0, snap.close * snap.volume) : 0;
+        const updatedAt = snap?.updatedAt?.toISOString() ?? null;
+        const ageSeconds = snap ? Math.max(0, Math.round((Date.now() - snap.updatedAt.getTime()) / 1000)) : null;
         return {
           ...company,
           price: snap?.close ?? null,
@@ -245,7 +262,10 @@ export async function getMarketHeatmap(): Promise<{
           tradingValue,
           ...state,
           source: snap?.source ?? null,
-          updatedAt: snap?.updatedAt?.toISOString() ?? null,
+          confidence: snap?.confidence != null ? Number(snap.confidence) : null,
+          updatedAt,
+          ageSeconds,
+          isStale: ageSeconds == null || ageSeconds > STALE_AFTER_SECONDS,
         };
       })
       .sort((a, b) => b.tradingValue - a.tradingValue || a.symbol.localeCompare(b.symbol));
@@ -275,11 +295,21 @@ export async function getMarketHeatmap(): Promise<{
       if (item.status in stats) stats[item.status as keyof typeof stats] += 1;
     }
 
+    const dataQuality = {
+      universeCount: items.length,
+      validQuoteCount: items.filter((item) => item.price != null).length,
+      staleCount: items.filter((item) => item.isStale).length,
+      noDataCount: items.filter((item) => item.status === "no-data").length,
+      exchanges: [...new Set(items.map((item) => item.exchange).filter(Boolean))].sort(),
+      staleAfterSeconds: STALE_AFTER_SECONDS,
+    };
+
     return {
       items,
       marketStatus,
       timestamp: new Date().toISOString(),
       stats,
+      dataQuality,
       sectors: [...sectorMap.values()].sort(
         (a, b) => b.tradingValue - a.tradingValue || b.count - a.count,
       ),

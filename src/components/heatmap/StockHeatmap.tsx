@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { fmtNum, fmtPct, fmtVol, usePoll } from "@/lib/client";
+import { api, fmtNum, fmtPct, fmtVol, usePoll } from "@/lib/client";
 
 type Shape = "rectangle" | "circle";
 type Metric = "tradingValue" | "volume";
@@ -22,7 +22,10 @@ interface Item {
   color: HeatColor;
   intensity: number;
   source: string | null;
+  confidence: number | null;
   updatedAt: string | null;
+  ageSeconds: number | null;
+  isStale: boolean;
 }
 
 interface Stats {
@@ -44,11 +47,11 @@ interface Rect {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  "pre-market": "Trước phiên",
-  trading: "Đang giao dịch",
-  "lunch-break": "Nghỉ trưa",
-  "post-market": "Đã đóng cửa",
-  closed: "Thị trường nghỉ",
+  PRE_MARKET: "Trước phiên",
+  TRADING: "Đang giao dịch",
+  LUNCH_BREAK: "Nghỉ trưa",
+  POST_MARKET: "Sau phiên",
+  CLOSED: "Đã đóng cửa",
 };
 
 const COLORS: Record<HeatColor, string> = {
@@ -114,44 +117,58 @@ function treemap(items: Item[], metric: Metric, x = 0, y = 0, w = 100, h = 100):
   ];
 }
 
+type HistoryBar = { time: number; close: number; volume: number };
+
+function MiniChart({ bars }: { bars: HistoryBar[] }) {
+  if (bars.length < 2) return <div className="flex h-20 items-center justify-center text-[10px] text-slate-600">Chưa đủ dữ liệu lịch sử</div>;
+  const values = bars.map((bar) => bar.close);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const points = values.map((value, index) => {
+    const x = (index / (values.length - 1)) * 100;
+    const y = max === min ? 50 : 92 - ((value - min) / (max - min)) * 84;
+    return `${x},${y}`;
+  }).join(" ");
+  const positive = values[values.length - 1] >= values[0];
+  return <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-20 w-full"><polyline fill="none" stroke={positive ? "#10b981" : "#f43f5e"} strokeWidth="2.5" points={points} vectorEffect="non-scaling-stroke" /></svg>;
+}
+
 function StockTooltip({ item, close }: { item: Item; close: () => void }) {
+  const [timeframe, setTimeframe] = useState("1M");
+  const [bars, setBars] = useState<HistoryBar[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [playbackIndex, setPlaybackIndex] = useState(0);
+  useEffect(() => {
+    if (!playing || bars.length < 2) return;
+    const timer = window.setInterval(() => {
+      setPlaybackIndex((index) => {
+        if (index >= bars.length - 1) { setPlaying(false); return 0; }
+        return index + 1;
+      });
+    }, Math.max(180, 900 / speed));
+    return () => window.clearInterval(timer);
+  }, [playing, speed, bars.length]);
+  useEffect(() => {
+    let active = true;
+    void api<{ bars: HistoryBar[] }>(`/market/heatmap/history?symbol=${encodeURIComponent(item.symbol)}&timeframe=${timeframe}`)
+      .then((result) => { if (active) setBars(result.data.bars ?? []); })
+      .catch(() => { if (active) setBars([]); })
+      .finally(() => { if (active) setLoadingHistory(false); });
+    return () => { active = false; };
+  }, [item.symbol, timeframe]);
   return (
-    <div className="fixed z-[80] inset-x-3 bottom-24 mx-auto max-w-xs rounded-xl border border-slate-700 bg-slate-900/95 p-4 shadow-2xl backdrop-blur md:absolute md:inset-auto md:right-2 md:top-10 md:bottom-auto md:mx-0">
-      <button
-        type="button"
-        onClick={close}
-        className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 touch-min"
-      >
-        ✕
-      </button>
-      <div className="flex items-center gap-2 pr-8">
-        <span className="text-lg font-black text-white">{item.symbol}</span>
-        <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
-          {item.exchange || "—"}
-        </span>
-      </div>
-      <div className="truncate text-xs text-slate-500">{item.name}</div>
-      <div className="mt-1 text-[10px] text-slate-600">
-        {item.sector} · {item.industry}
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-y-1.5 text-xs">
-        <span className="text-slate-500">Giá</span>
-        <span className="text-right font-mono text-white">{fmtNum(item.price)}</span>
-        <span className="text-slate-500">Biến động</span>
-        <span className="text-right font-bold" style={{ color: colorFor(item) }}>
-          {fmtPct(item.changePercent)}
-        </span>
-        <span className="text-slate-500">Khối lượng</span>
-        <span className="text-right font-mono text-white">{fmtVol(item.volume)}</span>
-        <span className="text-slate-500">GTGD</span>
-        <span className="text-right font-mono text-white">{fmtVol(item.tradingValue)}</span>
-      </div>
-      <Link
-        href={`/stocks/${item.symbol}`}
-        className="mt-3 flex min-h-11 items-center justify-center rounded-lg bg-[#00d4ff] text-xs font-bold text-[#0A2540] hover:brightness-110"
-      >
-        Xem chi tiết →
-      </Link>
+    <div className="fixed z-[80] inset-x-3 bottom-24 mx-auto w-[min(92vw,360px)] rounded-xl border border-slate-700 bg-slate-900/95 p-4 shadow-2xl backdrop-blur md:absolute md:inset-auto md:right-2 md:top-10 md:bottom-auto md:mx-0">
+      <button type="button" onClick={close} aria-label="Đóng" className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 touch-min">✕</button>
+      <div className="flex items-center gap-2 pr-8"><span className="text-lg font-black text-white">{item.symbol}</span><span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">{item.exchange || "—"}</span></div>
+      <div className="truncate text-xs text-slate-500">{item.name}</div><div className="mt-1 text-[10px] text-slate-600">{item.sector} · {item.industry}</div>
+      <div className="mt-3 grid grid-cols-2 gap-y-1.5 text-xs"><span className="text-slate-500">Giá</span><span className="text-right font-mono text-white">{fmtNum(item.price)}</span><span className="text-slate-500">Biến động</span><span className="text-right font-bold" style={{ color: colorFor(item) }}>{fmtPct(item.changePercent)}</span><span className="text-slate-500">Khối lượng</span><span className="text-right font-mono text-white">{fmtVol(item.volume)}</span><span className="text-slate-500">GTGD</span><span className="text-right font-mono text-white">{fmtVol(item.tradingValue)}</span></div>
+      <div className="mt-3 flex items-center justify-between"><span className="text-[10px] uppercase tracking-widest text-slate-500">Lịch sử</span><div className="flex gap-1">{["1D", "1W", "1M", "3M", "YTD", "1Y"].map((value) => <button key={value} type="button" onClick={() => setTimeframe(value)} className={`rounded px-1.5 py-1 text-[9px] ${timeframe === value ? "bg-[#00d4ff]/20 text-[#00d4ff]" : "text-slate-500 hover:text-white"}`}>{value}</button>)}</div></div>
+      <div className="mt-1 rounded-lg bg-slate-950/70 p-2">{loadingHistory ? <div className="h-20 animate-pulse rounded bg-slate-800/40" /> : <MiniChart bars={bars} />}</div>
+      {bars.length > 1 && <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/50 p-2"><div className="flex items-center gap-2"><button type="button" onClick={() => setPlaying((value) => !value)} className="rounded bg-[#00d4ff]/15 px-2 py-1 text-[10px] font-bold text-[#00d4ff]">{playing ? "Pause" : "Play"}</button><input aria-label="Playback timeline" type="range" min={0} max={bars.length - 1} value={Math.min(playbackIndex, bars.length - 1)} onChange={(event) => { setPlaying(false); setPlaybackIndex(Number(event.target.value)); }} className="h-1 flex-1 accent-cyan-400" /><select aria-label="Playback speed" value={speed} onChange={(event) => setSpeed(Number(event.target.value))} className="rounded bg-slate-800 px-1 py-1 text-[10px] text-slate-300"><option value={1}>1×</option><option value={2}>2×</option><option value={4}>4×</option></select></div><div className="mt-1 flex justify-between text-[9px] text-slate-500"><span>Playback</span><span>{new Date((bars[Math.min(playbackIndex, bars.length - 1)]?.time ?? 0) * 1000).toLocaleDateString("vi-VN")} · {fmtNum(bars[Math.min(playbackIndex, bars.length - 1)]?.close ?? null)}</span></div></div>}
+      <div className="mt-2 flex justify-between text-[10px] text-slate-500"><span>{item.isStale ? `Dữ liệu cũ ${item.ageSeconds ?? "—"}s` : "Dữ liệu mới"}</span><span>{item.source ?? "unknown"} · {item.confidence != null ? `${Math.round(item.confidence * 100)}%` : "—"}</span></div>
+      <Link href={`/stocks/${item.symbol}`} className="mt-3 flex min-h-11 items-center justify-center rounded-lg bg-[#00d4ff] text-xs font-bold text-[#0A2540] hover:brightness-110">Mở Stock Intelligence →</Link>
     </div>
   );
 }
@@ -167,13 +184,16 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
   const [sector, setSector] = useState("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Item | null>(null);
-  const marketStatus = String(meta?.marketStatus ?? "pre-market");
+  const marketStatus = String(meta?.marketStatus ?? "PRE_MARKET");
   const stats = meta?.stats as unknown as Stats | undefined;
+  const dataQuality = meta?.dataQuality as { universeCount?: number; validQuoteCount?: number; staleCount?: number; exchanges?: string[] } | undefined;
 
   useEffect(() => {
     try {
       const stored = localStorage.getItem("orca_heatmap_shape");
       if (stored === "circle" || stored === "rectangle" || stored === "square") {
+        // Hydration-safe preference restore; localStorage is unavailable during SSR.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setShape(stored === "circle" ? "circle" : "rectangle");
       }
     } catch {
@@ -190,7 +210,7 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
     }
   };
 
-  const allItems = data ?? [];
+  const allItems = useMemo(() => data ?? [], [data]);
   const exchanges = useMemo(
     () => [...new Set(allItems.map((item) => item.exchange).filter(Boolean))].sort(),
     [allItems],
@@ -226,7 +246,21 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
   }, [filtered, metric]);
   const visibleGroups = compact ? groups.slice(0, 6) : groups;
 
-  const neutralSession = marketStatus === "pre-market" || marketStatus === "closed";
+  const sectorIntel = useMemo(() => groups.map((group) => {
+    const valid = group.items.filter((item) => item.changePercent != null);
+    const averageChange = valid.length ? valid.reduce((sum, item) => sum + (item.changePercent ?? 0), 0) / valid.length : null;
+    const advancing = valid.filter((item) => (item.changePercent ?? 0) > 0.01).length;
+    const declining = valid.filter((item) => (item.changePercent ?? 0) < -0.01).length;
+    const volume = valid.reduce((sum, item) => sum + (item.tradingValue || 0), 0);
+    return { name: group.name, averageChange, advancing, declining, count: valid.length, volume };
+  }).sort((a, b) => (b.averageChange ?? -Infinity) - (a.averageChange ?? -Infinity)), [groups]);
+  const breadth = useMemo(() => {
+    const valid = filtered.filter((item) => item.changePercent != null);
+    const advancing = valid.filter((item) => (item.changePercent ?? 0) > 0.01).length;
+    const declining = valid.filter((item) => (item.changePercent ?? 0) < -0.01).length;
+    return { advancing, declining, unchanged: Math.max(0, valid.length - advancing - declining), total: valid.length };
+  }, [filtered]);
+  const marketBias = breadth.advancing > breadth.declining * 1.2 ? "Bullish" : breadth.declining > breadth.advancing * 1.2 ? "Bearish" : "Phân hóa";
 
   return (
     <section className="relative space-y-3">
@@ -235,13 +269,14 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
         <div className="mr-auto flex items-center gap-2">
           <i
             className={`h-2 w-2 rounded-full ${
-              marketStatus === "trading" ? "bg-emerald-400 live-dot" : "bg-amber-400"
+              marketStatus === "TRADING" ? "bg-emerald-400 live-dot" : marketStatus === "PRE_MARKET" ? "bg-amber-400" : "bg-sky-400"
             }`}
           />
           <span className="text-xs font-semibold text-slate-200">
             {STATUS_LABEL[marketStatus] ?? marketStatus}
           </span>
           <span className="hidden text-[10px] text-slate-500 sm:inline">· cập nhật ~12s</span>
+          {dataQuality && <span className="hidden text-[10px] text-slate-600 lg:inline">· {dataQuality.validQuoteCount ?? 0}/{dataQuality.universeCount ?? 0} quote · stale {dataQuality.staleCount ?? 0}</span>}
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -368,7 +403,7 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
                           <span
                             className={`${big ? "text-base sm:text-xl" : "text-[9px] sm:text-[10px]"} mt-0.5 font-bold`}
                           >
-                            {neutralSession ? "—" : fmtPct(rect.item.changePercent)}
+                            {marketStatus === "PRE_MARKET" ? "—" : fmtPct(rect.item.changePercent)}
                           </span>
                         )}
                       </button>
@@ -391,11 +426,22 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
             >
               <span className="text-[10px] font-black sm:text-xs">{item.symbol}</span>
               <span className="text-[8px] font-bold sm:text-[9px]">
-                {neutralSession ? "—" : fmtPct(item.changePercent)}
+                {marketStatus === "PRE_MARKET" ? "—" : fmtPct(item.changePercent)}
               </span>
             </button>
           ))}
         </div>
+      )}
+
+      {!compact && (
+        <section className="grid gap-3 lg:grid-cols-[1.15fr_.85fr]">
+          <div className="panel p-4">
+            <div className="mb-3 flex items-center justify-between"><div><div className="text-[10px] uppercase tracking-[.25em] text-[#00d4ff]">Market Intelligence</div><h2 className="mt-1 text-sm font-bold text-white">Breadth & Sector Rotation</h2></div><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${marketBias === "Bullish" ? "bg-emerald-400/15 text-emerald-300" : marketBias === "Bearish" ? "bg-rose-400/15 text-rose-300" : "bg-amber-400/15 text-amber-300"}`}>{marketBias}</span></div>
+            <div className="mb-4 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-emerald-400/10 p-2"><div className="text-lg font-black text-emerald-300">{breadth.advancing}</div><div className="text-[10px] text-slate-500">Tăng</div></div><div className="rounded-lg bg-amber-400/10 p-2"><div className="text-lg font-black text-amber-300">{breadth.unchanged}</div><div className="text-[10px] text-slate-500">Đứng</div></div><div className="rounded-lg bg-rose-400/10 p-2"><div className="text-lg font-black text-rose-300">{breadth.declining}</div><div className="text-[10px] text-slate-500">Giảm</div></div></div>
+            <div className="space-y-2">{sectorIntel.slice(0, 6).map((sector) => <div key={sector.name} className="flex items-center gap-3 text-xs"><span className="w-28 truncate text-slate-400">{sector.name}</span><div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800"><div className={`h-full rounded-full ${sector.averageChange != null && sector.averageChange >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} style={{ width: `${Math.min(100, Math.max(4, Math.abs(sector.averageChange ?? 0) * 14))}%` }} /></div><span className={`w-14 text-right font-mono ${sector.averageChange != null && sector.averageChange >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{fmtPct(sector.averageChange)}</span></div>)}</div>
+          </div>
+          <div className="panel p-4"><div className="text-[10px] uppercase tracking-[.25em] text-[#00d4ff]">ORCA AI MARKET INSIGHT</div><p className="mt-3 text-sm leading-6 text-slate-300">Dòng tiền đang tập trung vào nhóm <strong className="text-white">{sectorIntel[0]?.name ?? "—"}</strong>{sectorIntel[0]?.averageChange != null ? ` (${fmtPct(sectorIntel[0].averageChange)} bình quân)` : ""}. {sectorIntel[0]?.advancing ?? 0} mã tăng trong nhóm dẫn đầu.</p><p className="mt-2 text-xs leading-5 text-slate-500">Market Regime: <span className="font-semibold text-slate-300">{marketStatus === "TRADING" ? "Intraday" : STATUS_LABEL[marketStatus] ?? marketStatus}</span>. Đây là insight định lượng từ breadth và sector performance, không phải khuyến nghị đầu tư.</p></div>
+        </section>
       )}
 
       {/* Legend */}
@@ -407,6 +453,7 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
             <Legend color={COLORS.unchanged} label={`Đứng ${stats.unchanged}`} />
             <Legend color={COLORS.down} label={`Giảm ${stats.down}`} />
             <Legend color={COLORS.floor} label={`Sàn ${stats.floor}`} />
+            <Legend color={COLORS["no-data"]} label={`Thiếu dữ liệu ${stats["no-data"]}`} />
             <span className="text-slate-600">· {stats.total} mã</span>
           </>
         )}
