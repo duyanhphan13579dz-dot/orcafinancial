@@ -1,29 +1,21 @@
 import { handleError, ok } from "@/lib/api";
-import { getForexHealthReport } from "@/lib/forex/observability";
-import { getDbHealth } from "@/db";
-import { buildMacroContextLive } from "@/lib/forex/macro";
 import {
-  recordProviderError,
-  recordProviderSuccess,
+  getForexHealthReport,
   withProviderTiming,
 } from "@/lib/forex/observability";
+import { getDbHealth } from "@/db";
+import { buildMacroContextLive } from "@/lib/forex/macro";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    // Light probe: macro calendar (records provider metrics)
-    const t0 = Date.now();
     try {
       await withProviderTiming("macro-calendar", () =>
         buildMacroContextLive("EURUSD"),
       );
-    } catch (err) {
-      recordProviderError(
-        "macro-calendar",
-        err instanceof Error ? err.message : String(err),
-        Date.now() - t0,
-      );
+    } catch {
+      /* recorded inside withProviderTiming */
     }
 
     const report = getForexHealthReport();

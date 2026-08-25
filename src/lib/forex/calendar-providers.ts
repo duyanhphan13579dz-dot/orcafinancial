@@ -8,6 +8,12 @@
  */
 
 import type { MacroEvent, MacroImpact, MacroRegion } from "./macro";
+import {
+  recordCacheHit,
+  recordCacheMiss,
+  recordProviderError,
+  recordProviderSuccess,
+} from "./observability";
 
 const CACHE_TTL_MS = 15 * 60_000;
 let cache: { events: MacroEvent[]; source: string; at: number } | null = null;
@@ -39,7 +45,6 @@ function mapImpact(raw: string | number | undefined | null): MacroImpact {
   if (s.includes("high") || s === "3" || s === "red") return "HIGH";
   if (s.includes("med") || s === "2" || s === "orange") return "MEDIUM";
   if (s.includes("low") || s === "1" || s === "yellow") return "LOW";
-  // Finnhub sometimes uses "high" / "medium" / "low"
   return "LOW";
 }
 
@@ -99,14 +104,8 @@ function toMacroEvent(raw: {
     forecast: raw.forecast ?? null,
     previous: raw.previous ?? null,
     actual: raw.actual ?? null,
-  } as MacroEvent & {
-    forecast?: string | null;
-    previous?: string | null;
-    actual?: string | null;
   };
 }
-
-/* ── ForexFactory ──────────────────────────────────────────────────────── */
 
 interface FfRow {
   title?: string;
@@ -119,41 +118,50 @@ interface FfRow {
 }
 
 async function fetchForexFactory(): Promise<MacroEvent[]> {
-  const url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json";
-  const res = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent":
-        "Mozilla/5.0 (compatible; OrcaFinancial/1.0; +https://github.com/duyanhphan13579dz-dot/orcafinancial)",
-    },
-    next: { revalidate: 900 },
-    signal: AbortSignal.timeout(8_000),
-  } as RequestInit);
+  const t0 = Date.now();
+  try {
+    const url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json";
+    const res = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent":
+          "Mozilla/5.0 (compatible; OrcaFinancial/1.0; +https://github.com/duyanhphan13579dz-dot/orcafinancial)",
+      },
+      next: { revalidate: 900 },
+      signal: AbortSignal.timeout(8_000),
+    } as RequestInit);
 
-  if (!res.ok) throw new Error(`ff_http_${res.status}`);
-  const rows = (await res.json()) as FfRow[];
-  if (!Array.isArray(rows)) throw new Error("ff_invalid_shape");
+    if (!res.ok) throw new Error(`ff_http_${res.status}`);
+    const rows = (await res.json()) as FfRow[];
+    if (!Array.isArray(rows)) throw new Error("ff_invalid_shape");
 
-  const out: MacroEvent[] = [];
-  for (const r of rows) {
-    if (!r.title || !r.date) continue;
-    const at = new Date(r.date);
-    const ev = toMacroEvent({
-      id: `ff-${r.country}-${r.date}-${r.title}`.replace(/\s+/g, "_").slice(0, 120),
-      title: r.title,
-      country: r.country ?? "USD",
-      at,
-      impact: mapImpact(r.impact),
-      forecast: r.forecast || null,
-      previous: r.previous || null,
-      actual: r.actual || null,
-    });
-    if (ev) out.push(ev);
+    const out: MacroEvent[] = [];
+    for (const r of rows) {
+      if (!r.title || !r.date) continue;
+      const at = new Date(r.date);
+      const ev = toMacroEvent({
+        id: `ff-${r.country}-${r.date}-${r.title}`.replace(/\s+/g, "_").slice(0, 120),
+        title: r.title,
+        country: r.country ?? "USD",
+        at,
+        impact: mapImpact(r.impact),
+        forecast: r.forecast || null,
+        previous: r.previous || null,
+        actual: r.actual || null,
+      });
+      if (ev) out.push(ev);
+    }
+    recordProviderSuccess("forexfactory-calendar", Date.now() - t0);
+    return out;
+  } catch (err) {
+    recordProviderError(
+      "forexfactory-calendar",
+      err instanceof Error ? err.message : String(err),
+      Date.now() - t0,
+    );
+    throw err;
   }
-  return out;
 }
-
-/* ── Finnhub (optional) ────────────────────────────────────────────────── */
 
 interface FinnhubRow {
   event?: string;
@@ -170,41 +178,49 @@ async function fetchFinnhub(): Promise<MacroEvent[]> {
   const key = process.env.FINNHUB_API_KEY?.trim();
   if (!key) throw new Error("finnhub_no_key");
 
-  const from = new Date();
-  const to = new Date(Date.now() + 14 * 86400_000);
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
-  const url = `https://finnhub.io/api/v1/calendar/economic?from=${fmt(from)}&to=${fmt(to)}&token=${key}`;
+  const t0 = Date.now();
+  try {
+    const from = new Date();
+    const to = new Date(Date.now() + 14 * 86400_000);
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    const url = `https://finnhub.io/api/v1/calendar/economic?from=${fmt(from)}&to=${fmt(to)}&token=${key}`;
 
-  const res = await fetch(url, {
-    signal: AbortSignal.timeout(8_000),
-    next: { revalidate: 900 },
-  } as RequestInit);
-  if (!res.ok) throw new Error(`finnhub_http_${res.status}`);
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(8_000),
+      next: { revalidate: 900 },
+    } as RequestInit);
+    if (!res.ok) throw new Error(`finnhub_http_${res.status}`);
 
-  const body = (await res.json()) as { economicCalendar?: FinnhubRow[] };
-  const rows = body.economicCalendar ?? [];
-  const out: MacroEvent[] = [];
-  for (const r of rows) {
-    if (!r.event || !r.time) continue;
-    // Finnhub times often "YYYY-MM-DD HH:mm:ss" without Z — treat as UTC-ish
-    const iso = r.time.includes("T") ? r.time : r.time.replace(" ", "T") + "Z";
-    const at = new Date(iso);
-    const ev = toMacroEvent({
-      id: `fh-${r.country}-${r.time}-${r.event}`.replace(/\s+/g, "_").slice(0, 120),
-      title: r.event,
-      country: r.country ?? "US",
-      at,
-      impact: mapImpact(r.impact),
-      forecast: r.estimate != null ? String(r.estimate) : null,
-      previous: r.prev != null ? String(r.prev) : null,
-      actual: r.actual != null ? String(r.actual) : null,
-    });
-    if (ev) out.push(ev);
+    const body = (await res.json()) as { economicCalendar?: FinnhubRow[] };
+    const rows = body.economicCalendar ?? [];
+    const out: MacroEvent[] = [];
+    for (const r of rows) {
+      if (!r.event || !r.time) continue;
+      const iso = r.time.includes("T") ? r.time : r.time.replace(" ", "T") + "Z";
+      const at = new Date(iso);
+      const ev = toMacroEvent({
+        id: `fh-${r.country}-${r.time}-${r.event}`.replace(/\s+/g, "_").slice(0, 120),
+        title: r.event,
+        country: r.country ?? "US",
+        at,
+        impact: mapImpact(r.impact),
+        forecast: r.estimate != null ? String(r.estimate) : null,
+        previous: r.prev != null ? String(r.prev) : null,
+        actual: r.actual != null ? String(r.actual) : null,
+      });
+      if (ev) out.push(ev);
+    }
+    recordProviderSuccess("finnhub-calendar", Date.now() - t0);
+    return out;
+  } catch (err) {
+    recordProviderError(
+      "finnhub-calendar",
+      err instanceof Error ? err.message : String(err),
+      Date.now() - t0,
+    );
+    throw err;
   }
-  return out;
 }
-
-/* ── Curated offline fallback ──────────────────────────────────────────── */
 
 function firstFriday(year: number, month: number): number {
   const d = new Date(Date.UTC(year, month - 1, 1));
@@ -309,13 +325,14 @@ export async function fetchLiveMacroCalendar(): Promise<{
   source: string;
 }> {
   if (cache && Date.now() - cache.at < CACHE_TTL_MS) {
+    recordCacheHit("macro-calendar");
     return { events: refreshMinutes(cache.events), source: `${cache.source}+cache` };
   }
+  recordCacheMiss("macro-calendar");
 
   const sources: string[] = [];
   const merged: MacroEvent[] = [];
 
-  // 1) ForexFactory
   try {
     const ff = await fetchForexFactory();
     if (ff.length) {
@@ -326,7 +343,6 @@ export async function fetchLiveMacroCalendar(): Promise<{
     sources.push("forexfactory:fail");
   }
 
-  // 2) Finnhub if key present and FF thin
   if (merged.length < 5 || process.env.FINNHUB_API_KEY) {
     try {
       const fh = await fetchFinnhub();
