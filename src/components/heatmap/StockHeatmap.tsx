@@ -118,6 +118,11 @@ function treemap(items: Item[], metric: Metric, x = 0, y = 0, w = 100, h = 100):
 }
 
 type HistoryBar = { time: number; close: number; volume: number };
+type Intelligence = {
+  analysis?: { recommendation?: string; score?: number; confidence?: number; reasons?: string[] };
+  technical?: { candlestickPatterns?: { nameVi?: string; type?: string }[]; chartPatterns?: { nameVi?: string; type?: string }[] };
+  news?: { items?: { title?: string; publishedAt?: string; sourceName?: string }[] };
+};
 
 function MiniChart({ bars }: { bars: HistoryBar[] }) {
   if (bars.length < 2) return <div className="flex h-20 items-center justify-center text-[10px] text-slate-600">Chưa đủ dữ liệu lịch sử</div>;
@@ -140,6 +145,23 @@ function StockTooltip({ item, close }: { item: Item; close: () => void }) {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [playbackIndex, setPlaybackIndex] = useState(0);
+  const [intelligence, setIntelligence] = useState<Intelligence>({});
+  useEffect(() => {
+    let active = true;
+    void Promise.allSettled([
+      api<{ recommendation?: string; score?: number; confidence?: number; reasons?: string[] }>(`/stocks/${item.symbol}/analysis`),
+      api<{ candlestickPatterns?: { nameVi?: string; type?: string }[]; chartPatterns?: { nameVi?: string; type?: string }[] }>(`/stocks/${item.symbol}/technical?timeframe=1d`),
+      api<{ items?: { title?: string; publishedAt?: string; sourceName?: string }[] }>(`/news?symbol=${item.symbol}&limit=3`),
+    ]).then(([analysis, technical, news]) => {
+      if (!active) return;
+      setIntelligence({
+        analysis: analysis.status === "fulfilled" ? analysis.value.data : undefined,
+        technical: technical.status === "fulfilled" ? technical.value.data : undefined,
+        news: news.status === "fulfilled" ? news.value.data : undefined,
+      });
+    });
+    return () => { active = false; };
+  }, [item.symbol]);
   useEffect(() => {
     if (!playing || bars.length < 2) return;
     const timer = window.setInterval(() => {
@@ -167,6 +189,7 @@ function StockTooltip({ item, close }: { item: Item; close: () => void }) {
       <div className="mt-3 flex items-center justify-between"><span className="text-[10px] uppercase tracking-widest text-slate-500">Lịch sử</span><div className="flex gap-1">{["1D", "1W", "1M", "3M", "YTD", "1Y"].map((value) => <button key={value} type="button" onClick={() => setTimeframe(value)} className={`rounded px-1.5 py-1 text-[9px] ${timeframe === value ? "bg-[#00d4ff]/20 text-[#00d4ff]" : "text-slate-500 hover:text-white"}`}>{value}</button>)}</div></div>
       <div className="mt-1 rounded-lg bg-slate-950/70 p-2">{loadingHistory ? <div className="h-20 animate-pulse rounded bg-slate-800/40" /> : <MiniChart bars={bars} />}</div>
       {bars.length > 1 && <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/50 p-2"><div className="flex items-center gap-2"><button type="button" onClick={() => setPlaying((value) => !value)} className="rounded bg-[#00d4ff]/15 px-2 py-1 text-[10px] font-bold text-[#00d4ff]">{playing ? "Pause" : "Play"}</button><input aria-label="Playback timeline" type="range" min={0} max={bars.length - 1} value={Math.min(playbackIndex, bars.length - 1)} onChange={(event) => { setPlaying(false); setPlaybackIndex(Number(event.target.value)); }} className="h-1 flex-1 accent-cyan-400" /><select aria-label="Playback speed" value={speed} onChange={(event) => setSpeed(Number(event.target.value))} className="rounded bg-slate-800 px-1 py-1 text-[10px] text-slate-300"><option value={1}>1×</option><option value={2}>2×</option><option value={4}>4×</option></select></div><div className="mt-1 flex justify-between text-[9px] text-slate-500"><span>Playback</span><span>{new Date((bars[Math.min(playbackIndex, bars.length - 1)]?.time ?? 0) * 1000).toLocaleDateString("vi-VN")} · {fmtNum(bars[Math.min(playbackIndex, bars.length - 1)]?.close ?? null)}</span></div></div>}
+      <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3"><div className="mb-2 text-[10px] uppercase tracking-widest text-[#00d4ff]">Stock Intelligence</div><div className="grid grid-cols-2 gap-2 text-[10px]"><span className="text-slate-500">Tín hiệu</span><span className="text-right font-semibold text-white">{intelligence.analysis?.recommendation ?? "Đang phân tích"}</span><span className="text-slate-500">Score</span><span className="text-right font-mono text-slate-300">{intelligence.analysis?.score ?? "—"}</span><span className="text-slate-500">Kỹ thuật</span><span className="truncate text-right text-slate-300">{intelligence.technical?.chartPatterns?.[0]?.nameVi ?? intelligence.technical?.candlestickPatterns?.[0]?.nameVi ?? "Chưa có mẫu"}</span></div>{(intelligence.analysis?.reasons?.[0] || intelligence.news?.items?.[0]?.title) && <p className="mt-2 line-clamp-2 text-[10px] leading-4 text-slate-500">{intelligence.analysis?.reasons?.[0] ?? intelligence.news?.items?.[0]?.title}</p>}</div>
       <div className="mt-2 flex justify-between text-[10px] text-slate-500"><span>{item.isStale ? `Dữ liệu cũ ${item.ageSeconds ?? "—"}s` : "Dữ liệu mới"}</span><span>{item.source ?? "unknown"} · {item.confidence != null ? `${Math.round(item.confidence * 100)}%` : "—"}</span></div>
       <Link href={`/stocks/${item.symbol}`} className="mt-3 flex min-h-11 items-center justify-center rounded-lg bg-[#00d4ff] text-xs font-bold text-[#0A2540] hover:brightness-110">Mở Stock Intelligence →</Link>
     </div>
@@ -177,7 +200,7 @@ const selectClass =
   "h-10 min-h-10 rounded-lg border border-slate-700 bg-slate-900 px-2.5 text-xs text-slate-200 outline-none focus:border-[#00d4ff]/50";
 
 export function StockHeatmap({ compact = false }: { compact?: boolean }) {
-  const { data, meta, error, loading } = usePoll<Item[]>("/market/heatmap", 12_000);
+  const { data, meta, error, loading, isValidating, refresh } = usePoll<Item[]>("/market/heatmap", 12_000);
   const [shape, setShape] = useState<Shape>("rectangle");
   const [metric, setMetric] = useState<Metric>("tradingValue");
   const [exchange, setExchange] = useState("all");
@@ -187,6 +210,7 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
   const marketStatus = String(meta?.marketStatus ?? "PRE_MARKET");
   const stats = meta?.stats as unknown as Stats | undefined;
   const dataQuality = meta?.dataQuality as { universeCount?: number; validQuoteCount?: number; staleCount?: number; exchanges?: string[] } | undefined;
+  const realtime = meta?.realtime as { status?: string; ageSeconds?: number | null } | undefined;
 
   useEffect(() => {
     try {
@@ -277,9 +301,11 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
           </span>
           <span className="hidden text-[10px] text-slate-500 sm:inline">· cập nhật ~12s</span>
           {dataQuality && <span className="hidden text-[10px] text-slate-600 lg:inline">· {dataQuality.validQuoteCount ?? 0}/{dataQuality.universeCount ?? 0} quote · stale {dataQuality.staleCount ?? 0}</span>}
+          {realtime && <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${realtime.status === "LIVE" ? "bg-emerald-400/15 text-emerald-300" : realtime.status === "DEGRADED" ? "bg-amber-400/15 text-amber-300" : "bg-rose-400/15 text-rose-300"}`}>{realtime.status ?? "STALE"}{realtime.ageSeconds != null ? ` · ${realtime.ageSeconds}s` : ""}</span>}
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => refresh()} disabled={isValidating} className="h-10 rounded-lg border border-[#00d4ff]/30 bg-[#00d4ff]/10 px-3 text-xs font-semibold text-[#00d4ff] hover:bg-[#00d4ff]/15 disabled:opacity-50">{isValidating ? "Đang cập nhật…" : "↻ Làm mới"}</button>
           <select
             value={exchange}
             onChange={(e) => setExchange(e.target.value)}
