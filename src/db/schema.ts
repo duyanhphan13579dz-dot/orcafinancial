@@ -233,6 +233,8 @@ export {
   forexPrices,
   forexOhlcv,
   forexAnalysis,
+  forexJournal,
+  forexPositions,
 } from "@/lib/forex/schema";
 
 export { personalFinanceProfiles } from "@/lib/personal-finance/schema";
