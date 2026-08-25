@@ -1,184 +1,678 @@
-# VNStock Terminal — Nền tảng tài chính AI cho thị trường Việt Nam
+# ORCA FINANCIAL
 
-Fullstack Next.js (App Router) + PostgreSQL (Drizzle ORM). **Mọi dữ liệu đều là dữ liệu thật** từ nguồn ngoài — không mock, không fabricate.
+**ORCA FINANCIAL** là nền tảng phân tích thị trường và intelligence tài chính đa tài sản dành cho nhà đầu tư Việt Nam. Hệ thống kết hợp dữ liệu thị trường thật, phân tích định lượng, phân tích cơ bản/kỹ thuật, sentiment tiếng Việt, AI Agent, báo cáo tự động và các công cụ theo dõi danh mục trong một trải nghiệm terminal hiện đại.
 
-## Nguyên tắc
+> **Mục tiêu sản phẩm:** Giúp nhà đầu tư hiểu thị trường Việt Nam đang diễn ra chuyện gì trong 5–10 giây đầu tiên, sau đó drill-down theo thứ tự **thị trường → ngành → cổ phiếu → tin tức → AI**.
 
-1. **No mock data** — giá, chỉ số, tin tức, crypto đều fetch live từ provider thật.
-2. **No fake API** — provider lỗi → fallback chain; tất cả lỗi → API trả 502/503, không bịa số liệu.
-3. **No placeholder UI** — mọi component nối trực tiếp với API backend.
-4. **Connector wrapping** — retry + backoff + timeout + `CircuitBreaker` (4 fail → open 90s → fallback).
-5. **Frontend không bao giờ gọi nguồn ngoài** — chỉ qua `/api/v1/*`.
-6. **Structured logging** — JSON logs + `job_logs`/`agent_logs` trong DB.
-7. **Rate limit** — sliding window per-IP trên mọi endpoint.
+> **Nguyên tắc dữ liệu:** ORCA không dùng mock data cho giá, chỉ số, crypto hoặc tin tức. Provider lỗi sẽ đi qua fallback chain; nếu không còn nguồn hợp lệ, hệ thống trả trạng thái degraded/stale hoặc lỗi upstream thay vì tự bịa số liệu.
 
-## Modules
+## Mục lục
 
-### 1. Data Engine (Core)
-- **Providers:** VNDirect dchart (primary), Yahoo Finance (fallback), CoinGecko (crypto), VnExpress/CafeF/Vietstock RSS (news).
-- **Circuit breaker:** mỗi provider có breaker riêng, state closed/half-open/open, observable qua `/admin/connectors`.
-- **TTL cache:** in-memory, tuỳ endpoint (10s quotes, 60s daily history, 90s news sync).
-- **Validation/confidence:** mỗi quote/bar kèm `{source, confidence}` metadata.
+- [Tổng quan sản phẩm](#tổng-quan-sản-phẩm)
+- [Các tính năng hiện có](#các-tính-năng-hiện-có)
+- [Kiến trúc hệ thống](#kiến-trúc-hệ-thống)
+- [Dashboard tổng quan](#dashboard-tổng-quan)
+- [MarketSnapshot và Data Engine](#marketsnapshot-và-data-engine)
+- [Các module nghiệp vụ](#các-module-nghiệp-vụ)
+- [Luồng dữ liệu](#luồng-dữ-liệu)
+- [Cấu trúc repository](#cấu-trúc-repository)
+- [API](#api)
+- [Database](#database)
+- [Resilience và observability](#resilience-và-observability)
+- [Authentication và security](#authentication-và-security)
+- [Cài đặt local](#cài-đặt-local)
+- [Chạy bằng Docker](#chạy-bằng-docker)
+- [Environment variables](#environment-variables)
+- [Kiểm thử và chất lượng mã](#kiểm-thử-và-chất-lượng-mã)
+- [Deployment](#deployment)
+- [Các giới hạn hiện tại](#các-giới-hạn-hiện-tại)
+- [License](#license)
 
-### 2. Financial Health Engine
-- **6 nhóm chỉ số** (tổng trọng số = 1): Liquidity (0.10), Leverage (0.20), Profitability (0.25), Efficiency (0.15), Growth (0.15), Cashflow (0.15).
-- **Các chỉ số mới:** D/E, EBITDA/Tổng tài sản, EBITDA/Lãi vay, FCF/EBIT.
-- **Rating:** A (≥80) → B (≥60) → C (≥40) → D (≥20) → E.
-- Mỗi nhóm có điểm 0–100 và giải thích chi tiết.
+## Tổng quan sản phẩm
 
-### 3. Fundamental Analyst
-- **Báo cáo 4 quý:** avgPrice, returnPct, volatility, Sharpe proxy.
-- **Chỉ số:** EPS, ROE, ROA, ROS, CAGR 3 năm.
-- **DuPont Decomposition:** ROE = NetMargin × AssetTurnover × EquityMultiplier.
-- **Định giá 8 mô hình:**
-  - P/E, P/B, EV/EBITDA, P/CF
-  - **DDM** (Dividend Discount Model)
-  - **DCF 3 kịch bản** (bi quan, cơ sở, lạc quan) với WACC 10%
-  - **Graham Number** = √(22.5 × EPS × BVPS)
-  - **Reverse DCF** — tìm implied growth rate từ giá hiện tại
-- **Intrinsic value range:** tổng hợp tất cả mô hình → vùng giá trị nội tại.
-- **Verdict:** Định giá thấp / Hợp lý / Định giá cao.
+ORCA FINANCIAL chạy trên **Next.js App Router**, React và TypeScript ở frontend/backend boundary, PostgreSQL với Drizzle ORM ở persistence layer, cùng các connector chuyên biệt cho nguồn dữ liệu ngoài. Frontend chỉ gọi các endpoint nội bộ dưới `/api/v1/*`; việc gọi VNDirect, Yahoo Finance, CoinGecko, Binance Vision, RSS hoặc LLM được thực hiện ở server-side service layer.
 
-### 4. Sentiment Score (Vietnamese NLP)
-- **Rule-based NLP** với ~120 từ/cụm từ tiếng Việt tài chính (tăng mạnh, bán tháo, lãi lớn…).
-- **Intensity weights** (0.05–0.40) cho mỗi từ.
-- **Context-aware:** phát hiện phủ định (không, chưa, chẳng), cường điệu (rất, cực), giảm nhẹ (hơi, nhẹ).
-- **Multi-word priority:** cụm dài match trước (ví dụ "tăng mạnh" > "tăng").
-- Scoring: -1.0 (rất tiêu cực) … 0.0 (trung lập) … +1.0 (rất tích cực).
-- Chạy tự động trên mọi tin RSS khi ingest → lưu vào DB.
-- API: sentiment trung bình 24h per symbol + sentiment thị trường chung.
+Sản phẩm hiện bao phủ các nhóm sau:
 
-### 5. Technical Analyst — Pattern Detection
+| Khu vực | Nội dung |
+|---|---|
+| Market overview | Market Header, ticker, Market Pulse, breadth, sector rotation, market board, heatmap, movers, crypto và news timeline |
+| Stock intelligence | Quote, lịch sử OHLCV, technical analysis, candlestick/chart patterns, financial health, fundamental valuation, SWOT, value chain và sentiment |
+| Multi-asset | Crypto market, futures, on-chain, whale/order flow, crypto sentiment, forex intelligence, commodities và FX conversion |
+| Investor tools | Watchlist theo session, stock quick view, screener, reports, AI Agent và trade journal |
+| Finance workspace | Personal finance profile và corporate finance statements |
+| Operations | Connector console, health check, stale registry, structured logs, job logs, alert timeline và manual probes |
+| Account | Local authentication, Google OAuth helpers, refresh token, 2FA/TOTP, sessions, preferences, audit log và data export |
 
-#### Mô hình nến Nhật (14 patterns):
-| Pattern | Tiếng Việt | Loại | Reliability |
-|---------|-----------|------|-------------|
-| Doji | Doji | Neutral | 50% |
-| Dragonfly Doji | Doji Chuồn Chuồn | Bullish | 60% |
-| Gravestone Doji | Doji Bia Mộ | Bearish | 60% |
-| Hammer | Nến Búa | Bullish | 65% |
-| Inverted Hammer | Búa Ngược | Bullish | 55% |
-| Shooting Star | Sao Băng | Bearish | 65% |
-| Hanging Man | Người Treo Cổ | Bearish | 60% |
-| Bullish Engulfing | Nhấn Chìm Tăng | Bullish | 75% |
-| Bearish Engulfing | Nhấn Chìm Giảm | Bearish | 75% |
-| Bullish/Bearish Harami | Harami | ±55% | 55% |
-| Morning Star | Sao Mai | Bullish | 80% |
-| Evening Star | Sao Hôm | Bearish | 80% |
-| Three White Soldiers | Ba Chàng Lính | Bullish | 75% |
-| Three Black Crows | Ba Con Quạ | Bearish | 75% |
-| Spinning Top | Con Quay | Neutral | 40% |
-| Marubozu | Marubozu | ± | 70% |
+## Các tính năng hiện có
 
-#### Mẫu hình giá (7 patterns):
-| Pattern | Tiếng Việt | Loại | Reliability |
-|---------|-----------|------|-------------|
-| Double Top | Hai Đỉnh | Bearish | 70% |
-| Double Bottom | Hai Đáy | Bullish | 70% |
-| Head and Shoulders | Vai Đầu Vai | Bearish | 80% |
-| Inverse H&S | Vai Đầu Vai Ngược | Bullish | 80% |
-| Ascending Triangle | Tam Giác Tăng | Bullish | 65% |
-| Descending Triangle | Tam Giác Giảm | Bearish | 65% |
-| Cup and Handle | Cốc Tay Cầm | Bullish | 70% |
+### Dashboard tổng quan thế hệ mới
 
-Mỗi pattern có `target price` tính từ pattern height / neckline.
+Dashboard tại `/` là một **single-screen market intelligence workspace**. Giao diện kết hợp visual language terminal dark của ORCA với mật độ dữ liệu kiểu bảng điện hiện đại:
 
-## API Contract (`/api/v1`)
+| Khu vực | Chức năng |
+|---|---|
+| Market ticker | Dòng mã và biến động liên tục, liên kết trực tiếp tới stock detail |
+| Market Header | VN-Index là chỉ số chính; hiển thị các index cards, crypto cards, volume, source, trạng thái live/partial/stale và biên độ OHLC mini |
+| ORCA Market Pulse | Quantitative regime, trend, breadth, liquidity, foreign flow, risk và summary giải thích |
+| Breadth comparison | Phân biệt market breadth từ snapshot universe với large-cap/tracked breadth |
+| Sector Market Board | Mini board theo Ngân hàng, Chứng khoán, Bất động sản, Thép, Xây dựng, Bán lẻ và Công nghệ |
+| Heatmap | Màu hóa mã theo biến động; click mã mở Stock Quick View |
+| Top movers | Các mã tăng/giảm mạnh nhất và nhóm volume cao nhất từ snapshot |
+| ORCA AI Insight | Khu vực intelligence cố định, giải thích từ structured MarketSnapshot thay vì cho LLM đoán trực tiếp từ raw data |
+| Watchlist | Danh mục của tôi, thêm/xóa mã ngay từ quick view và liên kết tới `/watchlist` |
+| News timeline | Tin RSS thật, source, timestamp, symbol tags và liên kết bài gốc |
+
+Dashboard không tạo request riêng cho từng component. Các vùng chính tiêu thụ **một MarketSnapshot tổng hợp**, trong khi cache client và inflight dedupe giảm request trùng lặp.
+
+### Stock detail
+
+Trang `/stocks/[symbol]` tổ chức dữ liệu thành các tab `Tổng quan`, `Phân tích KT`, `Cơ bản`, `Mẫu hình`, `Tài chính`, `Công ty` và `Tin tức`. Chart và panel nặng được code-split bằng dynamic import; các endpoint chỉ được gọi khi tab tương ứng cần dữ liệu.
+
+Stock detail hỗ trợ:
+
+- Quote, profile và lịch sử OHLCV theo timeframe.
+- RSI, MACD, SMA, Bollinger Bands, support/resistance, volatility và drawdown.
+- 14 nhóm mô hình nến Nhật và 7 nhóm chart pattern, kèm loại bullish/bearish/neutral, reliability, mô tả và target khi có thể tính.
+- Báo cáo tài chính 4 quý, EPS, ROE, ROA, ROS và CAGR 3 năm.
+- DuPont decomposition: `ROE = Net Margin × Asset Turnover × Equity Multiplier`.
+- Định giá P/E, P/B, EV/EBITDA, P/CF, DDM, DCF ba kịch bản, Graham Number và Reverse DCF.
+- Financial Health Engine với sáu nhóm Liquidity, Leverage, Profitability, Efficiency, Growth và Cashflow.
+- SWOT, Porter value chain, industry benchmarks và sentiment 24 giờ.
+
+### Crypto intelligence
+
+Module crypto tại `/crypto` và `/crypto/[symbol]` dùng CoinGecko làm nguồn chính và Binance Vision làm fallback cho giá. Các domain service hiện có bao phủ price, OHLCV, analysis, recommendation, futures, sentiment, AI context, on-chain signals, whale activity, order flow, launchpad và intel snapshot. Realtime connector hỗ trợ các luồng Binance websocket khi môi trường vận hành cho phép.
+
+### Forex intelligence
+
+Module forex tại `/forex` và `/forex/[symbol]` bao phủ:
+
+- Giá realtime, OHLCV và nhiều timeframe.
+- Multi-timeframe analysis, trend/momentum, trade setup và recommendation.
+- Macro context, economic calendar, provider pipeline và secondary providers.
+- FX intelligence card, AI analyst, performance metrics, portfolio và position tracking.
+- Trade journal với entry/exit, stop loss, take profit, leverage, size, emotion, tags, PnL, R-multiple và thống kê performance.
+- Alert evaluation cho các điều kiện liên quan đến setup và risk.
+
+### Commodities
+
+Module `/commodities` hỗ trợ danh sách mặt hàng, giá quy đổi VND, lịch sử giá, impact lên cổ phiếu/ngành, tỷ giá chuyển đổi, source status và ingestion scheduler. Pipeline có cơ chế scan source, chọn source winner, validate record, tính thay đổi và lưu dữ liệu theo bucket thời gian.
+
+### Heatmap, screener và reports
+
+`/heatmap` là không gian phân tích market heatmap riêng, có realtime service, history, intelligence và AI route. Dashboard tổng quan dùng cùng hướng drill-down để liên kết heatmap với sector board và stock quick view.
+
+`/screener` hỗ trợ các phương pháp CANSLIM, Minervini, Wyckoff và Elliott cùng các utility dùng chung.
+
+`/reports` hỗ trợ Morning Brief và Market Summary. Report generator có lưu trữ report HTML, summary generation, LLM narrative, scheduler và manual trigger endpoints. Nội dung report phải được xem là phân tích hỗ trợ quyết định, không phải lời khuyên đầu tư.
+
+### AI Agent và RAG
+
+`/agent` là workspace hội thoại tài chính. Agent có history, response cache, crypto enrichment, prompt/routing layer, formatter và các provider LLM như Groq/OpenRouter. RAG layer chứa các playbook về doanh nghiệp, personal finance, money general và wealth; agent có thể kết hợp dữ liệu thị trường với context domain trước khi tạo câu trả lời.
+
+LLM không được xem là nguồn dữ liệu giá. Pipeline khuyến nghị là:
+
+```text
+Live market providers
+        ↓
+Validation + snapshot + quantitative engines
+        ↓
+MarketSnapshot / structured analysis
+        ↓
+AI explanation, report narrative hoặc agent answer
+```
+
+### Watchlist, account và finance workspace
+
+Watchlist hiện lưu theo `vnstock_session` cookie để hỗ trợ trải nghiệm nhanh trên dashboard. Account layer lưu user, refresh token, session, preferences, audit log và 2FA. Các page `/settings`, `/watchlist`, `/agent`, `/reports` và các workspace tài chính được bảo vệ bởi middleware cùng server-side guard phù hợp.
+
+## Kiến trúc hệ thống
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ Next.js App Router                                          │
+│ pages · components · client polling/cache · responsive UI   │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ /api/v1/*
+┌──────────────────────────────▼──────────────────────────────┐
+│ API boundary                                                 │
+│ rate limit · auth boundary · envelope · public errors        │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────┐
+│ Domain services                                              │
+│ market · stocks · fundamental · technical · crypto · forex   │
+│ commodities · heatmap · reports · agent · finance · screener │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────┐
+│ Connector and reliability layer                              │
+│ retry · timeout · circuit breaker · fallback · validator     │
+│ shared cache · stale registry · concurrency pool · logging   │
+└──────────────┬───────────────────────────────┬───────────────┘
+               │                               │
+┌──────────────▼──────────────┐  ┌─────────────▼─────────────┐
+│ PostgreSQL / Drizzle         │  │ External data providers    │
+│ snapshots · history · news   │  │ VNDirect · Yahoo · CoinGecko│
+│ auth · reports · finance    │  │ Binance · RSS · LLM         │
+└─────────────────────────────┘  └───────────────────────────┘
+```
+
+### Stack
+
+| Thành phần | Công nghệ |
+|---|---|
+| Web framework | Next.js 16 App Router |
+| UI | React 19, TypeScript, Tailwind CSS 4 |
+| Charts | `lightweight-charts`, `recharts`, custom SVG mini-ranges |
+| Database | PostgreSQL, `pg`, Drizzle ORM và Drizzle Kit |
+| Cache | Client LRU/inflight cache, shared Redis wrapper, service caches và DB snapshots |
+| Auth | JWT access token, httpOnly refresh token, bcryptjs, jose, 2FA/TOTP helpers, Google OAuth helpers |
+| External market data | VNDirect dchart, Yahoo Finance, CoinGecko, Binance Vision |
+| News | VnExpress RSS, CafeF RSS, Vietstock RSS |
+| LLM | Groq/OpenRouter routing layer |
+| Deployment | Docker Compose, Vercel-compatible configuration và Supabase/PostgreSQL option |
+
+## MarketSnapshot và Data Engine
+
+`src/types/market.ts` định nghĩa contract dùng chung `MarketSnapshot`. Service `src/lib/market.ts` là nơi assemble snapshot; dashboard không tự ghép dữ liệu từ nhiều API độc lập.
+
+```text
+MarketSnapshot
+├── indices
+├── breadth
+├── marketBreadth
+├── largeCapBreadth
+├── sectors
+├── pulse
+├── liquidity
+├── foreignFlow
+├── topGainers
+├── topLosers
+├── topVolume
+├── quotes
+├── crypto
+├── news
+├── quality
+└── generatedAt
+```
+
+### Market Header và Pulse
+
+VN-Index được đánh dấu `primary`. Các index cards có quote, change percentage, volume, source và OHLC range. Crypto được đưa vào cùng vùng header để người dùng nhìn thấy bức tranh multi-asset nhưng vẫn giữ visual weight chính cho VN-Index.
+
+Market Pulse là quantitative engine. Nó kết hợp index change, breadth ratio, sector average và liquidity availability để tạo:
+
+- `trend`: up, down hoặc flat.
+- `breadth`: up, down hoặc flat.
+- `liquidity`: up hoặc flat theo dữ liệu volume hiện có.
+- `risk`: low, medium hoặc high.
+- `regime`: bullish trend, broad risk-off, selective rotation hoặc neutral.
+
+Foreign flow hiện có contract trong snapshot nhưng có thể trả `unknown` khi upstream chưa cung cấp dữ liệu hợp lệ. Hệ thống không tự suy diễn foreign flow.
+
+### Cache và snapshot
+
+| Tầng | Mặc định | Mục đích |
+|---|---:|---|
+| Client soft TTL | tối đa 15 giây theo polling interval | Hiển thị cache ngay và refresh nền |
+| Client hard TTL | 5 phút | Tránh mất trạng thái khi request tạm lỗi |
+| Overview service cache | 60 giây | Giảm tải upstream và chống request storm |
+| Quote service cache | 20 giây | Giảm lặp gọi quote |
+| Daily history cache | 120 giây | Phục vụ chart ngày |
+| Intraday history cache | 30 giây | Phục vụ chart trong phiên |
+| DB fresh snapshot | 45 giây | Ưu tiên dữ liệu gần đây trước khi gọi provider |
+| RSS provider cache | 5 phút | Giảm áp lực lên RSS feeds |
+
+### Provider chain
+
+| Dữ liệu | Primary | Fallback |
+|---|---|---|
+| Equity quote/history/index | VNDirect dchart | Yahoo Finance |
+| Crypto price | CoinGecko | Binance Vision |
+| News | VnExpress, CafeF, Vietstock | Feed nào còn sống sẽ được dùng; nếu toàn bộ lỗi thì đánh dấu stale |
+| LLM | Theo `LLM_PROVIDER_ORDER` | Provider tiếp theo trong routing order |
+
+`DataValidator` từ chối OHLCV có price không hợp lệ, quan hệ high/low sai, volume âm, timestamp sai hoặc field bắt buộc thiếu. Quote và news cũng được validate trước khi sử dụng hoặc insert.
+
+## Các module nghiệp vụ
+
+| Module | Files chính | Trách nhiệm |
+|---|---|---|
+| Market | `src/lib/market.ts` | Overview, search, quote, history, news sync/list, sentiment tổng hợp |
+| Stock analysis | `src/lib/analysis.ts`, `fundamental.ts`, `technical-patterns.ts` | Technical, fundamental, valuation, pattern và recommendation |
+| Financial health | `src/lib/financial-health-detail.ts`, `src/lib/industry-benchmarks.ts` | Scoring theo nhóm chỉ số, breakdown và industry comparison |
+| Company intelligence | `company-profile.ts`, `company-service.ts`, `value-chain.ts` | Profile, SWOT, value chain và company context |
+| Sentiment | `src/lib/sentiment.ts`, `src/lib/llm/sentiment-llm.ts` | Rule-based tiếng Việt và hybrid scoring |
+| Crypto | `src/lib/crypto/*` | Price, chart, sentiment, futures, on-chain, whale, order flow, launchpad và AI enrichment |
+| Forex | `src/lib/forex/*` | Realtime, multi-timeframe, macro, calendar, trade setup, journal, portfolio và performance |
+| Commodities | `src/lib/commodities/*` | Source scanning, FX conversion, ingestion, history, impact và scheduler |
+| Heatmap | `src/lib/heatmap/*` | Heatmap realtime/history/intelligence và AI route |
+| Screener | `src/lib/screener/*` | CANSLIM, Minervini, Wyckoff, Elliott và shared utilities |
+| Reports | `src/lib/reports/*` | Morning Brief, Market Summary, narrative, HTML, store và scheduler |
+| AI/RAG | `src/lib/agent/*`, `src/lib/rag/*`, `src/lib/llm/*` | Conversation history, response cache, routing, prompts, playbooks và retrieval |
+| Personal finance | `src/lib/personal-finance/*` | Profile/context và finance workspace |
+| Corporate finance | `src/lib/corporate-finance/*` | Statements, context và service |
+| Operations | `src/lib/connectors/*`, `alerts.ts`, `logger.ts` | Resilience, health, logs, stale flags và alert dispatch |
+
+## Luồng dữ liệu
+
+### Dashboard overview
+
+```text
+GET /
+  → middleware kiểm tra public/session gate
+  → page.tsx chọn LandingPage hoặc DashboardHome
+  → usePoll('/market/overview')
+  → client cache/inflight dedupe
+  → API rate limit
+  → getMarketOverview()
+  → DB fresh snapshots hoặc provider chain
+  → breadth + sectors + pulse + movers + quality
+  → MarketSnapshot
+  → header/pulse/board/heatmap/AI/news render
+```
+
+### Stock detail
+
+```text
+StockPage(symbol)
+  → quote polling
+  → analysis polling
+  → tab-gated fundamental/technical/financial/profile/news polling
+  → dynamic chart/panel chunks
+  → quick navigation hoặc Stock Quick View từ dashboard
+```
+
+### News ingest
+
+```text
+RSS feeds song song
+  → retry + circuit breaker + parser + validator
+  → ticker matching
+  → Vietnamese sentiment scoring
+  → news table
+  → news list/sentiment/market timeline
+```
+
+## Cấu trúc repository
+
+```text
+.
+├── src/
+│   ├── app/                    # Pages và API routes của Next.js
+│   │   ├── api/v1/             # REST-like internal API boundary
+│   │   ├── stocks/[symbol]/    # Stock intelligence workspace
+│   │   ├── crypto/             # Crypto workspace
+│   │   ├── forex/              # Forex workspace
+│   │   ├── commodities/        # Commodities workspace
+│   │   ├── heatmap/            # Heatmap workspace
+│   │   ├── reports/            # Report workspace
+│   │   ├── screener/           # Screening workspace
+│   │   ├── agent/              # AI Agent workspace
+│   │   ├── watchlist/          # Watchlist
+│   │   ├── system/             # Operations console
+│   │   └── settings/           # Account/settings
+│   ├── components/             # Shared UI và dashboard components
+│   ├── db/                     # PostgreSQL bootstrap, schema, ensure tables
+│   ├── lib/                    # Domain services, connectors, auth, cache, AI
+│   ├── types/                  # Shared contracts, gồm MarketSnapshot
+│   ├── instrumentation.ts      # Startup instrumentation/schedulers
+│   └── middleware.ts           # Global public/session gate
+├── docs/                       # Migration và system review documents
+├── monitoring/                 # Prometheus/Grafana configuration
+├── scripts/                    # Migration/operational scripts
+├── Dockerfile
+├── docker-compose.yml
+├── docker-compose.monitoring.yml
+├── docker-compose.supabase.yml
+├── drizzle.config.ts
+├── next.config.ts
+├── vercel.json
+├── .env.example
+└── package.json
+```
+
+## API
+
+Mọi endpoint nghiệp vụ nằm dưới `/api/v1`. Response thành công theo envelope `{ data, meta }`; error response chứa thông báo public-safe và metadata timestamp/context.
+
+### Market và stock
 
 | Method | Endpoint | Mô tả |
-|--------|----------|-------|
-| GET | `/search?q=&type=` | Autocomplete (DB + VNDirect) |
-| GET | `/stocks/:symbol` | Quote + company profile |
-| GET | `/stocks/:symbol/history?timeframe=` | OHLCV bars |
-| GET | `/stocks/:symbol/analysis` | Technical analysis + khuyến nghị |
-| GET | `/stocks/:symbol/fundamental` | **Báo cáo cơ bản 4 quý, EPS, ROE, DuPont, DCF 3 kịch bản, Graham, DDM, Reverse DCF** |
-| GET | `/stocks/:symbol/technical?timeframe=` | **Mẫu hình nến + mẫu hình giá** |
-| GET | `/stocks/:symbol/sentiment` | **Sentiment NLP 24h (symbol + market)** |
-| GET | `/market/overview` | Chỉ số, breadth, movers, crypto |
-| GET | `/news?page=&limit=&symbol=` | Tin RSS thật + sentiment scores |
-| POST | `/agent/chat` | AI Agent (tích hợp tất cả 5 modules) |
-| GET/POST/DELETE | `/watchlist` | Session watchlist |
-| GET | `/admin/connectors` | Circuit breaker + job logs |
+|---|---|---|
+| GET | `/api/v1/market/overview` | MarketSnapshot cho dashboard |
+| GET | `/api/v1/market/heatmap` | Heatmap thị trường |
+| GET | `/api/v1/market/heatmap/history` | Lịch sử heatmap |
+| GET | `/api/v1/market/heatmap/intelligence` | Intelligence cho heatmap |
+| GET | `/api/v1/search?q=&type=` | Search/autocomplete mã và company |
+| GET | `/api/v1/stocks/:symbol` | Quote và company cơ bản |
+| GET | `/api/v1/stocks/:symbol/history` | OHLCV history |
+| GET | `/api/v1/stocks/:symbol/analysis` | Technical analysis và recommendation |
+| GET | `/api/v1/stocks/:symbol/fundamental` | Fundamental, health và valuation |
+| GET | `/api/v1/stocks/:symbol/technical` | Candlestick và chart patterns |
+| GET | `/api/v1/stocks/:symbol/financials` | Financial statements |
+| GET | `/api/v1/stocks/:symbol/financial-health-detail` | Health breakdown |
+| GET | `/api/v1/stocks/:symbol/fundamental-chart` | Fundamental chart data |
+| GET | `/api/v1/stocks/:symbol/profile` | Company profile |
+| GET | `/api/v1/stocks/:symbol/sentiment` | Sentiment symbol/market 24 giờ |
+| GET | `/api/v1/stocks/:symbol/swot/generate` | SWOT generation |
+| GET | `/api/v1/stocks/:symbol/value-chain` | Porter value chain |
+| GET | `/api/v1/news` | News list, pagination, filter symbol |
+| GET/POST/DELETE | `/api/v1/watchlist` | Read/add/remove watchlist theo session |
 
-## Pages
+### Crypto
 
-| Route | Mô tả |
-|-------|-------|
-| `/` | Dashboard: ticker tape, chỉ số, breadth, bảng giá, tin |
-| `/stocks/[symbol]` | 5 tabs: Tổng quan (chart+health+patterns+sentiment), Phân tích KT, Cơ bản (DuPont+DCF+Graham), Mẫu hình, Tin tức |
-| `/news` | Tin với sentiment scores |
-| `/watchlist` | Danh sách theo dõi |
-| `/agent` | Chat AI (tự động kết hợp tất cả modules) |
-| `/system` | Circuit breaker status + job logs |
+Các route chính nằm dưới `/api/v1/crypto` và bao gồm `coins`, `prices`, `launchpad`, `:symbol`, `price`, `ohlcv`, `analysis`, `recommendation`, `bundle`, `futures`, `onchain`, `orderflow`, `whale`, `sentiment`, `sentiment-intel`, `intel` và `ai-brief`.
 
-## Resilience & Operations
+### Forex
 
-Hệ thống được thiết kế để **không crash** khi upstream tạm thời không khả dụng:
+Các route chính nằm dưới `/api/v1/forex` và bao gồm `pairs`, `prices`, `:symbol`, `price`, `ohlcv`, `analysis`, `recommendation`, `bundle`, `analyst`, `calendar`, `health`, `metrics`, `performance`, `portfolio`, `journal` và journal item operations.
 
-### Cơ chế bảo vệ
-- **Exponential backoff + jitter** cho mọi HTTP call (`1s → 2s → 4s`, cấu hình qua env).
-- **Circuit breaker** cấu hình được: mở sau N lỗi liên tiếp, cooldown T ms, sau đó chuyển sang fallback provider.
-- **Fallback chain** cho mọi loại dữ liệu: `vndirect → yahoo` (history/quote), `coingecko → binance-vision` (crypto), 3 nguồn RSS song song (news).
-- **Data validator** từ chối record không hợp lệ (giá ≤ 0, high < low, volume < 0, missing required fields) trước khi insert — log raw record bị từ chối.
-- **Stale-data registry**: khi mọi provider cho một (kind, symbol) đều fail, dữ liệu được gắn cờ `stale` và hiển thị trên dashboard admin thay vì crash API.
-- **DB retry wrapper** (`safeDbQuery`) retry 3 lần với backoff cho các lỗi transient (P1001, P1002, P1008, connection reset, timeout).
-- **Structured JSON logging** với ring buffer 500 entries in-memory; mỗi fetch log URL, method, HTTP status, attempt, durationMs, error code, provider; parse failure log raw response snippet (500 ký tự).
-- **Alert dispatcher** chạy mỗi 60s, gửi log severity CRITICAL + Slack webhook khi connector DOWN quá 5 phút; auto-resolve khi UP trở lại; mọi dispatch được lưu vào bảng `connector_alerts`.
-- **Manual probe & reset** qua `POST /api/v1/admin/connectors/{name}/test` và `/reset`.
+### Commodities, reports, screener và finance
 
-### Biến môi trường
+| Nhóm | Routes |
+|---|---|
+| Commodities | `/api/v1/commodities`, `/:symbol`, `history`, `impact`, `refresh`, `sources/status` |
+| Reports | `/api/v1/reports`, `morning`, `summary`, `scheduler`, `trigger/morning`, `trigger/summary` |
+| Screener | `/api/v1/screener/:method` |
+| Personal finance | `/api/v1/personal-finance/profile` |
+| Corporate finance | `/api/v1/corporate-finance/statements`, `statements/:id` |
+| AI Agent | `/api/v1/agent/chat` |
+
+### Auth, users và operations
+
+| Nhóm | Routes |
+|---|---|
+| Auth | `/api/v1/auth/login`, `register`, `logout`, `me` |
+| 2FA | `/api/v1/users/2fa/setup`, `verify`, `disable` |
+| User | `/api/v1/users/me`, `preferences`, `sessions`, `sessions/:id`, `change-password`, `audit-logs`, `export-data` |
+| Health | `/api/health`, `/api/health/upstream` |
+| Connectors | `/api/v1/admin/connectors`, `connectors/:name/test`, `connectors/:name/reset` |
+| Logs/alerts | `/api/v1/admin/logs`, `/api/v1/admin/alerts` |
+
+## Database
+
+Database được định nghĩa bằng Drizzle schema và có thể chạy PostgreSQL tự host hoặc Supabase. `src/db/index.ts` tự nhận diện Supabase/PgBouncer, thiết lập SSL, connection pool, startup readiness, health state và self-ping.
+
+Các nhóm bảng chính:
+
+| Nhóm | Bảng tiêu biểu |
+|---|---|
+| Company/market | `companies`, `company_profiles`, `price_snapshots`, `price_snapshot_history`, `financial_statements`, `fundamental_analysis` |
+| News/analysis | `news`, `company_swot`, `company_value_chains`, `reports` |
+| Operations | `job_logs`, `connector_alerts` |
+| Identity | `users`, `refresh_tokens`, `user_sessions`, `user_preferences`, `audit_logs` |
+| AI | `agent_conversations`, `agent_logs` |
+| Commodities | `commodities`, `commodity_prices`, `commodity_stock_impact`, `exchange_rates` |
+| Crypto | `crypto_coins`, `crypto_prices`, `crypto_ohlcv`, `crypto_sentiment`, `crypto_analysis` |
+| Forex | `forex_pairs`, `forex_prices`, `forex_ohlcv`, `forex_analysis`, `forex_journal`, `forex_positions` |
+| Finance | `personal_finance_profiles`, `corporate_finance_statements` |
+| Watchlist | `watchlist_items` |
+
+Snapshot tables dùng unique constraint theo symbol hoặc symbol/time để tránh insert trùng. News dùng GUID unique. User-related tables dùng foreign key và cascade/set-null semantics tùy quan hệ.
+
+### Supabase migration
+
+Xem [`docs/SUPABASE_MIGRATION.md`](./docs/SUPABASE_MIGRATION.md) để chuyển từ PostgreSQL tự host sang Supabase, gồm tạo project, cấu hình connection string, migrate schema/data bằng Drizzle và `pg_dump`/`pg_restore`. Script hỗ trợ nằm tại `scripts/migrate-to-supabase.sh`.
+
+## Resilience và observability
+
+ORCA coi upstream failure là trạng thái sản phẩm cần quan sát, không phải exception được bỏ qua.
+
+### Reliability primitives
+
+- Exponential backoff có jitter cho HTTP connector.
+- Timeout riêng cho từng request.
+- Circuit breaker theo provider với các trạng thái `closed`, `open`, `half-open`.
+- Fallback chain theo loại dữ liệu.
+- Data validation trước khi insert hoặc trả về frontend.
+- `safeDbQuery` retry cho transient database errors.
+- Shared cache và inflight dedupe để chống request storm.
+- Concurrency-limited `mapPool` cho quote/search/news workers.
+- Stale registry khi mọi provider cho một kind/symbol đều lỗi.
+- Structured JSON logs và in-memory ring buffer tối đa 500 entries.
+- Alert dispatcher cho connector DOWN kéo dài, có persistence và Slack webhook tùy chọn.
+
+### Operations console
+
+Trang `/system` hiển thị connector cards, aggregate status, success rate, uptime, cumulative downtime, circuit state, recent logs, alert timeline, stale flags và configuration readout. Có manual probe/reset để operator kiểm tra hoặc mở lại connector.
+
+### Health endpoints
+
+- `GET /api/health`: kiểm tra database, upstream và stale flags; trả 503 khi database down hoặc connector DOWN theo policy.
+- `GET /api/health/upstream`: trạng thái upstream.
+- `GET /api/v1/admin/connectors`: trạng thái chi tiết connector.
+- `GET /api/v1/admin/logs?provider=&level=&limit=`: structured log viewer.
+- `GET /api/v1/admin/alerts`: open/recent/persisted alerts.
+- `POST /api/v1/admin/connectors/{name}/test`: manual probe.
+- `POST /api/v1/admin/connectors/{name}/reset`: manual circuit reset.
+
+### Environment tuning
+
 | Biến | Mặc định | Ý nghĩa |
-|------|----------|---------|
-| `CIRCUIT_BREAKER_THRESHOLD` | 5 | Số lỗi liên tiếp trước khi mở circuit |
-| `CIRCUIT_BREAKER_TIMEOUT` | 60000 | Thời gian circuit mở (ms) |
-| `CONNECTOR_RETRY_ATTEMPTS` | 3 | Số lần retry mỗi HTTP call |
-| `CONNECTOR_RETRY_BASE_MS` | 1000 | Base delay cho exponential backoff |
-| `CONNECTOR_FETCH_TIMEOUT_MS` | 10000 | Timeout mỗi request |
-| `CONNECTOR_STALE_AFTER_MS` | 900000 | Sau bao lâu không success thì coi là DOWN |
-| `CONNECTOR_DEGRADED_AFTER_MS` | 300000 | Sau bao lâu không success thì coi là DEGRADED |
-| `CONNECTOR_ALERT_AFTER_MS` | 300000 | Thời gian DOWN trước khi dispatch alert |
-| `CONNECTOR_ALERT_TICK_MS` | 60000 | Chu kỳ kiểm tra alert |
-| `SLACK_WEBHOOK_URL` | — | Nếu set, alert được push vào Slack |
-| `LOG_DEBUG` | — | Set `1` để ghi log mức debug |
+|---|---:|---|
+| `CIRCUIT_BREAKER_THRESHOLD` | `5` | Số lỗi liên tiếp trước khi mở circuit |
+| `CIRCUIT_BREAKER_TIMEOUT` | `60000` | Cooldown circuit, ms |
+| `CONNECTOR_RETRY_ATTEMPTS` | `2` | Số retry mỗi HTTP call |
+| `CONNECTOR_RETRY_BASE_MS` | `700` | Base delay backoff |
+| `CONNECTOR_FETCH_TIMEOUT_MS` | `8000` | HTTP timeout |
+| `CONNECTOR_STALE_AFTER_MS` | `900000` | Thời gian coi connector là stale/down |
+| `CONNECTOR_DEGRADED_AFTER_MS` | `300000` | Thời gian chuyển degraded |
+| `CONNECTOR_QUOTE_CONCURRENCY` | `5` | Số quote fetch song song |
+| `CONNECTOR_SEARCH_CONCURRENCY` | `3` | Search concurrency |
+| `CONNECTOR_NEWS_INSERT_CONCURRENCY` | `8` | News insert concurrency |
+| `CONNECTOR_ALERT_AFTER_MS` | `300000` | Down duration trước alert |
 
-### Endpoint giám sát
-- `GET /api/health` — trạng thái tổng thể (DB + upstream + stale flags). Trả 503 nếu DB down hoặc có connector DOWN.
-- `GET /api/v1/admin/connectors` — chi tiết mọi connector: circuit state, success rate, uptime, cumulative downtime, recent logs, alert timeline, stale flags, config readout.
-- `GET /api/v1/admin/logs?provider=&level=&limit=` — truy vấn ring buffer log có filter.
-- `GET /api/v1/admin/alerts` — open + recent + DB-persisted alerts.
-- `POST /api/v1/admin/connectors/{name}/test` — chạy probe thủ công để kiểm tra provider đang sống.
-- `POST /api/v1/admin/connectors/{name}/reset` — reset circuit breaker thủ công.
-- `/system` — OPS console UI với ambient status banner, connector cards với micro-interactions, alert timeline, stale flags, structured log viewer.
+## Authentication và security
 
-### Deployment checklist
-- Kiểm tra DNS & outbound firewall từ container (VNDirect/Yahoo/CoinGecko/Binance Vision/RSS feeds).
-- Đồng bộ timezone container (`TZ=Asia/Ho_Chi_Minh`) để report scheduler chạy đúng giờ.
-- Đảm bảo `DATABASE_URL` trỏ tới service name trong Docker network (không phải `127.0.0.1`).
-- Cấu hình connection pool qua `?connection_limit=10` trong `DATABASE_URL` nếu dùng Prisma/Drizzle pg.
-- Tăng CPU/memory limit cho container worker nếu scheduler chạy nhiều job song song.
-- Set `SLACK_WEBHOOK_URL` để nhận cảnh báo khi có sự cố upstream kéo dài.
+Middleware public các path marketing, auth UI/API, health probe và static internals; các page/API còn lại cần session gate. Server-side auth guard xác thực bearer access token hoặc lookup httpOnly `refreshToken` trong database.
 
-## Database — PostgreSQL tự host hoặc Supabase
+Security primitives hiện có gồm:
 
-Mặc định dự án chạy với PostgreSQL tự host (`DATABASE_URL` trỏ tới
-`127.0.0.1` hoặc service `postgres` trong Docker network). Lớp kết nối
-(`src/db/index.ts`) **tự động nhận diện** khi `DATABASE_URL` trỏ tới
-Supabase (bật SSL, giảm connection pool khi qua PgBouncer) — không cần
-sửa code để chuyển đổi giữa hai loại hạ tầng.
+- Password hashing bằng bcrypt.
+- JWT access token ngắn hạn.
+- Refresh token lưu database với expiry.
+- TOTP/2FA challenge ngắn hạn.
+- `Authorization: Bearer` và cookie session.
+- Audit log cho các thao tác user.
+- Public-safe API errors, không lộ SQL/connection details.
+- Sliding-window rate limit theo IP trên các route có áp dụng.
+- Input validation cho symbol, payload và query parameters.
 
-Xem hướng dẫn chuyển đổi đầy đủ (tạo project, migrate schema bằng Drizzle
-Kit, di chuyển dữ liệu bằng `pg_dump`/`pg_restore`, tích hợp Supabase
-Auth/Realtime tùy chọn, Docker Compose riêng cho Supabase cloud) tại:
+Khi bổ sung route mới, phải xác định rõ route là public, authenticated user, resource-owner hoặc internal service. **Không nhận `userId` từ request body/query cho dữ liệu cá nhân nếu có thể lấy identity từ server-side session.** Manual report trigger và scheduler endpoint nên được bảo vệ bằng service/cron secret riêng.
 
-**[`docs/SUPABASE_MIGRATION.md`](./docs/SUPABASE_MIGRATION.md)**
+## Cài đặt local
 
-Script hỗ trợ migrate dữ liệu: `scripts/migrate-to-supabase.sh`.
+### Yêu cầu
 
-> Lưu ý: Supabase đã ngừng hỗ trợ extension TimescaleDB (loại khỏi bundle
-> Postgres 17). Schema hiện tại của dự án không dùng TimescaleDB hypertable
-> nên việc chuyển đổi không ảnh hưởng tính năng nào — chi tiết trong tài
-> liệu trên.
+- Node.js 22 hoặc tương thích.
+- npm hoặc pnpm.
+- PostgreSQL 16+ nếu chạy database local.
+- Redis-compatible shared cache được khuyến nghị khi chạy nhiều instance hoặc production.
+
+### Cài đặt
+
+```bash
+git clone https://github.com/duyanhphan13579dz-dot/orcafinancial.git
+cd orcafinancial
+cp .env.example .env
+npm install
+```
+
+Điền tối thiểu `DATABASE_URL` và `JWT_SECRET` trong `.env`. Nếu muốn dữ liệu thị trường/crypto/news hoạt động đầy đủ, cần cho phép outbound HTTPS từ môi trường chạy tới provider tương ứng.
+
+### Database và dev server
+
+```bash
+npm run db:push
+npm run dev
+```
+
+Sau đó mở `http://localhost:3000`. Người dùng chưa đăng nhập sẽ thấy landing page; người dùng đã có session sẽ thấy dashboard tổng quan.
+
+### Scripts
+
+| Command | Mục đích |
+|---|---|
+| `npm run dev` | Chạy Next.js development server |
+| `npm run build` | Push schema bằng Drizzle Kit và build production |
+| `npm run start` | Chạy production server sau build |
+| `npm run db:push` | Push schema hiện tại vào database |
+| `npm run typecheck` | TypeScript check không emit |
+| `npm run lint` | ESLint toàn repository |
+
+## Chạy bằng Docker
+
+Docker Compose cung cấp PostgreSQL, PgBouncer tùy chọn và web service:
+
+```bash
+cp .env.example .env
+# điền JWT_SECRET, provider keys và Redis nếu cần
+docker compose up -d --build
+```
+
+Các service mặc định:
+
+| Service | Port | Vai trò |
+|---|---:|---|
+| `postgres` | `5432` | PostgreSQL persistent volume |
+| `pgbouncer` | `6432` | Transaction pooler |
+| `web` | `3000` | ORCA FINANCIAL production server |
+
+`docker-compose.monitoring.yml` bổ sung monitoring stack. `docker-compose.supabase.yml` phục vụ các kịch bản dùng Supabase thay cho database local.
+
+## Environment variables
+
+### Database và cache
+
+```dotenv
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/app_db
+DATABASE_POOL_MAX=5
+DATABASE_POOL_TIMEOUT_MS=10000
+DATABASE_POOL_IDLE_TIMEOUT_MS=30000
+DATABASE_STARTUP_RETRIES=10
+DATABASE_STARTUP_RETRY_DELAY_MS=2000
+DATABASE_SELF_PING_INTERVAL_MS=30000
+DATABASE_DOWN_ALERT_AFTER_MS=120000
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
+REDIS_REQUIRED=1
+```
+
+### Market/cache
+
+```dotenv
+MARKET_OVERVIEW_TTL_MS=60000
+MARKET_QUOTE_TTL_MS=20000
+MARKET_HIST_D_TTL_MS=120000
+MARKET_HIST_INTRA_TTL_MS=30000
+```
+
+### Connector
+
+```dotenv
+CIRCUIT_BREAKER_THRESHOLD=5
+CIRCUIT_BREAKER_TIMEOUT=60000
+CONNECTOR_RETRY_ATTEMPTS=2
+CONNECTOR_RETRY_BASE_MS=700
+CONNECTOR_FETCH_TIMEOUT_MS=8000
+CONNECTOR_STALE_AFTER_MS=900000
+CONNECTOR_DEGRADED_AFTER_MS=300000
+CONNECTOR_ALERT_AFTER_MS=300000
+CONNECTOR_QUOTE_CONCURRENCY=5
+CONNECTOR_SEARCH_CONCURRENCY=3
+CONNECTOR_NEWS_INSERT_CONCURRENCY=8
+```
+
+### LLM và agent
+
+```dotenv
+GROQ_API_KEY=
+GROQ_MODEL=llama-3.3-70b-versatile
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
+LLM_PROVIDER_ORDER=groq,openrouter
+LLM_STRICT=1
+AGENT_RESPONSE_TTL_MS=180000
+```
+
+### Commodities, calendar và alerts
+
+```dotenv
+COMMODITY_PRIMARY_SOURCE=simplize
+COMMODITY_SCAN_INTERVAL_MS=60000
+COMMODITY_RETENTION_DAYS=30
+COMMODITY_PRUNE_INTERVAL_MS=21600000
+FINNHUB_API_KEY=
+SLACK_WEBHOOK_URL=
+LOG_DEBUG=1
+```
+
+Không commit `.env` hoặc secret thật vào repository. Production cần đặt secret trong platform secret manager/Vercel/Supabase/Docker secret mechanism tương ứng.
+
+## Kiểm thử và chất lượng mã
+
+Trước mỗi commit nên chạy:
+
+```bash
+npm run typecheck
+npm run lint
+git diff --check
+```
+
+Khi kiểm tra riêng dashboard/data contract, có thể chạy:
+
+```bash
+npx eslint src/components/DashboardHome.tsx src/lib/market.ts src/types/market.ts
+```
+
+Cần kiểm tra cả happy path và degraded path: database down, provider timeout, provider trả payload sai, Redis unavailable, quote partial, news feed empty và cold start. UI phải thể hiện loading, empty, error, partial và stale state một cách rõ ràng.
+
+## Deployment
+
+### Vercel hoặc serverless
+
+- Cấu hình `DATABASE_URL` tới Supabase hoặc managed PostgreSQL.
+- Dùng PgBouncer/pooler và giữ `DATABASE_POOL_MAX` nhỏ phù hợp serverless.
+- Cấu hình Redis shared cache trong production nhiều instance.
+- Kiểm tra outbound firewall/DNS tới VNDirect, Yahoo, CoinGecko, Binance Vision và RSS.
+- Đặt `JWT_SECRET` dài tối thiểu 32 ký tự.
+- Cấu hình `SLACK_WEBHOOK_URL` nếu cần alert connector.
+- Kiểm tra `maxDuration` cho agent/report endpoints.
+- Kiểm tra `/api/health` sau deploy và xác nhận schema đã được apply.
+
+### Docker
+
+Production Docker Compose dùng health-gated startup: PostgreSQL healthy trước PgBouncer, PgBouncer healthy trước web. Container web expose port `3000` và có healthcheck gọi `/api/health`.
+
+### Scheduler
+
+Các scheduler cho commodities, crypto, reports, database self-ping và alert dispatcher được khởi động qua instrumentation/runtime theo cấu hình. Với môi trường serverless, không giả định process luôn sống lâu; các job cần tính bền vững nên được kích hoạt bởi platform cron/worker và bảo vệ bằng service authorization.
+
+## Các giới hạn hiện tại
+
+README này phản ánh implementation hiện tại, nhưng một số dữ liệu phụ thuộc vào mức độ phủ của upstream và database:
+
+1. **Market breadth:** breadth toàn market chỉ được tính khi có đủ fresh snapshots trong universe hiện có. Nếu chưa có universe rộng, snapshot tự gắn `scope: featured` và UI phải nói rõ đó là tracked breadth.
+2. **Foreign flow:** contract đã sẵn sàng nhưng có thể trả `unknown` khi chưa có provider hợp lệ.
+3. **Sector classification:** sector board hiện dựa trên danh sách symbol classification được cấu hình trong `SECTOR_DEFINITIONS`; giá/volume/change vẫn lấy từ quote thật.
+4. **Stale shadow:** một số stale fallback vẫn phụ thuộc process memory nếu shared cache không có dữ liệu bền vững.
+5. **Realtime semantics:** polling và service cache tạo trải nghiệm cập nhật định kỳ, không đồng nghĩa tick-by-tick realtime cho mọi widget.
+6. **AI Insight dashboard:** vùng insight hiện là quantitative/structured explanation layer; AI Agent và LLM narrative là module riêng, không nên gộp hai semantics này thành lời khẳng định dự báo.
+7. **Authorization migration:** các route dữ liệu cá nhân hoặc internal trigger cần tiếp tục được audit theo resource ownership và service authorization trước production scale.
+8. **Persistence fire-and-forget:** một số snapshot/log write được thực hiện ngoài critical response path để giảm latency; production nên có reconciliation/queue nếu yêu cầu audit/history tuyệt đối.
+
+> **Disclaimer:** ORCA FINANCIAL cung cấp dữ liệu và công cụ phân tích nhằm mục đích thông tin. Không nội dung nào trong hệ thống là lời khuyên đầu tư, khuyến nghị mua/bán, tư vấn tài chính, pháp lý hoặc cam kết lợi nhuận.
+
+## Tài liệu liên quan
+
+- [`docs/ORCA_FINANCIAL_SYSTEM_REVIEW.md`](./docs/ORCA_FINANCIAL_SYSTEM_REVIEW.md): báo cáo rà soát kiến trúc và rủi ro hệ thống.
+- [`docs/SUPABASE_MIGRATION.md`](./docs/SUPABASE_MIGRATION.md): hướng dẫn chuyển database sang Supabase.
+- [`docs/grafana.md`](./docs/grafana.md): hướng dẫn monitoring Grafana.
+- [GitHub repository](https://github.com/duyanhphan13579dz-dot/orcafinancial): source code và commit history.
 
 ## License
 
-MIT
+MIT. Xem [`LICENSE`](./LICENSE).
