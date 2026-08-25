@@ -76,7 +76,18 @@ interface LayerScore {
   score: number;
   bias: "bullish" | "bearish" | "neutral";
   weight: number;
+  effectiveWeight?: number;
+  role?: "directional" | "modulator";
   detail: string[];
+}
+
+interface AggregationMeta {
+  rawComposite?: number;
+  composite?: number;
+  agreement?: number;
+  conflict?: number;
+  coreAligned?: boolean;
+  gates?: string[];
 }
 
 interface Analysis {
@@ -90,6 +101,7 @@ interface Analysis {
   indicators: Record<string, unknown>;
   layers?: LayerScore[];
   compositeScore?: number;
+  aggregation?: AggregationMeta;
   marketStructure?: string;
   volatilityRegime?: string;
   levels?: {
@@ -161,7 +173,6 @@ function biasColor(bias: string) {
 }
 
 function scoreBar(score: number) {
-  // score -1..1 → 0..100 width from center
   const pct = Math.min(100, Math.abs(score) * 100);
   const positive = score >= 0;
   return { pct, positive };
@@ -490,6 +501,21 @@ export default function ForexDetail() {
               </span>
             )}
           </div>
+          {a?.aggregation && (
+            <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-slate-400">
+              {a.aggregation.agreement != null && (
+                <span>agree {(a.aggregation.agreement * 100).toFixed(0)}%</span>
+              )}
+              {a.aggregation.conflict != null && a.aggregation.conflict > 0 && (
+                <span className="text-amber-400">
+                  conflict {(a.aggregation.conflict * 100).toFixed(0)}%
+                </span>
+              )}
+              {a.aggregation.coreAligned === false && (
+                <span className="text-rose-400">core misaligned</span>
+              )}
+            </div>
+          )}
           {(a?.marketStructure || a?.volatilityRegime) && (
             <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
               {a.marketStructure && (
@@ -531,26 +557,45 @@ export default function ForexDetail() {
         </div>
       </div>
 
-      {/* Phase 4 — 6 layer scores */}
       {a?.layers && a.layers.length > 0 && (
         <div className="panel p-4">
           <h2 className="mb-1 font-semibold text-white">Technical Intelligence · 6 layers</h2>
           <p className="mb-4 text-[10px] text-slate-500">
-            Trend · Momentum · Volatility · Structure · Pattern · Volume proxy — weighted composite
+            Directional vote: Trend · Momentum · Structure · Pattern — Volatility/Volume modulate
+            confidence only · weights adapt to ADX & vol regime
           </p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {a.layers.map((layer) => {
               const bar = scoreBar(layer.score);
+              const w =
+                layer.effectiveWeight != null ? layer.effectiveWeight : layer.weight;
+              const isMod = layer.role === "modulator";
               return (
-                <div key={layer.id} className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+                <div
+                  key={layer.id}
+                  className={`rounded-lg border p-3 ${
+                    isMod
+                      ? "border-slate-800/60 bg-slate-950/40 opacity-90"
+                      : "border-slate-800 bg-slate-900/40"
+                  }`}
+                >
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-white">{layer.label}</span>
+                    <span className="text-sm font-semibold text-white">
+                      {layer.label}
+                      {isMod && (
+                        <span className="ml-1 text-[9px] font-normal text-slate-500">
+                          modulator
+                        </span>
+                      )}
+                    </span>
                     <span className={`text-[10px] font-mono uppercase ${biasColor(layer.bias)}`}>
                       {layer.bias}
                     </span>
                   </div>
                   <div className="mt-1 flex items-baseline justify-between text-[10px] text-slate-500">
-                    <span>w {Math.round(layer.weight * 100)}%</span>
+                    <span>
+                      {isMod ? "no vote" : `w ${Math.round(w * 100)}%`}
+                    </span>
                     <span className={`font-mono ${biasColor(layer.bias)}`}>
                       {layer.score > 0 ? "+" : ""}
                       {layer.score.toFixed(2)}
