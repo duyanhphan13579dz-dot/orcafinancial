@@ -16,49 +16,30 @@ import { analyzeForex } from "./analysis";
 import { forProvider } from "@/lib/logger";
 import type { Ohlcv } from "@/lib/connectors/core";
 import { timeframesFor } from "./timeframes";
-import { patchLastCandle, toQuoteContract } from "./normalize";
+import { toQuoteContract } from "./normalize";
 import type { ForexQuoteContract } from "./types";
+import {
+  applyTickToBars,
+  applyTickToMemMap,
+  getOhlcvPolicy,
+  PRICE_REFRESH_MS,
+} from "./realtime";
 
 const log = forProvider("forex-service");
 
-const FRESHNESS_CACHE_TTL = 5_000;
-const LATEST_PRICES_CACHE_TTL = 5_000;
+const FRESHNESS_CACHE_TTL = 4_000;
+const LATEST_PRICES_CACHE_TTL = 4_000;
 const PAIRS_CACHE_TTL = 5 * 60_000;
-const PAIR_CACHE_TTL = 5_000;
-const LIVE_QUOTE_CACHE_TTL = 3_000;
+const PAIR_CACHE_TTL = 4_000;
+const LIVE_QUOTE_CACHE_TTL = PRICE_REFRESH_MS.memoryTtl;
 
-/** Soft TTL — serve DB/memory instantly; refresh network in background. */
-const OHLCV_SOFT_TTL: Record<string, number> = {
-  "1m": 30_000,
-  "5m": 60_000,
-  "15m": 120_000,
-  "1h": 300_000,
-  "4h": 900_000,
-  "1d": 2_400_000,
-  "1w": 6_000_000,
-  "1mo": 12_000_000,
-  "12mo": 30_000_000,
-};
-
-const OHLCV_HARD_TTL: Record<string, number> = {
-  "1m": 120_000,
-  "5m": 300_000,
-  "15m": 600_000,
-  "1h": 1_800_000,
-  "4h": 3_600_000,
-  "1d": 12_000_000,
-  "1w": 25_000_000,
-  "1mo": 50_000_000,
-  "12mo": 90_000_000,
-};
-
-const MEM_OHLCV_TTL = 20_000;
+/** Memory OHLCV cache — tick-merged in place by scheduler. */
+const MEM_OHLCV_TTL = 25_000;
 const memOhlcv = new Map<
   string,
   { bars: Ohlcv[]; source: string; newestMs: number; at: number }
 >();
 
-/** In-memory SSOT for latest snapshot quotes (symbol → quote). */
 let liveSnapshotCache: {
   bySymbol: Map<string, ForexQuote>;
   source: string;
@@ -177,6 +158,25 @@ function rememberSnapshot(quotes: ForexQuote[], source: string) {
   liveSnapshotCache = { bySymbol, source, at: Date.now() };
 }
 
+/**
+ * Phase 2: after each price sync, merge live mids into all in-memory OHLCV
+ * series so current candle tracks realtime without refetching history.
+ */
+export function tickMergeFromLiveSnapshot(): number {
+  if (!liveSnapshotCache) return 0;
+  const now = Date.now();
+  if (now - liveSnapshotCache.at > 20_000) return 0;
+  let total = 0;
+  for (const [sym, q] of liveSnapshotCache.bySymbol) {
+    if (!Number.isFinite(q.price) || q.price <= 0) continue;
+    total += applyTickToMemMap(memOhlcv, sym, q.price, now);
+  }
+  if (total > 0) {
+    log.info("tick_merge_ok", { series: total, symbols: liveSnapshotCache.bySymbol.size });
+  }
+  return total;
+}
+
 export async function syncForexPrices() {
   if (syncPromise) return syncPromise;
 
@@ -190,7 +190,7 @@ export async function syncForexPrices() {
 
     const pairs = await getCachedForexPairs();
     const by = new Map(pairs.map((p) => [p.symbol, p]));
-    const timestamp = new Date(Math.floor(Date.now() / 5000) * 5000);
+    const timestamp = new Date(Math.floor(Date.now() / 4000) * 4000);
     let saved = 0;
     const quotes = snapshot.quotes.filter((q) => by.has(q.symbol));
 
@@ -229,6 +229,9 @@ export async function syncForexPrices() {
     }
 
     invalidatePriceCaches();
+    // Tick-merge immediately so next OHLCV read is live
+    tickMergeFromLiveSnapshot();
+
     const durationMs = Date.now() - started;
     log.info("forex_prices_synced", { source: snapshot.source, saved, durationMs });
     return { source: snapshot.source, saved, timestamp, durationMs };
@@ -239,7 +242,7 @@ export async function syncForexPrices() {
   return syncPromise;
 }
 
-export async function ensureForexFresh(maxAgeMs = 10_000) {
+export async function ensureForexFresh(maxAgeMs = 8_000) {
   if (cacheIsFresh(freshnessCache, FRESHNESS_CACHE_TTL)) {
     return freshnessCache!.value;
   }
@@ -306,10 +309,6 @@ export async function latestForexPrices() {
   return r.rows;
 }
 
-/**
- * Single source of truth for live quote → ForexQuoteContract.
- * Order: memory snapshot → DB latest → network snapshot.
- */
 export async function getLiveQuoteContract(
   symbol: string,
 ): Promise<ForexQuoteContract | null> {
@@ -321,7 +320,6 @@ export async function getLiveQuoteContract(
 
   const def = FOREX_BY_SYMBOL.get(sym);
 
-  // 1) Hot snapshot from recent sync
   if (liveSnapshotCache && Date.now() - liveSnapshotCache.at < 12_000) {
     const q = liveSnapshotCache.bySymbol.get(sym);
     if (q) {
@@ -337,7 +335,6 @@ export async function getLiveQuoteContract(
     }
   }
 
-  // 2) DB latest row
   const found = await getForexPair(sym);
   if (found?.price) {
     const p = found.price;
@@ -359,18 +356,17 @@ export async function getLiveQuoteContract(
         quoteCurrency: found.pair.quoteCurrency,
       },
     );
-    // If stale, kick background refresh but still return
-    if (contract.ageMs > 15_000) {
+    if (contract.ageMs > 12_000) {
       void syncForexPrices().catch(() => undefined);
     }
     quoteContractCache.set(sym, { value: contract, timestamp: Date.now() });
     return contract;
   }
 
-  // 3) Network
   try {
     const snap = await fetchForexSnapshot();
     rememberSnapshot(snap.quotes, snap.source);
+    tickMergeFromLiveSnapshot();
     const q = snap.quotes.find((x) => x.symbol === sym);
     if (!q) return null;
     const contract = toQuoteContract(q, {
@@ -388,7 +384,6 @@ export async function getLiveQuoteContract(
   }
 }
 
-/** Map DB/list rows into ForexQuoteContract[]. */
 export function mapRowsToContracts(
   rows: Array<Record<string, unknown>>,
 ): ForexQuoteContract[] {
@@ -537,15 +532,24 @@ export async function syncForexOhlcv(
   const sym = symbol.toUpperCase();
   const safeLimit = Math.min(200, Math.max(40, limit));
   const key = memKey(sym, timeframe, safeLimit);
+  const policy = getOhlcvPolicy(timeframe);
 
-  const applyLivePatch = async (bars: Ohlcv[], source: string, stale: boolean) => {
+  const applyLiveTick = async (bars: Ohlcv[], source: string, stale: boolean) => {
     const live = await getLiveQuoteContract(sym).catch(() => null);
-    const patched = live ? patchLastCandle(bars, live.price) : bars;
+    const patched = live
+      ? applyTickToBars(bars, live.price, timeframe)
+      : bars;
+    // Keep mem in sync with tick-merged series
+    const existing = memOhlcv.get(key);
+    if (existing) {
+      existing.bars = patched;
+      existing.at = Date.now();
+    }
     const lastClose = patched.length ? patched[patched.length - 1].close : null;
     return {
       pair: (await getForexPair(sym))?.pair ?? ({ symbol: sym } as ForexPairRow),
       bars: patched,
-      source: live ? `${source}+live-patch` : source,
+      source: live ? `${source}+tick` : source,
       stale,
       quote: live,
       lastCandleClose: lastClose,
@@ -556,7 +560,8 @@ export async function syncForexOhlcv(
 
   const mem = memOhlcv.get(key);
   if (mem && Date.now() - mem.at < MEM_OHLCV_TTL) {
-    return applyLivePatch(mem.bars, `${mem.source}+mem`, false);
+    // Already tick-merged by scheduler; still ensure latest mid
+    return applyLiveTick(mem.bars, `${mem.source}+mem`, false);
   }
 
   let found = await getForexPair(sym);
@@ -566,8 +571,8 @@ export async function syncForexOhlcv(
   }
   if (!found) throw new Error("Forex pair not found");
 
-  const soft = OHLCV_SOFT_TTL[timeframe] ?? 180_000;
-  const hard = OHLCV_HARD_TTL[timeframe] ?? 900_000;
+  const soft = policy.soft;
+  const hard = policy.hard;
   const cached = await readOhlcvFromDb(found.pair.id, timeframe, safeLimit);
   const age = cached ? Date.now() - cached.newestMs : Infinity;
 
@@ -578,7 +583,7 @@ export async function syncForexOhlcv(
       newestMs: cached.newestMs,
       at: Date.now(),
     });
-    return applyLivePatch(cached.bars, cached.source, false);
+    return applyLiveTick(cached.bars, cached.source, false);
   }
 
   if (cached && age <= hard) {
@@ -600,7 +605,7 @@ export async function syncForexOhlcv(
       newestMs: cached.newestMs,
       at: Date.now(),
     });
-    return applyLivePatch(cached.bars, `${cached.source}+swr`, true);
+    return applyLiveTick(cached.bars, `${cached.source}+swr`, true);
   }
 
   try {
@@ -614,7 +619,7 @@ export async function syncForexOhlcv(
     void persistBars(found.pair.id, timeframe, result.bars, result.source).catch((e) =>
       log.warn("ohlcv_persist_failed", { symbol: sym, error: String(e) }),
     );
-    return applyLivePatch(result.bars, result.source, false);
+    return applyLiveTick(result.bars, result.source, false);
   } catch (netErr) {
     if (cached && cached.bars.length >= 10) {
       log.warn("ohlcv_network_failed_using_db", {
@@ -622,7 +627,7 @@ export async function syncForexOhlcv(
         timeframe,
         error: String(netErr),
       });
-      return applyLivePatch(cached.bars, `${cached.source}+fallback`, true);
+      return applyLiveTick(cached.bars, `${cached.source}+fallback`, true);
     }
     throw netErr;
   }
@@ -633,7 +638,6 @@ export async function runForexAnalysis(symbol: string, timeframe = "1h") {
   const { pair, bars, source, quote } = ohlcv;
   const a = analyzeForex(bars);
 
-  // P0 consistency: entry = live mid when available
   const entryPrice = quote?.price ?? a.entryPrice;
   const risk =
     a.stopLoss !== null && a.recommendation === "BUY"
@@ -705,7 +709,6 @@ export async function getForexDetailBundle(
 
   return {
     pair: pairRow,
-    /** @deprecated prefer `quote` — legacy shape for older clients */
     price: quote
       ? {
           price: quote.price,
@@ -729,7 +732,6 @@ export async function getForexDetailBundle(
   };
 }
 
-/** Pre-warm other TFs for the symbol (standard or DXY set). */
 export function warmForexTimeframes(symbol: string, primary = "1h") {
   const others = timeframesFor(symbol).filter((t) => t !== primary);
   void Promise.allSettled(
