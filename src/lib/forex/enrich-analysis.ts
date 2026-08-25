@@ -1,10 +1,11 @@
 /**
  * Post-process forex analysis with Phase 10–12 layers.
+ * Macro uses live calendar when available.
  */
 
 import {
   applyMacroToRecommendation,
-  buildMacroContext,
+  buildMacroContextLive,
   type MacroContext,
 } from "./macro";
 import {
@@ -45,15 +46,15 @@ export interface EnrichInput {
   } | null;
 }
 
-export function enrichWithMacroAiAlerts(input: EnrichInput): {
+export async function enrichWithMacroAiAlerts(input: EnrichInput): Promise<{
   recommendation: "BUY" | "SELL" | "NEUTRAL";
   confidence: number;
   reasons: string[];
   macro: MacroContext;
   analyst: AnalystNarrative;
   alerts: ForexAlert[];
-} {
-  const macro = buildMacroContext(input.symbol);
+}> {
+  const macro = await buildMacroContextLive(input.symbol);
   const macroAdj = applyMacroToRecommendation(
     input.recommendation,
     input.confidence,

@@ -1,9 +1,14 @@
 /**
  * Phase 10 — Economic & Macro Engine
  *
- * Curated major-event calendar (no paid calendar API required).
+ * Live calendar via calendar-providers (ForexFactory / Finnhub / curated).
  * Computes upcoming HIGH/EXTREME events and event-risk for a symbol.
  */
+
+import {
+  buildCuratedCalendar,
+  fetchLiveMacroCalendar,
+} from "./calendar-providers";
 
 export type MacroImpact = "LOW" | "MEDIUM" | "HIGH" | "EXTREME";
 export type MacroRegion = "US" | "EU" | "UK" | "JP" | "CN" | "GLOBAL";
@@ -20,10 +25,15 @@ export interface MacroEvent {
   minutesUntil: number;
   currencies: string[];
   category: string;
+  /** Optional release numbers from live feed */
+  forecast?: string | null;
+  previous?: string | null;
+  actual?: string | null;
 }
 
 export interface MacroContext {
   asOf: string;
+  source: string;
   upcoming: MacroEvent[];
   nextHighImpact: MacroEvent | null;
   /** Aggregate risk for the requested symbol */
@@ -35,170 +45,9 @@ export interface MacroContext {
   stance: "keep" | "caution" | "wait";
 }
 
-function utcDate(y: number, m: number, d: number, h: number, min = 0): Date {
-  return new Date(Date.UTC(y, m - 1, d, h, min, 0));
-}
-
-/** First Friday of month (NFP). */
-function firstFriday(year: number, month: number): number {
-  const d = new Date(Date.UTC(year, month - 1, 1));
-  const day = d.getUTCDay();
-  const offset = (5 - day + 7) % 7;
-  return 1 + offset;
-}
-
-/** Second / mid-month Wednesday approximation for FOMC (illustrative). */
-function midMonthWednesday(year: number, month: number): number {
-  const d = new Date(Date.UTC(year, month - 1, 1));
-  const day = d.getUTCDay();
-  const firstWed = 1 + ((3 - day + 7) % 7);
-  return firstWed + 7; // second Wednesday
-}
-
-/** Build ~14 days of major events from recurring schedule. */
+/** Sync helper — uses curated only (tests / SSR fallback). */
 export function buildMacroCalendar(now = new Date()): MacroEvent[] {
-  const events: MacroEvent[] = [];
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth() + 1;
-
-  const months = [
-    { y, m },
-    m === 12 ? { y: y + 1, m: 1 } : { y, m: m + 1 },
-  ];
-
-  for (const { y: yy, m: mm } of months) {
-    // NFP — first Friday 12:30 UTC (≈ 8:30 ET)
-    const nfpDay = firstFriday(yy, mm);
-    events.push({
-      id: `nfp-${yy}-${mm}`,
-      title: "Non-Farm Payrolls (NFP)",
-      region: "US",
-      flag: "🇺🇸",
-      impact: "EXTREME",
-      at: utcDate(yy, mm, nfpDay, 12, 30).toISOString(),
-      minutesUntil: 0,
-      currencies: ["USD", "EUR", "GBP", "JPY", "XAU"],
-      category: "employment",
-    });
-
-    // CPI — around 13th, 12:30 UTC
-    const cpiDay = Math.min(13, 28);
-    events.push({
-      id: `cpi-${yy}-${mm}`,
-      title: "US CPI",
-      region: "US",
-      flag: "🇺🇸",
-      impact: "HIGH",
-      at: utcDate(yy, mm, cpiDay, 12, 30).toISOString(),
-      minutesUntil: 0,
-      currencies: ["USD", "XAU", "EUR"],
-      category: "inflation",
-    });
-
-    // PPI — day after CPI-ish
-    events.push({
-      id: `ppi-${yy}-${mm}`,
-      title: "US PPI",
-      region: "US",
-      flag: "🇺🇸",
-      impact: "MEDIUM",
-      at: utcDate(yy, mm, Math.min(cpiDay + 1, 28), 12, 30).toISOString(),
-      minutesUntil: 0,
-      currencies: ["USD"],
-      category: "inflation",
-    });
-
-    // FOMC decision — second Wed approx 18:00 UTC
-    const fomcDay = midMonthWednesday(yy, mm);
-    events.push({
-      id: `fomc-${yy}-${mm}`,
-      title: "FOMC Rate Decision",
-      region: "US",
-      flag: "🇺🇸",
-      impact: "EXTREME",
-      at: utcDate(yy, mm, fomcDay, 18, 0).toISOString(),
-      minutesUntil: 0,
-      currencies: ["USD", "EUR", "GBP", "JPY", "XAU", "DXY"],
-      category: "central_bank",
-    });
-
-    // ECB — first Thursday-ish 12:15 UTC
-    const ecbDay = Math.min(7 + ((4 - new Date(Date.UTC(yy, mm - 1, 1)).getUTCDay() + 7) % 7), 14);
-    events.push({
-      id: `ecb-${yy}-${mm}`,
-      title: "ECB Rate Decision",
-      region: "EU",
-      flag: "🇪🇺",
-      impact: "HIGH",
-      at: utcDate(yy, mm, ecbDay, 12, 15).toISOString(),
-      minutesUntil: 0,
-      currencies: ["EUR", "USD"],
-      category: "central_bank",
-    });
-
-    // BOE — mid month Thursday
-    events.push({
-      id: `boe-${yy}-${mm}`,
-      title: "BOE Rate Decision",
-      region: "UK",
-      flag: "🇬🇧",
-      impact: "HIGH",
-      at: utcDate(yy, mm, Math.min(fomcDay, 21), 12, 0).toISOString(),
-      minutesUntil: 0,
-      currencies: ["GBP", "USD"],
-      category: "central_bank",
-    });
-
-    // BOJ — around 19th 03:00 UTC
-    events.push({
-      id: `boj-${yy}-${mm}`,
-      title: "BOJ Policy Decision",
-      region: "JP",
-      flag: "🇯🇵",
-      impact: "HIGH",
-      at: utcDate(yy, mm, 19, 3, 0).toISOString(),
-      minutesUntil: 0,
-      currencies: ["JPY", "USD"],
-      category: "central_bank",
-    });
-
-    // Retail Sales — mid month
-    events.push({
-      id: `retail-${yy}-${mm}`,
-      title: "US Retail Sales",
-      region: "US",
-      flag: "🇺🇸",
-      impact: "MEDIUM",
-      at: utcDate(yy, mm, 15, 12, 30).toISOString(),
-      minutesUntil: 0,
-      currencies: ["USD"],
-      category: "growth",
-    });
-
-    // GDP flash — end of month-ish quarterly (simplify monthly placeholder)
-    if (mm % 3 === 1) {
-      events.push({
-        id: `gdp-${yy}-${mm}`,
-        title: "US GDP",
-        region: "US",
-        flag: "🇺🇸",
-        impact: "HIGH",
-        at: utcDate(yy, mm, 26, 12, 30).toISOString(),
-        minutesUntil: 0,
-        currencies: ["USD", "DXY"],
-        category: "growth",
-      });
-    }
-  }
-
-  const t = now.getTime();
-  return events
-    .map((e) => ({
-      ...e,
-      minutesUntil: Math.round((new Date(e.at).getTime() - t) / 60_000),
-    }))
-    .filter((e) => e.minutesUntil > -180 && e.minutesUntil < 60 * 24 * 14)
-    .sort((a, b) => a.minutesUntil - b.minutesUntil);
+  return buildCuratedCalendar(now);
 }
 
 function symbolCurrencies(symbol: string): string[] {
@@ -213,8 +62,12 @@ function impactRank(i: MacroImpact): number {
   return { LOW: 1, MEDIUM: 2, HIGH: 3, EXTREME: 4 }[i];
 }
 
-export function buildMacroContext(symbol: string, now = new Date()): MacroContext {
-  const upcoming = buildMacroCalendar(now);
+function scoreContext(
+  symbol: string,
+  upcoming: MacroEvent[],
+  source: string,
+  now = new Date(),
+): MacroContext {
   const curs = symbolCurrencies(symbol);
 
   const relevant = upcoming.filter(
@@ -236,42 +89,65 @@ export function buildMacroContext(symbol: string, now = new Date()): MacroContex
   if (nextHigh) {
     const mins = nextHigh.minutesUntil;
     const rank = impactRank(nextHigh.impact);
+    const nums =
+      nextHigh.forecast || nextHigh.previous
+        ? ` [prev ${nextHigh.previous ?? "—"} / fcast ${nextHigh.forecast ?? "—"}${nextHigh.actual ? ` / act ${nextHigh.actual}` : ""}]`
+        : "";
 
     if (mins >= 0 && mins <= 45 && rank >= 3) {
       eventRisk = nextHigh.impact === "EXTREME" ? "EXTREME" : "HIGH";
       stance = "wait";
-      note = `⚠️ ${nextHigh.title} in ${mins} min — high event risk`;
+      note = `⚠️ ${nextHigh.title} in ${mins} min — high event risk${nums}`;
       overlay = "MACRO RISK HIGH — prefer WAIT / reduce size";
     } else if (mins >= 0 && mins <= 180 && rank >= 3) {
       eventRisk = "HIGH";
       stance = "caution";
-      note = `High-impact ${nextHigh.title} in ${Math.round(mins / 60)}h`;
+      note = `High-impact ${nextHigh.title} in ${Math.round(mins / 60)}h${nums}`;
       overlay = "MACRO RISK HIGH";
     } else if (mins >= 0 && mins <= 24 * 60 && rank >= 3) {
       eventRisk = "MEDIUM";
       stance = "caution";
-      note = `${nextHigh.title} within 24h (${nextHigh.impact})`;
+      note = `${nextHigh.title} within 24h (${nextHigh.impact})${nums}`;
       overlay = "Macro event within 24h — size carefully";
     } else if (mins < 0 && mins > -60 && rank >= 3) {
       eventRisk = "HIGH";
       stance = "caution";
-      note = `${nextHigh.title} just released — volatility spike window`;
+      note = `${nextHigh.title} just released — volatility spike window${nums}`;
       overlay = "Post-event volatility — wait for structure";
     } else if (rank >= 2 && mins >= 0 && mins < 48 * 60) {
       eventRisk = "LOW";
-      note = `Next: ${nextHigh.title} in ~${Math.round(mins / 60)}h`;
+      note = `Next: ${nextHigh.title} in ~${Math.round(mins / 60)}h${nums}`;
     }
   }
 
   return {
     asOf: now.toISOString(),
-    upcoming: upcoming.slice(0, 12),
+    source,
+    upcoming: upcoming.slice(0, 20),
     nextHighImpact: nextHigh,
     eventRisk,
     eventRiskNote: note,
     recommendationOverlay: overlay,
     stance,
   };
+}
+
+/** Synchronous context (curated only) — backward compatible. */
+export function buildMacroContext(symbol: string, now = new Date()): MacroContext {
+  return scoreContext(symbol, buildCuratedCalendar(now), "curated", now);
+}
+
+/** Preferred: live calendar + risk scoring. */
+export async function buildMacroContextLive(
+  symbol: string,
+  now = new Date(),
+): Promise<MacroContext> {
+  try {
+    const { events, source } = await fetchLiveMacroCalendar();
+    return scoreContext(symbol, events, source, now);
+  } catch {
+    return scoreContext(symbol, buildCuratedCalendar(now), "curated-fallback", now);
+  }
 }
 
 /** Apply macro stance onto an existing recommendation. */
