@@ -1,5 +1,5 @@
 import type { Ohlcv } from "@/lib/connectors/core";
-import { bollinger, emaSeries, macd, rsi } from "@/lib/analysis";
+import { bollinger, emaSeries, macd, rsi, supportResistance } from "@/lib/analysis";
 import { detectCandlestickPatterns, detectChartPatterns } from "@/lib/technical-patterns";
 
 function atr(b: Ohlcv[], p = 14) {
@@ -60,6 +60,8 @@ export function analyzeForex(bars: Ohlcv[]) {
     bb = bollinger(closes),
     aa = atr(bars),
     xx = adx(bars);
+  const sr = supportResistance(bars);
+
   let buy = 0,
     sell = 0;
   const reasons: string[] = [];
@@ -92,10 +94,23 @@ export function analyzeForex(bars: Ohlcv[]) {
     if (current > e200) buy++;
     else sell++;
   }
+  if (sr) {
+    const nearSupport = (current - sr.support) / current < 0.002;
+    const nearResist = (sr.resistance - current) / current < 0.002;
+    if (nearSupport) {
+      buy += 0.5;
+      reasons.push("Giá gần hỗ trợ");
+    }
+    if (nearResist) {
+      sell += 0.5;
+      reasons.push("Giá gần kháng cự");
+    }
+  }
+
   const candles = detectCandlestickPatterns(bars)
-      .filter((p) => p.barIndex >= bars.length - 10)
-      .slice(-8),
-    charts = detectChartPatterns(bars).slice(-6);
+      .filter((p) => p.barIndex >= bars.length - 15)
+      .slice(-10),
+    charts = detectChartPatterns(bars).slice(-8);
   buy +=
     candles.filter((p) => p.type === "bullish").length * 0.3 +
     charts.filter((p) => p.type === "bullish").length * 0.5;
@@ -103,14 +118,39 @@ export function analyzeForex(bars: Ohlcv[]) {
     candles.filter((p) => p.type === "bearish").length * 0.3 +
     charts.filter((p) => p.type === "bearish").length * 0.5;
   const diff = buy - sell;
-  // Safety gates: never BUY when RSI >= 70, never SELL when RSI <= 30
   const recommendation =
     diff >= 2 && (rr === null || rr < 70)
       ? "BUY"
       : diff <= -2 && (rr === null || rr > 30)
         ? "SELL"
         : "NEUTRAL";
+
   const risk = aa ? Math.max(aa * 1.5, current * 0.001) : current * 0.005;
+  // Prefer structure-aware SL when S/R available
+  let stopLoss: number | null = null;
+  let takeProfit: number | null = null;
+  let takeProfit2: number | null = null;
+
+  if (recommendation === "BUY") {
+    const structSl = sr ? Math.min(current - risk, sr.support - risk * 0.15) : current - risk;
+    stopLoss = structSl;
+    takeProfit = current + risk * 2;
+    takeProfit2 = current + risk * 3.5;
+    if (sr?.resistance && sr.resistance > current) {
+      takeProfit = Math.min(takeProfit, sr.resistance);
+      takeProfit2 = Math.max(takeProfit2, sr.resistance + risk * 0.5);
+    }
+  } else if (recommendation === "SELL") {
+    const structSl = sr ? Math.max(current + risk, sr.resistance + risk * 0.15) : current + risk;
+    stopLoss = structSl;
+    takeProfit = current - risk * 2;
+    takeProfit2 = current - risk * 3.5;
+    if (sr?.support && sr.support < current) {
+      takeProfit = Math.max(takeProfit, sr.support);
+      takeProfit2 = Math.min(takeProfit2, sr.support - risk * 0.5);
+    }
+  }
+
   return {
     indicators: {
       rsi14: rr,
@@ -123,14 +163,24 @@ export function analyzeForex(bars: Ohlcv[]) {
       bollinger: bb,
       atr14: aa,
       adx14: xx,
+      support: sr?.support ?? null,
+      resistance: sr?.resistance ?? null,
+    },
+    levels: {
+      support: sr?.support ?? null,
+      resistance: sr?.resistance ?? null,
+      entry: current,
+      stopLoss,
+      takeProfit,
+      takeProfit2,
     },
     candlestickPatterns: candles,
     chartPatterns: charts,
     recommendation,
     entryPrice: current,
-    stopLoss: recommendation === "BUY" ? current - risk : recommendation === "SELL" ? current + risk : null,
-    takeProfit:
-      recommendation === "BUY" ? current + risk * 2 : recommendation === "SELL" ? current - risk * 2 : null,
+    stopLoss,
+    takeProfit,
+    takeProfit2,
     confidence: Number(
       Math.min(0.92, 0.5 + Math.abs(diff) * 0.08 + (xx && xx > 25 ? 0.08 : 0)).toFixed(2),
     ),
