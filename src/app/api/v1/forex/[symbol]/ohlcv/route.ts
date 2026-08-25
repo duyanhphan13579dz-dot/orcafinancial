@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { syncForexOhlcv, getLiveQuoteContract } from "@/lib/forex/service";
 import { fetchForexBars } from "@/lib/forex/connectors";
-import { patchLastCandle } from "@/lib/forex/normalize";
+import { applyTickToBars, getOhlcvPolicy } from "@/lib/forex/realtime";
 import {
   defaultTimeframe,
   isValidTimeframe,
@@ -61,8 +61,8 @@ export async function GET(
         withTimeout(fetchForexBars(sym, tf, limit), HARD_MS, "yahoo_bars"),
         getLiveQuoteContract(sym).catch(() => null),
       ]);
-      bars = q ? patchLastCandle(live.bars, q.price) : live.bars;
-      source = `${live.source}-direct${q ? "+live-patch" : ""}`;
+      bars = q ? applyTickToBars(live.bars, q.price, tf) : live.bars;
+      source = `${live.source}-direct${q ? "+tick" : ""}`;
       quote = q;
       console.warn(
         "[forex_ohlcv] service/timeout → Yahoo direct",
@@ -77,6 +77,9 @@ export async function GET(
     }
 
     const lastClose = bars[bars.length - 1]?.close ?? null;
+    const policy = getOhlcvPolicy(tf);
+    // CDN: shorter for lower TF so tick-merged candles reach clients
+    const sMax = Math.max(5, Math.min(30, Math.floor(policy.soft / 1000)));
 
     const response = ok(
       {
@@ -97,11 +100,11 @@ export async function GET(
     );
     response.headers.set(
       "Cache-Control",
-      "public, s-maxage=15, stale-while-revalidate=60",
+      `public, s-maxage=${sMax}, stale-while-revalidate=${sMax * 3}`,
     );
     response.headers.set(
       "Vercel-CDN-Cache-Control",
-      "public, s-maxage=15, stale-while-revalidate=60",
+      `public, s-maxage=${sMax}, stale-while-revalidate=${sMax * 3}`,
     );
     return response;
   } catch (e) {

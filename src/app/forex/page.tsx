@@ -56,9 +56,10 @@ function formatAge(ageMs?: number) {
 }
 
 export default function ForexPage() {
+  // Phase 2: client poll ~5s aligned with price refresh policy
   const feed = usePoll<{ prices: Row[]; freshness: Record<string, unknown> }>(
     "/forex/prices",
-    12_000,
+    5_000,
   );
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
@@ -84,7 +85,7 @@ export default function ForexPage() {
           </div>
           <h1 className="text-3xl font-black text-white mt-1">Forex, Vàng, Dầu & DXY</h1>
           <p className="text-sm text-slate-400 mt-1">
-            26 cặp/chỉ số · Data Contract · GMT+7
+            26 cặp/chỉ số · Realtime tick · GMT+7
           </p>
         </div>
         <span className="inline-flex items-center gap-2 text-xs text-emerald-300">
@@ -170,8 +171,7 @@ export default function ForexPage() {
       </div>
 
       <div className="text-[10px] text-slate-600">
-        Data Contract: price = mid khi có bid/ask · freshness LIVE≤5s / FRESH≤15s / STALE≤60s.
-        Tín hiệu giao dịch chỉ mang tính tham khảo.
+        Phase 2 realtime: price poll 5s · current candle tick-merge · không phải lời khuyên đầu tư.
       </div>
     </div>
   );
