@@ -3,7 +3,6 @@ import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import {
   getForexDetailBundle,
   getLiveQuoteContract,
-  runForexAnalysis,
   syncForexOhlcv,
 } from "@/lib/forex/service";
 import {
@@ -36,7 +35,6 @@ export async function GET(
     Math.max(30, Number.isFinite(rawLimit) ? Math.floor(rawLimit) : 90),
   );
 
-  // light=1 → quote + bars only (fast path for first paint)
   const light =
     req.nextUrl.searchParams.get("light") === "1" ||
     req.nextUrl.searchParams.get("fast") === "1";
