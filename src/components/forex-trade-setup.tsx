@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { recomputePositionAndLeverage } from "@/lib/forex/trade-setup";
 
 export interface TradeSetupData {
@@ -83,6 +83,7 @@ export function ForexTradeSetupPanel({
   const [capital, setCapital] = useState(setup.defaultPosition.capital);
   const [riskPct, setRiskPct] = useState(setup.defaultPosition.riskPct);
   const [leverage, setLeverage] = useState(10);
+  const [open, setOpen] = useState(false);
 
   const live = useMemo(() => {
     return recomputePositionAndLeverage({
@@ -106,8 +107,27 @@ export function ForexTradeSetupPanel({
 
   return (
     <div className="space-y-4">
-      {/* Setup quality + confidence breakdown */}
-      <div className="panel p-4">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="panel flex w-full items-center justify-between gap-3 p-3 text-left transition hover:border-[#00d4ff]/40"
+        aria-expanded={open}
+      >
+        <span>
+          <span className="block text-[10px] uppercase tracking-wide text-slate-500">
+            Trade Setup · Recommendation 2.0
+          </span>
+          <span className="mt-0.5 block text-sm font-semibold text-white">
+            Grade {setup.setupQuality} · Confidence {setup.confidenceBreakdown.total}%
+          </span>
+        </span>
+        <span className="text-xs text-slate-500">{open ? "▾" : "▸"}</span>
+      </button>
+
+      {open && (
+        <div className="space-y-4">
+          {/* Setup quality + confidence breakdown */}
+          <div className="panel p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-semibold text-white">Trade Setup · Recommendation 2.0</h2>
           <span
@@ -352,7 +372,11 @@ export function ForexTradeSetupPanel({
             </tbody>
           </table>
         </div>
-      </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+export const MemoForexTradeSetupPanel = memo(ForexTradeSetupPanel);

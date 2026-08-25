@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { api, fmtNum } from "@/lib/client";
 import { isDocumentVisible, whenVisible } from "@/lib/client-visibility";
 import type { OnChainIntelligence } from "@/lib/crypto/types";
@@ -38,7 +38,8 @@ function Tile({
 
 export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
   const [data, setData] = useState<OnChainIntelligence | null>(null);
-  const [open, setOpen] = useState(true);
+  // On-chain data is secondary; keep the body lazy until requested by the user.
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     if (!symbol) return;
@@ -185,3 +186,5 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
     </section>
   );
 }
+
+export const MemoCryptoOnChainPanel = memo(CryptoOnChainPanel);

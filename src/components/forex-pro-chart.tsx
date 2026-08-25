@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import {
   createChart,
   ColorType,
@@ -476,3 +476,5 @@ export function PatternTimeline({
     </div>
   );
 }
+
+export const MemoForexProChart = memo(ForexProChart);

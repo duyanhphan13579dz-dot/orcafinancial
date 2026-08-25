@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import type {
   FuturesIntelligence,
   OrderFlowIntelligence,
@@ -91,7 +91,11 @@ export function FuturesPanel({ data }: { data: FuturesIntelligence }) {
   const oi = data.openInterest;
 
   return (
-    <PanelShell title="Futures Intelligence" badge={data.binanceFuturesSymbol}>
+    <PanelShell
+      title="Futures Intelligence"
+      badge={data.binanceFuturesSymbol}
+      defaultOpen={false}
+    >
       <div className="grid grid-cols-3 gap-2">
         <MetricTile
           label="Funding"
@@ -137,7 +141,8 @@ export function WhalePanel({ data }: { data: WhaleLiquidationIntelligence }) {
 
   return (
     <PanelShell
-      title="Whale & Liquidation"
+      title="Whale Liquidations"
+      defaultOpen={false}
       badge={`${w.windowMinutes}m · ≥${fmtUsd(data.whaleThresholdUsd)}`}
     >
       <div className="grid grid-cols-3 gap-2">
@@ -223,6 +228,7 @@ export function OrderFlowPanel({ data }: { data: OrderFlowIntelligence }) {
   return (
     <PanelShell
       title="Order Flow"
+      defaultOpen={false}
       badge={`spread ${book.spreadBps != null ? `${book.spreadBps.toFixed(1)}bps` : "—"}`}
     >
       <div className="mb-2">
@@ -291,3 +297,7 @@ export function OrderFlowPanel({ data }: { data: OrderFlowIntelligence }) {
     </PanelShell>
   );
 }
+
+export const MemoFuturesPanel = memo(FuturesPanel);
+export const MemoWhalePanel = memo(WhalePanel);
+export const MemoOrderFlowPanel = memo(OrderFlowPanel);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { api } from "@/lib/client";
 import { isDocumentVisible, whenVisible } from "@/lib/client-visibility";
 import type { CryptoSentimentIntelligence } from "@/lib/crypto/types";
@@ -19,7 +19,8 @@ function labelClass(l: string): string {
 
 export function CryptoSentimentPanel({ symbol }: { symbol: string }) {
   const [data, setData] = useState<CryptoSentimentIntelligence | null>(null);
-  const [open, setOpen] = useState(true);
+  // Keep the data request independent, but avoid mounting the long body on first paint.
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     if (!symbol) return;
@@ -134,3 +135,5 @@ export function CryptoSentimentPanel({ symbol }: { symbol: string }) {
     </section>
   );
 }
+
+export const MemoCryptoSentimentPanel = memo(CryptoSentimentPanel);

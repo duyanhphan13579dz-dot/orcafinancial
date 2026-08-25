@@ -8,12 +8,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Bar } from "@/components/candle-chart";
 import {
-  FuturesPanel,
-  OrderFlowPanel,
-  WhalePanel,
+  MemoFuturesPanel,
+  MemoOrderFlowPanel,
+  MemoWhalePanel,
 } from "@/components/crypto-intel-panels";
-import { CryptoOnChainPanel } from "@/components/crypto-onchain-panel";
-import { CryptoSentimentPanel } from "@/components/crypto-sentiment-panel";
+import { MemoCryptoOnChainPanel } from "@/components/crypto-onchain-panel";
+import { MemoCryptoSentimentPanel } from "@/components/crypto-sentiment-panel";
 import { api, changeColor, fmtNum, fmtPct } from "@/lib/client";
 import { isDocumentVisible, whenVisible } from "@/lib/client-visibility";
 import {
@@ -32,7 +32,7 @@ const ChartSkeleton = () => (
 );
 
 const CandleChart = dynamic(
-  () => import("@/components/candle-chart").then((m) => m.CandleChart),
+    () => import("@/components/candle-chart").then((m) => m.MemoCandleChart),
   { ssr: false, loading: ChartSkeleton },
 );
 
@@ -445,11 +445,11 @@ export default function CryptoDetail() {
       </div>
 
       <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
-        {futures?.available && <FuturesPanel data={futures} />}
-        {whaleLiq?.available && <WhalePanel data={whaleLiq} />}
-        {orderFlow?.available && <OrderFlowPanel data={orderFlow} />}
-        <CryptoSentimentPanel symbol={symbol} />
-        <CryptoOnChainPanel symbol={symbol} />
+        {futures?.available && <MemoFuturesPanel data={futures} />}
+        {whaleLiq?.available && <MemoWhalePanel data={whaleLiq} />}
+        {orderFlow?.available && <MemoOrderFlowPanel data={orderFlow} />}
+        <MemoCryptoSentimentPanel symbol={symbol} />
+        <MemoCryptoOnChainPanel symbol={symbol} />
       </div>
 
       <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">

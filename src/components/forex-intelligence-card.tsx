@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { api } from "@/lib/client";
 
 function fmt(n: number | null | undefined, d = 5) {
@@ -233,3 +233,5 @@ export function ForexIntelligenceCard({
     </div>
   );
 }
+
+export const MemoForexIntelligenceCard = memo(ForexIntelligenceCard);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import {
   createChart,
   ColorType,
@@ -1144,3 +1144,5 @@ export function Sparkline({
     </svg>
   );
 }
+
+export const MemoCandleChart = memo(CandleChart);

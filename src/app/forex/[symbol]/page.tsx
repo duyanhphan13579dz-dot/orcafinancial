@@ -12,17 +12,17 @@ import {
   timeframesFor,
 } from "@/lib/forex/timeframes";
 import {
-  ForexTradeSetupPanel,
+  MemoForexTradeSetupPanel,
   type TradeSetupData,
 } from "@/components/forex-trade-setup";
-import { ForexIntelligenceCard } from "@/components/forex-intelligence-card";
+import { MemoForexIntelligenceCard } from "@/components/forex-intelligence-card";
 
 const ChartSkeleton = () => (
   <div className="h-[360px] w-full animate-pulse rounded-lg bg-slate-800/40 sm:h-[440px] lg:h-[520px]" />
 );
 
 const ForexProChart = dynamic(
-  () => import("@/components/forex-pro-chart").then((m) => m.ForexProChart),
+  () => import("@/components/forex-pro-chart").then((m) => m.MemoForexProChart),
   { ssr: false, loading: ChartSkeleton },
 );
 
@@ -239,7 +239,7 @@ export default function ForexDetail() {
       <div className="flex flex-col gap-3 lg:grid lg:grid-cols-3 lg:gap-4">
         <div className="order-1 lg:order-2 lg:col-span-1">
           {a ? (
-            <ForexIntelligenceCard
+            <MemoForexIntelligenceCard
               symbol={symbol}
               timeframeLabel={timeframeLabel(tf)}
               analysis={a}
@@ -333,7 +333,7 @@ export default function ForexDetail() {
       </div>
 
       {a?.tradeSetup && (
-        <ForexTradeSetupPanel
+        <MemoForexTradeSetupPanel
           symbol={symbol}
           setup={a.tradeSetup as TradeSetupData}
         />
