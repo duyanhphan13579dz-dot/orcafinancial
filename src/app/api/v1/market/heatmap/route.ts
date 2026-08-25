@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
       timestamp: heatmap.timestamp,
       stats: heatmap.stats,
       dataQuality: heatmap.dataQuality,
+      realtime: heatmap.realtime,
       sectors: heatmap.sectors,
       source: "data-engine+price_snapshots",
     });

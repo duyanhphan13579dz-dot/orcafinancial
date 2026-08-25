@@ -6,6 +6,7 @@ import { vndirectSearch } from "@/lib/connectors/providers";
 import { cached } from "@/lib/connectors/core";
 import { getBenchmarkForSymbol } from "@/lib/industry-benchmarks";
 import { logger } from "@/lib/logger";
+import { collectRealtimeQuotes, getRealtimeStatus } from "@/lib/heatmap/realtime";
 
 export type MarketStatus = "PRE_MARKET" | "TRADING" | "LUNCH_BREAK" | "POST_MARKET" | "CLOSED";
 export type HeatColor = "ceiling" | "up" | "unchanged" | "down" | "floor" | "no-data";
@@ -84,7 +85,7 @@ function normalizedSector(symbol: string, sector?: string | null) {
 
 async function warmFeaturedSnapshots() {
   try {
-    await getQuotes(FEATURED_SYMBOLS);
+    await collectRealtimeQuotes(FEATURED_SYMBOLS);
   } catch (err) {
     logger.warn("heatmap_warm_failed", {
       error: err instanceof Error ? err.message : String(err),
@@ -183,6 +184,7 @@ export async function getMarketHeatmap(): Promise<{
   timestamp: string;
   stats: Record<HeatColor | "total", number>;
   dataQuality: { universeCount: number; validQuoteCount: number; staleCount: number; noDataCount: number; exchanges: string[]; staleAfterSeconds: number };
+  realtime: ReturnType<typeof getRealtimeStatus>;
   sectors: Array<{ name: string; count: number; tradingValue: number }>;
 }> {
   return cached("market:heatmap:v3", HEATMAP_CACHE_MS, async () => {
@@ -310,6 +312,7 @@ export async function getMarketHeatmap(): Promise<{
       timestamp: new Date().toISOString(),
       stats,
       dataQuality,
+      realtime: getRealtimeStatus(),
       sectors: [...sectorMap.values()].sort(
         (a, b) => b.tradingValue - a.tradingValue || b.count - a.count,
       ),
