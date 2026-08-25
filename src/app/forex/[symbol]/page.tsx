@@ -13,12 +13,17 @@ import {
 } from "@/lib/forex/timeframes";
 
 const ChartSkeleton = () => (
-  <div className="h-[380px] w-full animate-pulse rounded-lg bg-slate-800/40" />
+  <div className="h-[520px] w-full animate-pulse rounded-lg bg-slate-800/40" />
 );
 
-const CandleChart = dynamic(
-  () => import("@/components/candle-chart").then((m) => m.CandleChart),
+const ForexProChart = dynamic(
+  () => import("@/components/forex-pro-chart").then((m) => m.ForexProChart),
   { ssr: false, loading: ChartSkeleton },
+);
+
+const PatternTimeline = dynamic(
+  () => import("@/components/forex-pro-chart").then((m) => m.PatternTimeline),
+  { ssr: false },
 );
 
 interface QuoteContract {
@@ -70,11 +75,34 @@ interface Analysis {
   entryPrice: number;
   stopLoss: number | null;
   takeProfit: number | null;
+  takeProfit2?: number | null;
   confidence: number;
   reasons: string[];
   indicators: Record<string, unknown>;
-  candlestickPatterns: Array<{ nameVi: string; type: string; reliability: number }>;
-  chartPatterns: Array<{ nameVi: string; type: string; reliability: number }>;
+  levels?: {
+    support?: number | null;
+    resistance?: number | null;
+    entry?: number | null;
+    stopLoss?: number | null;
+    takeProfit?: number | null;
+    takeProfit2?: number | null;
+  };
+  candlestickPatterns: Array<{
+    name: string;
+    nameVi: string;
+    type: string;
+    reliability: number;
+    time?: number;
+    barIndex?: number;
+  }>;
+  chartPatterns: Array<{
+    name: string;
+    nameVi: string;
+    type: string;
+    reliability: number;
+    endTime?: number;
+    startTime?: number;
+  }>;
   source: string;
   disclaimer: string;
 }
@@ -123,12 +151,18 @@ export default function ForexDetail() {
   const [bundleLoading, setBundleLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(false);
   const [bundleError, setBundleError] = useState<string | null>(null);
+  const [focusTime, setFocusTime] = useState<number | null>(null);
+  const [showEma, setShowEma] = useState(true);
+  const [showBb, setShowBb] = useState(true);
+  const [showRsi, setShowRsi] = useState(true);
+  const [showMacd, setShowMacd] = useState(true);
   const initialDone = useRef(false);
 
   useEffect(() => {
     const initialTf = defaultTimeframe(symbol);
     setTf(initialTf);
     initialDone.current = false;
+    setFocusTime(null);
 
     let cancelled = false;
     setBundleLoading(true);
@@ -183,6 +217,7 @@ export default function ForexDetail() {
     async (next: string) => {
       setChartLoading(true);
       setBundleError(null);
+      setFocusTime(null);
       try {
         const o = await api<{ bars: Bar[] }>(
           `/forex/${symbol}/ohlcv?timeframe=${next}&limit=120`,
@@ -211,7 +246,7 @@ export default function ForexDetail() {
     if (initialDone.current) void loadTf(x);
   };
 
-  const live = usePoll<Detail>(`/forex/${symbol}/price`, 8_000);
+  const live = usePoll<Detail>(`/forex/${symbol}/price`, 5_000);
   const pair = bundle?.pair;
   const q = live.data?.quote ?? bundle?.quote ?? null;
   const p = q ?? live.data?.price ?? bundle?.price;
@@ -233,6 +268,47 @@ export default function ForexDetail() {
       : a?.recommendation === "SELL"
         ? "border-rose-600 bg-rose-500/10 text-rose-300"
         : "border-amber-600 bg-amber-500/10 text-amber-300";
+
+  const levels = useMemo(() => {
+    if (!a) return null;
+    return {
+      support:
+        a.levels?.support ??
+        (typeof a.indicators.support === "number" ? a.indicators.support : null),
+      resistance:
+        a.levels?.resistance ??
+        (typeof a.indicators.resistance === "number" ? a.indicators.resistance : null),
+      entry: a.levels?.entry ?? a.entryPrice,
+      stopLoss: a.levels?.stopLoss ?? a.stopLoss,
+      takeProfit: a.levels?.takeProfit ?? a.takeProfit,
+      takeProfit2: a.levels?.takeProfit2 ?? a.takeProfit2 ?? null,
+    };
+  }, [a]);
+
+  const timelinePatterns = useMemo(() => {
+    if (!a) return [];
+    const candles = (a.candlestickPatterns ?? [])
+      .filter((x) => typeof x.time === "number")
+      .map((x) => ({
+        time: x.time as number,
+        name: x.name,
+        nameVi: x.nameVi,
+        type: x.type as "bullish" | "bearish" | "neutral",
+        reliability: x.reliability,
+      }));
+    const charts = (a.chartPatterns ?? [])
+      .filter((x) => typeof x.endTime === "number")
+      .map((x) => ({
+        time: x.endTime as number,
+        name: x.name,
+        nameVi: x.nameVi,
+        type: x.type as "bullish" | "bearish" | "neutral",
+        reliability: x.reliability,
+      }));
+    return [...candles, ...charts]
+      .sort((x, y) => x.time - y.time)
+      .slice(-10);
+  }, [a]);
 
   return (
     <div className="space-y-5">
@@ -277,7 +353,7 @@ export default function ForexDetail() {
         <div className="panel p-3 xl:col-span-2">
           <div className="mb-2 flex flex-wrap justify-between gap-2">
             <h2 className="font-semibold text-white">
-              Biểu đồ {symbol}
+              Trading chart · {symbol}
               {chartSource ? (
                 <span className="ml-2 text-[10px] font-normal text-slate-500">
                   {chartSource}
@@ -303,23 +379,70 @@ export default function ForexDetail() {
               ))}
             </div>
           </div>
+
+          <div className="mb-2 flex flex-wrap gap-2">
+            {(
+              [
+                ["EMA", showEma, setShowEma],
+                ["BB", showBb, setShowBb],
+                ["RSI", showRsi, setShowRsi],
+                ["MACD", showMacd, setShowMacd],
+              ] as const
+            ).map(([label, on, set]) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => set(!on)}
+                className={`rounded border px-2 py-1 text-[10px] ${
+                  on
+                    ? "border-[#00d4ff]/50 bg-[#00d4ff]/10 text-[#00d4ff]"
+                    : "border-slate-700 text-slate-500"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           {bundleLoading && !bars.length ? (
-            <div className="flex h-[360px] items-center justify-center text-sm text-slate-500">
+            <div className="flex h-[520px] items-center justify-center text-sm text-slate-500">
               Đang tải chart…
             </div>
           ) : bundleError && !bars.length ? (
-            <div className="flex h-[360px] items-center justify-center text-sm text-rose-400">
+            <div className="flex h-[520px] items-center justify-center text-sm text-rose-400">
               {bundleError}
             </div>
           ) : bars.length > 0 ? (
             <div className={chartLoading ? "opacity-70" : ""}>
-              <CandleChart bars={bars} height={360} />
+              <ForexProChart
+                bars={bars}
+                height={520}
+                levels={levels}
+                focusTime={focusTime}
+                showEma={showEma}
+                showBb={showBb}
+                showRsi={showRsi}
+                showMacd={showMacd}
+              />
             </div>
           ) : (
-            <div className="flex h-[360px] items-center justify-center text-sm text-slate-500">
+            <div className="flex h-[520px] items-center justify-center text-sm text-slate-500">
               Không có dữ liệu OHLCV
             </div>
           )}
+
+          <div className="mt-3 border-t border-slate-800 pt-2">
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
+              Pattern timeline · click để nhảy chart
+            </div>
+            <PatternTimeline
+              patterns={timelinePatterns}
+              barsLength={bars.length}
+              activeTime={focusTime}
+              onSelect={setFocusTime}
+            />
+          </div>
+
           {bundleError && bars.length > 0 && (
             <div className="mt-2 text-[10px] text-amber-400">
               Khung mới: {bundleError} — đang giữ chart cũ.
@@ -340,8 +463,18 @@ export default function ForexDetail() {
             <span className="text-right font-mono">{fmtNum(a?.entryPrice, 5)}</span>
             <span className="opacity-60">Stop Loss</span>
             <span className="text-right font-mono">{fmtNum(a?.stopLoss, 5)}</span>
-            <span className="opacity-60">Take Profit</span>
+            <span className="opacity-60">Take Profit 1</span>
             <span className="text-right font-mono">{fmtNum(a?.takeProfit, 5)}</span>
+            <span className="opacity-60">Take Profit 2</span>
+            <span className="text-right font-mono">{fmtNum(a?.takeProfit2, 5)}</span>
+            <span className="opacity-60">Support</span>
+            <span className="text-right font-mono text-emerald-400">
+              {fmtNum(levels?.support, 5)}
+            </span>
+            <span className="opacity-60">Resistance</span>
+            <span className="text-right font-mono text-rose-400">
+              {fmtNum(levels?.resistance, 5)}
+            </span>
           </div>
           <ul className="mt-4 space-y-1 text-xs">
             {a?.reasons.slice(0, 6).map((x, i) => (
@@ -375,7 +508,20 @@ export default function ForexDetail() {
             {[...(a?.chartPatterns ?? []), ...(a?.candlestickPatterns ?? [])]
               .slice(0, 8)
               .map((x, i) => (
-                <div key={i} className="flex justify-between rounded bg-slate-900/30 p-2">
+                <button
+                  key={i}
+                  type="button"
+                  className="flex w-full justify-between rounded bg-slate-900/30 p-2 text-left hover:bg-slate-800/50"
+                  onClick={() => {
+                    const t =
+                      "time" in x && typeof x.time === "number"
+                        ? x.time
+                        : "endTime" in x && typeof x.endTime === "number"
+                          ? x.endTime
+                          : null;
+                    if (t) setFocusTime(t);
+                  }}
+                >
                   <span>{x.nameVi}</span>
                   <span
                     className={
@@ -388,7 +534,7 @@ export default function ForexDetail() {
                   >
                     {x.type} · {Math.round(x.reliability * 100)}%
                   </span>
-                </div>
+                </button>
               ))}
           </div>
         </div>
