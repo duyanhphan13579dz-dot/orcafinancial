@@ -126,6 +126,28 @@ export const priceSnapshots = pgTable(
   (t) => [uniqueIndex("price_snapshots_symbol_uq").on(t.symbol), index("price_snapshots_time_idx").on(t.time)],
 );
 
+export const priceSnapshotHistory = pgTable(
+  "price_snapshot_history",
+  {
+    id: serial("id").primaryKey(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    time: timestamp("time", { withTimezone: true }).notNull(),
+    open: doublePrecision("open").notNull(),
+    high: doublePrecision("high").notNull(),
+    low: doublePrecision("low").notNull(),
+    close: doublePrecision("close").notNull(),
+    volume: doublePrecision("volume").notNull().default(0),
+    changePct: doublePrecision("change_pct").notNull().default(0),
+    source: varchar("source", { length: 40 }).notNull(),
+    confidence: doublePrecision("confidence").notNull().default(0.9),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("price_snapshot_history_symbol_time_uq").on(t.symbol, t.time),
+    index("price_snapshot_history_symbol_time_idx").on(t.symbol, t.time),
+  ],
+);
+
 export const watchlistItems = pgTable(
   "watchlist_items",
   {

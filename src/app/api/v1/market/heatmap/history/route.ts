@@ -1,4 +1,7 @@
 import { NextRequest } from "next/server";
+import { asc, and, eq, gte } from "drizzle-orm";
+import { db } from "@/db";
+import { priceSnapshotHistory } from "@/db/schema";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { getHistory } from "@/lib/market";
 
@@ -22,28 +25,19 @@ export async function GET(req: NextRequest) {
   if (!(timeframe in TIMEFRAME_DAYS)) return fail("Invalid timeframe", 400);
   try {
     const to = Math.floor(Date.now() / 1000);
-    const { bars, source, confidence } = await getHistory(
-      symbol,
-      to - 86400 * TIMEFRAME_DAYS[timeframe],
-      to,
-      "D",
-    );
-    return ok(
-      {
-        symbol,
-        timeframe,
-        bars: bars.map((bar) => ({
-          time: bar.time,
-          open: bar.open,
-          high: bar.high,
-          low: bar.low,
-          close: bar.close,
-          volume: bar.volume,
-        })),
-      },
-      { source, confidence, timestamp: new Date().toISOString() },
-      { cacheSeconds: 30 },
-    );
+    const from = new Date((to - 86400 * TIMEFRAME_DAYS[timeframe]) * 1000);
+    const historyRows = await db
+      .select()
+      .from(priceSnapshotHistory)
+      .where(and(eq(priceSnapshotHistory.symbol, symbol), gte(priceSnapshotHistory.time, from)))
+      .orderBy(asc(priceSnapshotHistory.time))
+      .limit(2000);
+    const bars = historyRows.length >= 2
+      ? historyRows.map((row) => ({ time: Math.floor(row.time.getTime() / 1000), open: row.open, high: row.high, low: row.low, close: row.close, volume: row.volume }))
+      : (await getHistory(symbol, to - 86400 * TIMEFRAME_DAYS[timeframe], to, "D")).bars;
+    const source = historyRows.length >= 2 ? "price_snapshot_history" : "market-history-fallback";
+    const confidence = historyRows.length >= 2 ? Math.min(...historyRows.map((row) => Number(row.confidence))) : 0.85;
+    return ok({ symbol, timeframe, bars }, { source, confidence, points: bars.length, timestamp: new Date().toISOString() }, { cacheSeconds: 30 });
   } catch (err) {
     return handleError(err, `heatmap_history:${symbol}`);
   }

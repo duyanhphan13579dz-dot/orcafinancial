@@ -1,6 +1,6 @@
 import { desc, eq, ilike, or, sql, and, gte, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { companies, jobLogs, news, priceSnapshots } from "@/db/schema";
+import { companies, jobLogs, news, priceSnapshots, priceSnapshotHistory } from "@/db/schema";
 import {
   cached,
   mapPool,
@@ -138,6 +138,23 @@ export async function getQuote(symbol: string): Promise<Quote> {
       } satisfies Quote;
     }
   });
+
+  void db
+    .insert(priceSnapshotHistory)
+    .values({
+      symbol: quote.symbol,
+      time: new Date(quote.time * 1000),
+      open: quote.open,
+      high: quote.high,
+      low: quote.low,
+      close: quote.close,
+      volume: quote.volume,
+      changePct: quote.changePct ?? 0,
+      source: quote.source.replace(/-snapshot$/, ""),
+      confidence: quote.confidence,
+    })
+    .onConflictDoNothing({ target: [priceSnapshotHistory.symbol, priceSnapshotHistory.time] })
+    .catch((err) => logger.warn("snapshot_history_insert_failed", { symbol: quote.symbol, error: String(err) }));
 
   void db
     .insert(priceSnapshots)
