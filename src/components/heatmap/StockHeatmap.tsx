@@ -214,6 +214,15 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
   const stats = meta?.stats as unknown as Stats | undefined;
   const dataQuality = meta?.dataQuality as { universeCount?: number; validQuoteCount?: number; staleCount?: number; exchanges?: string[] } | undefined;
   const realtime = meta?.realtime as { status?: string; ageSeconds?: number | null } | undefined;
+  const [aiInsight, setAiInsight] = useState<{ insight?: string; provider?: string }>({});
+
+  useEffect(() => {
+    let active = true;
+    void api<{ insight?: string; provider?: string }>("/market/heatmap/ai")
+      .then((result) => { if (active) setAiInsight(result.data); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [marketStatus]);
 
   useEffect(() => {
     try {
@@ -469,7 +478,7 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
             <div className="mb-4 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-emerald-400/10 p-2"><div className="text-lg font-black text-emerald-300">{breadth.advancing}</div><div className="text-[10px] text-slate-500">Tăng</div></div><div className="rounded-lg bg-amber-400/10 p-2"><div className="text-lg font-black text-amber-300">{breadth.unchanged}</div><div className="text-[10px] text-slate-500">Đứng</div></div><div className="rounded-lg bg-rose-400/10 p-2"><div className="text-lg font-black text-rose-300">{breadth.declining}</div><div className="text-[10px] text-slate-500">Giảm</div></div></div>
             <div className="space-y-2">{sectorIntel.slice(0, 6).map((sector) => <div key={sector.name} className="flex items-center gap-3 text-xs"><span className="w-28 truncate text-slate-400">{sector.name}</span><div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800"><div className={`h-full rounded-full ${sector.averageChange != null && sector.averageChange >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} style={{ width: `${Math.min(100, Math.max(4, Math.abs(sector.averageChange ?? 0) * 14))}%` }} /></div><span className={`w-14 text-right font-mono ${sector.averageChange != null && sector.averageChange >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{fmtPct(sector.averageChange)}</span></div>)}</div>
           </div>
-          <div className="panel p-4"><div className="text-[10px] uppercase tracking-[.25em] text-[#00d4ff]">ORCA AI MARKET INSIGHT</div><p className="mt-3 text-sm leading-6 text-slate-300">Dòng tiền đang tập trung vào nhóm <strong className="text-white">{sectorIntel[0]?.name ?? "—"}</strong>{sectorIntel[0]?.averageChange != null ? ` (${fmtPct(sectorIntel[0].averageChange)} bình quân)` : ""}. {sectorIntel[0]?.advancing ?? 0} mã tăng trong nhóm dẫn đầu.</p><p className="mt-2 text-xs leading-5 text-slate-500">Market Regime: <span className="font-semibold text-slate-300">{marketStatus === "TRADING" ? "Intraday" : STATUS_LABEL[marketStatus] ?? marketStatus}</span>. Đây là insight định lượng từ breadth và sector performance, không phải khuyến nghị đầu tư.</p></div>
+          <div className="panel p-4"><div className="text-[10px] uppercase tracking-[.25em] text-[#00d4ff]">ORCA AI MARKET INSIGHT</div><p className="mt-3 text-sm leading-6 text-slate-300">{aiInsight.insight ?? <>Dòng tiền đang tập trung vào nhóm <strong className="text-white">{sectorIntel[0]?.name ?? "—"}</strong>{sectorIntel[0]?.averageChange != null ? ` (${fmtPct(sectorIntel[0].averageChange)} bình quân)` : ""}. {sectorIntel[0]?.advancing ?? 0} mã tăng trong nhóm dẫn đầu.</>}</p><p className="mt-2 text-xs leading-5 text-slate-500">Nguồn insight: {aiInsight.provider ?? "rule-engine"}. Market Regime: <span className="font-semibold text-slate-300">{marketStatus === "TRADING" ? "Intraday" : STATUS_LABEL[marketStatus] ?? marketStatus}</span>. Đây là insight định lượng từ breadth và sector performance, không phải khuyến nghị đầu tư.</p></div>
         </section>
       )}
 
