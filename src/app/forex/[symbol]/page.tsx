@@ -90,6 +90,46 @@ interface AggregationMeta {
   gates?: string[];
 }
 
+interface MtfFrame {
+  timeframe: string;
+  label: string;
+  bias: "bullish" | "bearish" | "neutral" | "pullback";
+  score: number;
+  detail: string;
+}
+
+interface MtfResult {
+  frames: MtfFrame[];
+  overall: "bullish" | "bearish" | "neutral" | "pullback";
+  alignment: number;
+  context: string;
+  summary: string;
+}
+
+interface FxIntelligence {
+  session: {
+    id: string;
+    label: string;
+    volatility: string;
+    liquidity: string;
+    utcHour: number;
+    note: string;
+  };
+  currencyStrength: Array<{ currency: string; score: number; bar: number }>;
+  dxy: {
+    dxyChangePct: number | null;
+    dxyBias: string;
+    pairExpected: string;
+    note: string;
+  };
+  pairBiasFromStrength: {
+    bias: string;
+    baseScore: number | null;
+    quoteScore: number | null;
+    note: string;
+  };
+}
+
 interface Analysis {
   recommendation: "BUY" | "SELL" | "NEUTRAL";
   entryPrice: number;
@@ -104,6 +144,8 @@ interface Analysis {
   aggregation?: AggregationMeta;
   marketStructure?: string;
   volatilityRegime?: string;
+  mtf?: MtfResult | null;
+  fxIntelligence?: FxIntelligence | null;
   levels?: {
     support?: number | null;
     resistance?: number | null;
@@ -169,7 +211,15 @@ function formatAge(ageMs?: number) {
 function biasColor(bias: string) {
   if (bias === "bullish") return "text-emerald-400";
   if (bias === "bearish") return "text-rose-400";
+  if (bias === "pullback") return "text-sky-400";
   return "text-amber-400";
+}
+
+function biasDot(bias: string) {
+  if (bias === "bullish") return "bg-emerald-400";
+  if (bias === "bearish") return "bg-rose-400";
+  if (bias === "pullback") return "bg-sky-400";
+  return "bg-amber-400";
 }
 
 function scoreBar(score: number) {
@@ -299,6 +349,8 @@ export default function ForexDetail() {
     q?.spreadPips ??
     (p && "spreadPips" in p ? (p as { spreadPips?: number | null }).spreadPips : null);
   const a = bundle?.analysis;
+  const mtf = a?.mtf;
+  const fx = a?.fxIntelligence;
   const style =
     a?.recommendation === "BUY"
       ? "border-emerald-600 bg-emerald-500/10 text-emerald-300"
@@ -373,6 +425,7 @@ export default function ForexDetail() {
           <div className="text-[10px] text-slate-500">
             {(p?.source ?? chartSource) || "multi-source"} · Asia/Ho_Chi_Minh
             {spreadPips != null ? ` · Spread ${fmtNum(spreadPips, 1)} pips` : ""}
+            {fx?.session ? ` · ${fx.session.label}` : ""}
             {symbol === "DXY" ? " · khung dài hạn" : ""}
           </div>
         </div>
@@ -501,6 +554,11 @@ export default function ForexDetail() {
               </span>
             )}
           </div>
+          {mtf && (
+            <div className="mt-2 text-[10px] text-slate-400">
+              MTF {mtf.overall} · align {(mtf.alignment * 100).toFixed(0)}%
+            </div>
+          )}
           {a?.aggregation && (
             <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-slate-400">
               {a.aggregation.agreement != null && (
@@ -510,9 +568,6 @@ export default function ForexDetail() {
                 <span className="text-amber-400">
                   conflict {(a.aggregation.conflict * 100).toFixed(0)}%
                 </span>
-              )}
-              {a.aggregation.coreAligned === false && (
-                <span className="text-rose-400">core misaligned</span>
               )}
             </div>
           )}
@@ -557,12 +612,128 @@ export default function ForexDetail() {
         </div>
       </div>
 
+      {mtf && mtf.frames?.length > 0 && (
+        <div className="panel p-4">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h2 className="font-semibold text-white">Multi-Timeframe Trend</h2>
+              <p className="text-[10px] text-slate-500">{mtf.summary}</p>
+            </div>
+            <div className="text-right text-xs">
+              <span className={`font-bold uppercase ${biasColor(mtf.overall)}`}>
+                {mtf.overall}
+              </span>
+              <span className="ml-2 text-slate-500">
+                Alignment {Math.round(mtf.alignment * mtf.frames.length)}/
+                {mtf.frames.length}
+              </span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
+            {mtf.frames.map((fr) => (
+              <div
+                key={fr.timeframe}
+                className="rounded-lg border border-slate-800 bg-slate-900/40 p-3"
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${biasDot(fr.bias)}`} />
+                  <span className="text-sm font-semibold text-white">{fr.label}</span>
+                </div>
+                <div className={`mt-1 text-xs font-mono uppercase ${biasColor(fr.bias)}`}>
+                  {fr.bias}
+                </div>
+                <div className="mt-1 text-[10px] text-slate-500 truncate" title={fr.detail}>
+                  {fr.detail}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {fx && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="panel p-4">
+            <h2 className="mb-2 font-semibold text-white">Session</h2>
+            <div className="text-lg font-bold text-[#00d4ff]">{fx.session.label}</div>
+            <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded bg-slate-900/40 p-2">
+                <div className="text-slate-500">Volatility</div>
+                <div className="font-semibold text-white">{fx.session.volatility}</div>
+              </div>
+              <div className="rounded bg-slate-900/40 p-2">
+                <div className="text-slate-500">Liquidity</div>
+                <div className="font-semibold text-white">{fx.session.liquidity}</div>
+              </div>
+            </div>
+            <p className="mt-2 text-[10px] text-slate-500">{fx.session.note}</p>
+            <p className="mt-1 text-[10px] text-slate-600">UTC hour ~{fx.session.utcHour}</p>
+          </div>
+
+          <div className="panel p-4">
+            <h2 className="mb-2 font-semibold text-white">DXY correlation</h2>
+            <div className="flex items-baseline gap-2">
+              <span className="text-sm text-slate-400">DXY</span>
+              <span
+                className={`font-mono text-lg font-bold ${
+                  (fx.dxy.dxyChangePct ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"
+                }`}
+              >
+                {fx.dxy.dxyChangePct != null
+                  ? `${fx.dxy.dxyChangePct > 0 ? "+" : ""}${fx.dxy.dxyChangePct.toFixed(2)}%`
+                  : "—"}
+              </span>
+              <span className="text-[10px] uppercase text-slate-500">{fx.dxy.dxyBias}</span>
+            </div>
+            <div className="mt-2 text-xs">
+              Pair expected:{" "}
+              <span className={`font-semibold uppercase ${biasColor(fx.dxy.pairExpected)}`}>
+                {fx.dxy.pairExpected}
+              </span>
+            </div>
+            <p className="mt-2 text-[10px] text-slate-500">{fx.dxy.note}</p>
+          </div>
+
+          <div className="panel p-4">
+            <h2 className="mb-2 font-semibold text-white">Currency strength</h2>
+            <div className="mb-2 text-[10px] text-slate-500">
+              Pair bias:{" "}
+              <span className={`font-semibold uppercase ${biasColor(fx.pairBiasFromStrength.bias)}`}>
+                {fx.pairBiasFromStrength.bias}
+              </span>
+              <span className="ml-1">· {fx.pairBiasFromStrength.note}</span>
+            </div>
+            <div className="space-y-1.5">
+              {fx.currencyStrength.slice(0, 8).map((row) => (
+                <div key={row.currency} className="flex items-center gap-2 text-xs">
+                  <span className="w-8 font-mono text-slate-300">{row.currency}</span>
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
+                    <div
+                      className={`h-full ${row.score >= 0 ? "bg-emerald-500/80" : "bg-rose-500/80"}`}
+                      style={{ width: `${Math.max(8, row.bar * 100)}%` }}
+                    />
+                  </div>
+                  <span
+                    className={`w-12 text-right font-mono ${
+                      row.score >= 0 ? "text-emerald-400" : "text-rose-400"
+                    }`}
+                  >
+                    {row.score > 0 ? "+" : ""}
+                    {row.score.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {a?.layers && a.layers.length > 0 && (
         <div className="panel p-4">
           <h2 className="mb-1 font-semibold text-white">Technical Intelligence · 6 layers</h2>
           <p className="mb-4 text-[10px] text-slate-500">
             Directional vote: Trend · Momentum · Structure · Pattern — Volatility/Volume modulate
-            confidence only · weights adapt to ADX & vol regime
+            confidence only
           </p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {a.layers.map((layer) => {
@@ -593,9 +764,7 @@ export default function ForexDetail() {
                     </span>
                   </div>
                   <div className="mt-1 flex items-baseline justify-between text-[10px] text-slate-500">
-                    <span>
-                      {isMod ? "no vote" : `w ${Math.round(w * 100)}%`}
-                    </span>
+                    <span>{isMod ? "no vote" : `w ${Math.round(w * 100)}%`}</span>
                     <span className={`font-mono ${biasColor(layer.bias)}`}>
                       {layer.score > 0 ? "+" : ""}
                       {layer.score.toFixed(2)}
