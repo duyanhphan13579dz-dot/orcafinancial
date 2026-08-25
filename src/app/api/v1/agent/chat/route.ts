@@ -156,6 +156,9 @@ async function timedSettle<T>(
   }
 }
 
+/**
+ * Quote from connectors uses OHLC fields (`close`), not `price`.
+ */
 function minimalAnalysis(symbol: string, quote: Quote): AnalysisResult {
   return {
     symbol,
