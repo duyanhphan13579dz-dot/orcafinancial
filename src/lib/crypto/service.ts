@@ -614,13 +614,21 @@ export async function getLatestCryptoSentiment(symbol: string) {
   return updateCryptoSentiment(normalized);
 }
 
-export async function runCryptoAnalysis(symbol: string, timeframe = "1h") {
+export async function runCryptoAnalysis(
+  symbol: string,
+  timeframe = "1h",
+  options: { fast?: boolean } = {},
+) {
+  const normalized = normalizeSymbol(symbol);
+  const cachedSentiment = sentimentCache.get(normalized);
   const [ohlcv, sentiment] = await Promise.all([
-    syncCryptoOhlcv(symbol, timeframe, 200),
-    getLatestCryptoSentiment(symbol).catch(() => ({ score: 0 })),
+    syncCryptoOhlcv(normalized, timeframe, options.fast ? 120 : 200),
+    options.fast
+      ? Promise.resolve(cachedSentiment?.value ?? { score: 0 })
+      : getLatestCryptoSentiment(normalized).catch(() => ({ score: 0 })),
   ]);
   const result = analyzeCrypto(ohlcv.bars, Number(sentiment.score));
-  if (ohlcv.coin.id && ohlcv.coin.id !== "00000000-0000-0000-0000-000000000000") {
+  if (!options.fast && ohlcv.coin.id && ohlcv.coin.id !== "00000000-0000-0000-0000-000000000000") {
     await db.insert(cryptoAnalysis).values({
       coinId: ohlcv.coin.id,
       timeframe,

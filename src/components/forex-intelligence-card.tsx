@@ -32,6 +32,7 @@ export function ForexIntelligenceCard({
   const [busy, setBusy] = useState(false);
 
   const rec = a?.recommendation ?? "…";
+  const signal = rec === "BUY" ? "LONG" : rec === "SELL" ? "SHORT" : rec;
   const conf = a ? Math.round(a.confidence * 100) : null;
 
   const style =
@@ -104,7 +105,7 @@ export function ForexIntelligenceCard({
             Trade Intelligence · {timeframeLabel}
           </div>
           <div className="mt-1 flex flex-wrap items-baseline gap-2">
-            <span className="text-3xl font-black text-white">{rec}</span>
+            <span className="text-3xl font-black text-white">{signal}</span>
             {conf != null && (
               <span className="rounded bg-slate-900/50 px-2 py-0.5 font-mono text-lg text-[#00d4ff]">
                 {conf}%

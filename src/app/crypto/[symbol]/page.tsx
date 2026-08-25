@@ -138,7 +138,7 @@ export default function CryptoDetail() {
         // Keep the first paint focused on coin/price/OHLCV. Analysis is the
         // expensive path and is hydrated after the chart is visible.
         void api<Analysis>(
-          `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}`,
+          `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&fast=1`,
         )
           .then((analysisRes) => {
             if (cancelled) return;
@@ -181,7 +181,7 @@ export default function CryptoDetail() {
           });
           setError(null);
           void api<Analysis>(
-            `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}`,
+            `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&fast=1`,
           )
             .then((analysisRes) => {
               if (cancelled) return;
@@ -251,7 +251,7 @@ export default function CryptoDetail() {
         setBars(o.data.bars ?? []);
         setChartSource(String(o.meta?.source ?? "binance"));
         void api<Analysis>(
-          `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(tf)}`,
+          `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(tf)}&fast=1`,
         )
           .then((a) => {
             setBundle((prev) =>

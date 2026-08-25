@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 const VALID = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
 const CACHE_TTL_MS = 15_000;
+const FAST_CACHE_TTL_MS = 8_000;
 
 export async function GET(
   req: NextRequest,
@@ -19,20 +20,23 @@ export async function GET(
   const normalized = symbol.toUpperCase();
   const timeframe = req.nextUrl.searchParams.get("timeframe") ?? "1h";
   if (!VALID.has(timeframe)) return fail("Invalid timeframe", 400);
+  const fast = req.nextUrl.searchParams.get("fast") === "1";
+  const ttlMs = fast ? FAST_CACHE_TTL_MS : CACHE_TTL_MS;
 
   try {
     const cached = await sharedCacheGetOrSet(
-      `crypto:v1:analysis:${normalized}:${timeframe}`,
-      CACHE_TTL_MS,
-      () => runCryptoAnalysis(normalized, timeframe),
+      `crypto:v1:analysis:${normalized}:${timeframe}:${fast ? "fast" : "full"}`,
+      ttlMs,
+      () => runCryptoAnalysis(normalized, timeframe, { fast }),
     );
     return ok(
       cached.value,
       {
         timezone: "Asia/Ho_Chi_Minh",
         cacheHit: cached.hit,
+        fast,
       },
-      { cacheSeconds: Math.ceil(CACHE_TTL_MS / 1000) },
+      { cacheSeconds: Math.ceil(ttlMs / 1000) },
     );
   } catch (err) {
     return handleError(err, `crypto_analysis:${normalized}`);

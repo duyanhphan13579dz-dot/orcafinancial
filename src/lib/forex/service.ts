@@ -708,10 +708,32 @@ export async function runFxIntelligence(symbol: string) {
   return buildFxIntelligence(symbol.toUpperCase(), quotes);
 }
 
-export async function runForexAnalysis(symbol: string, timeframe = "1h") {
-  const ohlcv = await syncForexOhlcv(symbol, timeframe, 120);
+export async function runForexAnalysis(
+  symbol: string,
+  timeframe = "1h",
+  options: { fast?: boolean } = {},
+) {
+  const ohlcv = await syncForexOhlcv(symbol, timeframe, options.fast ? 90 : 120);
   const { pair, bars, source, quote } = ohlcv;
   const a = analyzeForex(bars);
+
+  if (options.fast) {
+    return {
+      symbol: pair.symbol,
+      name: pair.name,
+      timeframe,
+      source,
+      ...a,
+      recommendation: a.recommendation,
+      confidence: Number(a.confidence.toFixed(2)),
+      entryPrice: quote?.price ?? a.entryPrice,
+      stopLoss: a.stopLoss,
+      takeProfit: a.takeProfit,
+      takeProfit2: a.takeProfit2,
+      quote: quote ?? null,
+      fast: true,
+    };
+  }
 
   const [mtf, fxIntel] = await Promise.all([
     runMtfAnalysis(symbol).catch((e) => {

@@ -8,8 +8,7 @@ import {
 import {
   FOREX_CACHE,
   analysisKey,
-  fxCacheGet,
-  fxCacheSet,
+  fxCacheGetOrSet,
   withBudget,
 } from "@/lib/forex/cache";
 
@@ -30,40 +29,33 @@ export async function GET(
     return fail(`Invalid timeframe for ${sym}: ${tf}`, 400);
   }
 
-  const key = analysisKey(sym, tf);
+  const fast = req.nextUrl.searchParams.get("fast") === "1";
+  const key = `${analysisKey(sym, tf)}:${fast ? "fast" : "full"}`;
+  const deadlineMs = fast ? 4_800 : FOREX_CACHE.hardDeadlineMs + 2_000;
+  const ttlMs = fast ? 8_000 : FOREX_CACHE.analysisTtlMs;
 
   try {
-    const cached = await fxCacheGet<Record<string, unknown>>(key);
-    if (cached && cached.recommendation) {
-      const response = ok(cached, {
-        timezone: "Asia/Ho_Chi_Minh",
-        cacheHit: "redis",
-      });
-      response.headers.set(
-        "Cache-Control",
-        "public, s-maxage=15, stale-while-revalidate=45",
-      );
-      response.headers.set("X-Cache-Hit", "redis");
-      return response;
-    }
-
-    const data = await withBudget(
-      runForexAnalysis(sym, tf),
-      FOREX_CACHE.hardDeadlineMs + 2_000, // analysis can be heavier; hard ~6.5s
-      "forex_analysis",
+    const cached = await fxCacheGetOrSet(
+      key,
+      ttlMs,
+      () =>
+        withBudget(
+          runForexAnalysis(sym, tf, { fast }),
+          deadlineMs,
+          fast ? "forex_signal_fast" : "forex_analysis",
+        ),
     );
 
-    await fxCacheSet(key, data, FOREX_CACHE.analysisTtlMs);
-
-    const response = ok(data, {
+    const response = ok(cached.value, {
       timezone: "Asia/Ho_Chi_Minh",
-      cacheHit: "miss",
+      cacheHit: cached.hit,
+      fast,
     });
     response.headers.set(
       "Cache-Control",
-      "public, s-maxage=15, stale-while-revalidate=45",
+      `public, s-maxage=${fast ? 8 : 15}, stale-while-revalidate=${fast ? 24 : 45}`,
     );
-    response.headers.set("X-Cache-Hit", "miss");
+    response.headers.set("X-Cache-Hit", cached.hit);
     return response;
   } catch (e) {
     return handleError(e, `forex_analysis:${symbol}`);

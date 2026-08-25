@@ -62,12 +62,12 @@ export default function ForexDetail() {
   const analysisGen = useRef(0);
 
   const loadAnalysis = useCallback(
-    async (timeframe: string) => {
+    async (timeframe: string, fast = false) => {
       const gen = ++analysisGen.current;
       setAnalysisLoading(true);
       try {
         const a = await api<any>(
-          `/forex/${symbol}/analysis?timeframe=${timeframe}`,
+          `/forex/${symbol}/analysis?timeframe=${timeframe}${fast ? "&fast=1" : ""}`,
           { timeoutMs: 25_000 },
         );
         if (analysisGen.current !== gen) return;
@@ -111,7 +111,9 @@ export default function ForexDetail() {
         setChartSource(env.data.source ?? "");
         setBundleLoading(false);
         initialDone.current = true;
-        void loadAnalysis(initialTf);
+        void loadAnalysis(initialTf, true).then(() => {
+          if (!cancelled) void loadAnalysis(initialTf);
+        });
       })
       .catch((err) => {
         if (cancelled) return;
@@ -136,7 +138,9 @@ export default function ForexDetail() {
         );
         setBars(o.data.bars ?? []);
         setChartSource(String(o.meta?.source ?? "yahoo"));
-        void loadAnalysis(next);
+        void loadAnalysis(next, true).then(() => {
+          void loadAnalysis(next);
+        });
       } catch (err) {
         setBundleError(err instanceof Error ? err.message : String(err));
       } finally {
