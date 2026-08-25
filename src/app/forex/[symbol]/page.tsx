@@ -70,6 +70,15 @@ interface Detail {
   freshness?: { state?: string; ageMs?: number; timestamp?: string; source?: string };
 }
 
+interface LayerScore {
+  id: string;
+  label: string;
+  score: number;
+  bias: "bullish" | "bearish" | "neutral";
+  weight: number;
+  detail: string[];
+}
+
 interface Analysis {
   recommendation: "BUY" | "SELL" | "NEUTRAL";
   entryPrice: number;
@@ -79,6 +88,10 @@ interface Analysis {
   confidence: number;
   reasons: string[];
   indicators: Record<string, unknown>;
+  layers?: LayerScore[];
+  compositeScore?: number;
+  marketStructure?: string;
+  volatilityRegime?: string;
   levels?: {
     support?: number | null;
     resistance?: number | null;
@@ -139,6 +152,19 @@ function formatAge(ageMs?: number) {
   if (ageMs < 1000) return `${ageMs}ms ago`;
   if (ageMs < 60_000) return `${(ageMs / 1000).toFixed(1)}s ago`;
   return `${Math.floor(ageMs / 60_000)}m ago`;
+}
+
+function biasColor(bias: string) {
+  if (bias === "bullish") return "text-emerald-400";
+  if (bias === "bearish") return "text-rose-400";
+  return "text-amber-400";
+}
+
+function scoreBar(score: number) {
+  // score -1..1 → 0..100 width from center
+  const pct = Math.min(100, Math.abs(score) * 100);
+  const positive = score >= 0;
+  return { pct, positive };
 }
 
 export default function ForexDetail() {
@@ -457,7 +483,27 @@ export default function ForexDetail() {
           <div className="mt-1 text-3xl font-black">{a?.recommendation ?? "…"}</div>
           <div className="mt-1 text-sm">
             Confidence: {a ? `${Math.round(a.confidence * 100)}%` : "—"}
+            {a?.compositeScore != null && (
+              <span className="ml-2 text-[10px] opacity-70">
+                composite {a.compositeScore > 0 ? "+" : ""}
+                {a.compositeScore.toFixed(2)}
+              </span>
+            )}
           </div>
+          {(a?.marketStructure || a?.volatilityRegime) && (
+            <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
+              {a.marketStructure && (
+                <span className="rounded bg-slate-900/50 px-2 py-0.5 text-slate-300">
+                  Structure {a.marketStructure}
+                </span>
+              )}
+              {a.volatilityRegime && (
+                <span className="rounded bg-slate-900/50 px-2 py-0.5 text-slate-300">
+                  Vol {a.volatilityRegime}
+                </span>
+              )}
+            </div>
+          )}
           <div className="mt-4 grid grid-cols-2 gap-y-2 text-xs">
             <span className="opacity-60">Entry</span>
             <span className="text-right font-mono">{fmtNum(a?.entryPrice, 5)}</span>
@@ -484,6 +530,56 @@ export default function ForexDetail() {
           <div className="mt-4 text-[9px] opacity-60">Không phải lời khuyên đầu tư.</div>
         </div>
       </div>
+
+      {/* Phase 4 — 6 layer scores */}
+      {a?.layers && a.layers.length > 0 && (
+        <div className="panel p-4">
+          <h2 className="mb-1 font-semibold text-white">Technical Intelligence · 6 layers</h2>
+          <p className="mb-4 text-[10px] text-slate-500">
+            Trend · Momentum · Volatility · Structure · Pattern · Volume proxy — weighted composite
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {a.layers.map((layer) => {
+              const bar = scoreBar(layer.score);
+              return (
+                <div key={layer.id} className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-white">{layer.label}</span>
+                    <span className={`text-[10px] font-mono uppercase ${biasColor(layer.bias)}`}>
+                      {layer.bias}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-baseline justify-between text-[10px] text-slate-500">
+                    <span>w {Math.round(layer.weight * 100)}%</span>
+                    <span className={`font-mono ${biasColor(layer.bias)}`}>
+                      {layer.score > 0 ? "+" : ""}
+                      {layer.score.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
+                    <div className="relative h-full w-full">
+                      <div className="absolute left-1/2 top-0 h-full w-px bg-slate-600" />
+                      <div
+                        className={`absolute top-0 h-full ${
+                          bar.positive ? "left-1/2 bg-emerald-500/80" : "right-1/2 bg-rose-500/80"
+                        }`}
+                        style={{ width: `${bar.pct / 2}%` }}
+                      />
+                    </div>
+                  </div>
+                  <ul className="mt-2 space-y-0.5 text-[10px] text-slate-400">
+                    {layer.detail.slice(0, 3).map((d, i) => (
+                      <li key={i} className="truncate" title={d}>
+                        · {d}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="panel p-4">
