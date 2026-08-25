@@ -429,8 +429,11 @@ ORCA coi upstream failure là trạng thái sản phẩm cần quan sát, không
 - Fallback chain theo loại dữ liệu.
 - Data validation trước khi insert hoặc trả về frontend.
 - `safeDbQuery` retry cho transient database errors.
-- Shared cache và inflight dedupe để chống request storm.
+- Shared cache, inflight dedupe và stale-while-revalidate để chống request storm và giữ snapshot cũ khi refresh lỗi.
+- Hard deadline cho Market Overview: trả partial/stale fallback trong khoảng mục tiêu thay vì chờ provider/DB vô hạn.
+- Fast-fail quote path riêng cho overview; chart/detail vẫn giữ timeout đầy đủ.
 - Concurrency-limited `mapPool` cho quote/search/news workers.
+- Background scheduler là opt-in qua `RUN_BACKGROUND_SCHEDULERS=1`, tránh mỗi web/serverless instance tự chạy duplicate workers.
 - Stale registry khi mọi provider cho một kind/symbol đều lỗi.
 - Structured JSON logs và in-memory ring buffer tối đa 500 entries.
 - Alert dispatcher cho connector DOWN kéo dài, có persistence và Slack webhook tùy chọn.
@@ -448,6 +451,12 @@ Trang `/system` hiển thị connector cards, aggregate status, success rate, up
 - `GET /api/v1/admin/alerts`: open/recent/persisted alerts.
 - `POST /api/v1/admin/connectors/{name}/test`: manual probe.
 - `POST /api/v1/admin/connectors/{name}/reset`: manual circuit reset.
+
+### Performance contract cho Market Overview
+
+Dashboard tổng quan được thiết kế theo mô hình **cache-first, stale-tolerant và single-flight**. Request đầu tiên ưu tiên snapshot hiện tại trong database/cache; khi cache miss, các quote được fetch theo batch có giới hạn concurrency. News, market breadth mở rộng và crypto là dữ liệu phụ có deadline riêng, không được phép giữ toàn bộ UI trong trạng thái chờ. Nếu upstream hoặc database vượt deadline, API trả snapshot partial/stale có metadata `quality.stale`, `quality.partial`, `quality.ageSeconds` và `quality.sources` để frontend hiển thị trạng thái đúng.
+
+Trong production/serverless, không nên chạy scheduler trên mọi web instance. Hãy dành một process worker riêng với `RUN_BACKGROUND_SCHEDULERS=1`; web instances giữ `RUN_BACKGROUND_SCHEDULERS=0`. Cách này ngăn alert dispatcher, report scheduler, commodities, crypto và forex jobs tranh chấp pool database với request dashboard.
 
 ### Environment tuning
 
@@ -531,6 +540,9 @@ Docker Compose cung cấp PostgreSQL, PgBouncer tùy chọn và web service:
 cp .env.example .env
 # điền JWT_SECRET, provider keys và Redis nếu cần
 docker compose up -d --build
+
+# Tùy chọn: chạy scheduler trên worker riêng, không làm nặng web instance
+docker compose --profile worker up -d --build
 ```
 
 Các service mặc định:
@@ -539,7 +551,8 @@ Các service mặc định:
 |---|---:|---|
 | `postgres` | `5432` | PostgreSQL persistent volume |
 | `pgbouncer` | `6432` | Transaction pooler |
-| `web` | `3000` | ORCA FINANCIAL production server |
+| `web` | `3000` | ORCA FINANCIAL production server; scheduler tắt mặc định |
+| `worker` | — | Optional profile; chạy report/alert/commodities/crypto/forex schedulers |
 
 `docker-compose.monitoring.yml` bổ sung monitoring stack. `docker-compose.supabase.yml` phục vụ các kịch bản dùng Supabase thay cho database local.
 
@@ -559,6 +572,7 @@ DATABASE_DOWN_ALERT_AFTER_MS=120000
 UPSTASH_REDIS_REST_URL=
 UPSTASH_REDIS_REST_TOKEN=
 REDIS_REQUIRED=1
+RUN_BACKGROUND_SCHEDULERS=0
 ```
 
 ### Market/cache
@@ -568,6 +582,8 @@ MARKET_OVERVIEW_TTL_MS=60000
 MARKET_QUOTE_TTL_MS=20000
 MARKET_HIST_D_TTL_MS=120000
 MARKET_HIST_INTRA_TTL_MS=30000
+MARKET_OVERVIEW_AUX_TIMEOUT_MS=450
+MARKET_OVERVIEW_TOTAL_TIMEOUT_MS=2500
 ```
 
 ### Connector

@@ -123,7 +123,7 @@ export const priceSnapshots = pgTable(
     confidence: doublePrecision("confidence").notNull().default(0.9),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("price_snapshots_symbol_uq").on(t.symbol), index("price_snapshots_time_idx").on(t.time)],
+  (t) => [uniqueIndex("price_snapshots_symbol_uq").on(t.symbol), index("price_snapshots_time_idx").on(t.time), index("price_snapshots_updated_idx").on(t.updatedAt)],
 );
 
 export const priceSnapshotHistory = pgTable(

@@ -155,6 +155,7 @@ export type UsePollOptions = {
   softTtlMs?: number;
   hardTtlMs?: number;
   enabled?: boolean;
+  timeoutMs?: number;
 };
 
 export function usePoll<T>(
@@ -191,7 +192,7 @@ export function usePoll<T>(
       else if (!readCache(p, hardTtl)) setLoading(true);
 
       try {
-        const env = await api<T>(p);
+        const env = await api<T>(p, options.timeoutMs ? { timeoutMs: options.timeoutMs } : undefined);
         if (pathRef.current !== p) return;
         setData(env.data);
         setMeta(env.meta ?? null);
@@ -206,7 +207,7 @@ export function usePoll<T>(
         }
       }
     },
-    [hardTtl],
+    [hardTtl, options.timeoutMs],
   );
 
   useEffect(() => {

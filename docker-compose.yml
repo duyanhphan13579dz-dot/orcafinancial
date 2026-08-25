@@ -7,6 +7,7 @@
 # Usage:
 #   cp .env.example .env   # fill in secrets
 #   docker compose up -d --build
+#   docker compose --profile worker up -d --build  # enable background schedulers
 
 version: "3.9"
 
@@ -80,6 +81,7 @@ services:
       DATABASE_SELF_PING_INTERVAL_MS: "30000"
       DATABASE_DOWN_ALERT_AFTER_MS: "120000"
       NODE_ENV: production
+      RUN_BACKGROUND_SCHEDULERS: "${RUN_BACKGROUND_SCHEDULERS:-0}"
     ports:
       - "3000:3000"
     healthcheck:
@@ -88,6 +90,29 @@ services:
       timeout: 5s
       retries: 5
       start_period: 25s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["worker"]
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-orca}:${POSTGRES_PASSWORD:-orca}@pgbouncer:6432/${POSTGRES_DB:-orca_financial}
+      DATABASE_POOL_MAX: "10"
+      DATABASE_POOL_TIMEOUT_MS: "10000"
+      DATABASE_STARTUP_RETRIES: "10"
+      DATABASE_STARTUP_RETRY_DELAY_MS: "2000"
+      DATABASE_SELF_PING_INTERVAL_MS: "30000"
+      DATABASE_DOWN_ALERT_AFTER_MS: "120000"
+      NODE_ENV: production
+      RUN_BACKGROUND_SCHEDULERS: "1"
+    command: ["npm", "run", "start", "--", "-p", "3001"]
 
 volumes:
   orca_pg_data:

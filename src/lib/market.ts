@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { companies, jobLogs, news, priceSnapshots, priceSnapshotHistory } from "@/db/schema";
 import {
   cached,
+  cachedWithStaleFallback,
   mapPool,
   CONNECTOR_CONFIG,
   type Ohlcv,
@@ -43,6 +44,17 @@ const OVERVIEW_TTL_MS = Number(process.env.MARKET_OVERVIEW_TTL_MS) || 60_000;
 const QUOTE_TTL_MS = Number(process.env.MARKET_QUOTE_TTL_MS) || 20_000;
 const HIST_D_TTL_MS = Number(process.env.MARKET_HIST_D_TTL_MS) || 120_000;
 const HIST_INTRA_TTL_MS = Number(process.env.MARKET_HIST_INTRA_TTL_MS) || 30_000;
+const OVERVIEW_AUX_TIMEOUT_MS = Number(process.env.MARKET_OVERVIEW_AUX_TIMEOUT_MS) || 450;
+const OVERVIEW_TOTAL_TIMEOUT_MS = Number(process.env.MARKET_OVERVIEW_TOTAL_TIMEOUT_MS) || 2_500;
+
+async function withDeadline<T>(promise: Promise<T>, ms: number, fallback: T, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([promise, new Promise<T>((resolve) => { timer = setTimeout(() => { logger.warn("overview_deadline_fallback", { label, timeoutMs: ms }); resolve(fallback); }, ms); })]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 async function logJob(job: string, status: "ok" | "error", detail: string, durationMs: number) {
   try {
@@ -52,7 +64,7 @@ async function logJob(job: string, status: "ok" | "error", detail: string, durat
   }
 }
 
-function snapshotToQuote(row: typeof priceSnapshots.$inferSelect): Quote {
+function snapshotToQuote(row: typeof priceSnapshots.$inferSelect, stale = false): Quote {
   return {
     symbol: row.symbol,
     time: Math.floor(row.time.getTime() / 1000),
@@ -63,7 +75,7 @@ function snapshotToQuote(row: typeof priceSnapshots.$inferSelect): Quote {
     volume: Number(row.volume),
     prevClose: null,
     changePct: row.changePct != null ? Number(row.changePct) : null,
-    source: `${row.source}-snapshot`,
+    source: `${row.source}-${stale ? "stale-" : ""}snapshot`,
     confidence: Number(row.confidence ?? 0.9),
   };
 }
@@ -84,6 +96,18 @@ async function loadFreshSnapshots(symbols: string[]): Promise<Map<string, Quote>
   return out;
 }
 
+async function loadStaleSnapshots(symbols: string[]): Promise<Map<string, Quote>> {
+  const out = new Map<string, Quote>();
+  if (symbols.length === 0) return out;
+  try {
+    const rows = await db.select().from(priceSnapshots).where(inArray(priceSnapshots.symbol, symbols));
+    for (const row of rows) out.set(row.symbol, snapshotToQuote(row, true));
+  } catch (err) {
+    logger.warn("snapshot_stale_read_failed", { error: String(err) });
+  }
+  return out;
+}
+
 /** Read all fresh current snapshots for breadth without fabricating universe data. */
 async function loadMarketSnapshots(): Promise<Quote[]> {
   try {
@@ -93,7 +117,7 @@ async function loadMarketSnapshots(): Promise<Quote[]> {
       .from(priceSnapshots)
       .where(gte(priceSnapshots.updatedAt, cutoff))
       .limit(2000);
-    return rows.map(snapshotToQuote);
+    return rows.map((row) => snapshotToQuote(row));
   } catch (err) {
     logger.warn("market_snapshot_breadth_read_failed", { error: String(err) });
     return [];
@@ -122,7 +146,7 @@ export async function getHistory(
   });
 }
 
-export async function getQuote(symbol: string): Promise<Quote> {
+export async function getQuote(symbol: string, options: { persist?: boolean; fast?: boolean; allowStale?: boolean; concurrency?: number } = {}): Promise<Quote> {
   const key = `quote:${symbol}`;
   const quote = await cached(key, QUOTE_TTL_MS, async () => {
     const snaps = await loadFreshSnapshots([symbol]);
@@ -130,14 +154,16 @@ export async function getQuote(symbol: string): Promise<Quote> {
     if (snap) return snap;
 
     try {
-      return await vndirectQuote(symbol);
+      const providerOptions = options.fast ? { timeoutMs: 1_500, retries: 0 } : undefined;
+      return await vndirectQuote(symbol, providerOptions);
     } catch (primaryErr) {
       logger.warn("quote_primary_failed", {
         symbol,
         error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
       });
       const to = Math.floor(Date.now() / 1000);
-      const bars = await yahooHistory(symbol, to - 86400 * 14, to, "D");
+      const providerOptions = options.fast ? { timeoutMs: 1_500, retries: 0 } : undefined;
+      const bars = await yahooHistory(symbol, to - 86400 * 14, to, "D", providerOptions);
       const last = bars[bars.length - 1];
       const prev = bars.length > 1 ? bars[bars.length - 2] : null;
       return {
@@ -156,7 +182,7 @@ export async function getQuote(symbol: string): Promise<Quote> {
     }
   });
 
-  void db
+  if (options.persist !== false) void db
     .insert(priceSnapshotHistory)
     .values({
       symbol: quote.symbol,
@@ -173,7 +199,7 @@ export async function getQuote(symbol: string): Promise<Quote> {
     .onConflictDoNothing({ target: [priceSnapshotHistory.symbol, priceSnapshotHistory.time] })
     .catch((err) => logger.warn("snapshot_history_insert_failed", { symbol: quote.symbol, error: String(err) }));
 
-  void db
+  if (options.persist !== false) void db
     .insert(priceSnapshots)
     .values({
       symbol: quote.symbol,
@@ -207,17 +233,22 @@ export async function getQuote(symbol: string): Promise<Quote> {
   return quote;
 }
 
-export async function getQuotes(symbols: string[]): Promise<Quote[]> {
+export async function getQuotes(symbols: string[], options: { persist?: boolean; fast?: boolean; allowStale?: boolean; concurrency?: number } = {}): Promise<Quote[]> {
   if (symbols.length === 0) return [];
 
   const snaps = await loadFreshSnapshots(symbols);
   const missing = symbols.filter((s) => !snaps.has(s));
+  if (options.allowStale && missing.length > 0) {
+    const stale = await loadStaleSnapshots(missing);
+    for (const [symbol, quote] of stale) snaps.set(symbol, quote);
+  }
+  const upstreamMissing = symbols.filter((s) => !snaps.has(s));
 
-  if (missing.length > 0) {
+  if (upstreamMissing.length > 0) {
     const settled = await mapPool(
-      missing,
-      CONNECTOR_CONFIG.quoteConcurrency,
-      (s) => getQuote(s),
+      upstreamMissing,
+      options.concurrency ?? CONNECTOR_CONFIG.quoteConcurrency,
+      (s) => getQuote(s, options),
     );
     for (const r of settled) {
       if (r.status === "fulfilled") snaps.set(r.value.symbol, r.value);
@@ -301,32 +332,52 @@ function buildPulse(indexes: Quote[], breadth: MarketSnapshot["breadth"], sector
   };
 }
 
+function emptyOverview(): MarketSnapshot {
+  const generatedAt = new Date().toISOString();
+  const breadth = { advancing: 0, advancers: 0, unchanged: 0, declining: 0, decliners: 0, sample: 0, ratio: 0, scope: "featured" as const };
+  return {
+    indices: [], breadth, marketBreadth: breadth, largeCapBreadth: breadth, sectors: [],
+    pulse: { trend: "flat", trendScore: 0, breadth: "flat", breadthScore: 0, liquidity: "flat", liquidityScore: 0, foreignFlow: "unknown", risk: "medium", regime: "NEUTRAL", regimeLabel: "DATA SYNCING", summary: "Đang đồng bộ dữ liệu thị trường." },
+    liquidity: { totalVolume: 0, averageVolume: 0, status: "flat" }, foreignFlow: { status: "unknown", value: null },
+    topGainers: [], topLosers: [], topVolume: [], quotes: [], crypto: [], news: [],
+    quality: { generatedAt, ageSeconds: 0, partial: true, missingSymbols: [...INDICES.map((i) => i.code), ...FEATURED_SYMBOLS], stale: true, sources: [], confidence: 0 }, generatedAt,
+  };
+}
+
 export async function getMarketOverview(): Promise<MarketSnapshot> {
-  return cached("market:overview:v2", OVERVIEW_TTL_MS, async () => {
+  const refresh = cachedWithStaleFallback<MarketSnapshot>("market:overview:v3", OVERVIEW_TTL_MS, async () => {
     const started = Date.now();
     const indexCodes = INDICES.map((i) => i.code);
-    const [indexQuotes, quotes, cryptoResult] = await Promise.all([
-      getQuotes(indexCodes),
-      getQuotes(FEATURED_SYMBOLS),
-      cryptoPricesWithFallback().catch((err) => {
+    const requestedSymbols = [...new Set([...indexCodes, ...FEATURED_SYMBOLS])];
+    const [allQuotes, cryptoResult] = await Promise.all([
+      getQuotes(requestedSymbols, { persist: false, allowStale: true, fast: true, concurrency: 8 }),
+      withDeadline(cryptoPricesWithFallback().catch((err) => {
+        logger.warn("crypto_failed", { error: String(err) });
+        return [] as CryptoQuote[];
+      }), 1_200, [] as CryptoQuote[], "crypto").catch((err) => {
         logger.warn("crypto_failed", { error: String(err) });
         return [] as CryptoQuote[];
       }),
     ]);
+    const quoteBySymbol = new Map(allQuotes.map((quote) => [quote.symbol, quote]));
+    const indexQuotes = indexCodes.map((symbol) => quoteBySymbol.get(symbol)).filter((quote): quote is Quote => Boolean(quote));
+    const quotes = FEATURED_SYMBOLS.map((symbol) => quoteBySymbol.get(symbol)).filter((quote): quote is Quote => Boolean(quote));
     const indexByCode = new Map(indexQuotes.map((q) => [q.symbol, q]));
     const indices = INDICES.map((idx) => {
       const q = indexByCode.get(idx.code);
       return q ? { ...idx, ...q, primary: idx.code === "VNINDEX" } : null;
     }).filter((x): x is NonNullable<typeof x> => x !== null);
     const breadth = buildBreadth(quotes, "featured");
-    const marketUniverse = await loadMarketSnapshots();
+    const [marketUniverse, newsResult] = await Promise.all([
+      withDeadline(loadMarketSnapshots(), OVERVIEW_AUX_TIMEOUT_MS, [], "market-breadth"),
+      withDeadline(getNews({ page: 1, limit: 8, withTotal: false }), OVERVIEW_AUX_TIMEOUT_MS, { items: [], total: 0, page: 1, limit: 8 }, "news"),
+    ]);
     const marketBreadth = buildBreadth(marketUniverse.length > quotes.length ? marketUniverse : quotes, marketUniverse.length > quotes.length ? "market" : "featured");
     const largeCapBreadth = buildBreadth(quotes, "featured");
     const sectors = buildSectors(quotes);
     const sorted = [...quotes].sort((a, b) => (b.changePct ?? 0) - (a.changePct ?? 0));
     const topVolume = [...quotes].sort((a, b) => b.volume - a.volume).slice(0, 5);
     const totalVolume = quotes.reduce((sum, q) => sum + q.volume, 0);
-    const newsResult = await getNews({ page: 1, limit: 8 });
     const newsItems = newsResult.items.map((item) => ({
       id: item.id,
       title: item.title,
@@ -339,7 +390,7 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
     const generatedAt = new Date().toISOString();
     const sources = [...new Set([...indices, ...quotes].map((q) => q.source.replace(/-snapshot$/, "")))];
     const missingSymbols = [...indexCodes, ...FEATURED_SYMBOLS].filter((symbol) => !new Set([...indexQuotes, ...quotes].map((q) => q.symbol)).has(symbol));
-    await logJob("market_overview", "ok", `indices=${indices.length} quotes=${quotes.length} sectors=${sectors.length}`, Date.now() - started);
+    void logJob("market_overview", "ok", `indices=${indices.length} quotes=${quotes.length} sectors=${sectors.length}`, Date.now() - started);
     return {
       indices,
       breadth,
@@ -355,10 +406,14 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
       quotes,
       crypto: cryptoResult,
       news: newsItems,
-      quality: { generatedAt, ageSeconds: 0, partial: missingSymbols.length > 0, missingSymbols, stale: false, sources, confidence: quotes.length > 0 ? Math.min(...quotes.map((q) => q.confidence)) : 0 },
+      quality: { generatedAt, ageSeconds: 0, partial: missingSymbols.length > 0, missingSymbols, stale: [...indexQuotes, ...quotes].some((q) => q.source.includes("-stale-snapshot")), sources, confidence: quotes.length > 0 ? Math.min(...quotes.map((q) => q.confidence)) : 0 },
       generatedAt,
     };
-  });
+  }, { shouldCache: (snapshot) => snapshot.quotes.length > 0 || snapshot.indices.length > 0 });
+  const result = await withDeadline(refresh, OVERVIEW_TOTAL_TIMEOUT_MS, { value: emptyOverview(), stale: true }, "overview-total");
+  const generatedAtMs = Date.parse(result.value.generatedAt);
+  const ageSeconds = Number.isFinite(generatedAtMs) ? Math.max(0, Math.floor((Date.now() - generatedAtMs) / 1000)) : 0;
+  return { ...result.value, quality: { ...result.value.quality, ageSeconds, stale: result.value.quality.stale || result.stale } };
 }
 
 export async function searchSymbols(query: string): Promise<SymbolInfo[]> {
@@ -549,8 +604,9 @@ function scheduleNewsSync(): void {
 }
 
 /** Never throw on DB failure — Agent and news page keep working with empty/cached. */
-export async function getNews(opts: { page?: number; limit?: number; symbol?: string } = {}) {
+export async function getNews(opts: { page?: number; limit?: number; symbol?: string; withTotal?: boolean } = {}) {
   const page = Math.max(1, opts.page ?? 1);
+  const withTotal = opts.withTotal !== false;
   const limit = Math.min(50, Math.max(1, opts.limit ?? 20));
   const symbolKey = opts.symbol?.toUpperCase() ?? "";
   const cacheKey = `news:${page}:${limit}:${symbolKey}`;
@@ -578,10 +634,10 @@ export async function getNews(opts: { page?: number; limit?: number; symbol?: st
         .orderBy(desc(news.publishedAt))
         .limit(limit)
         .offset((page - 1) * limit),
-      db.select({ count: sql<number>`count(*)::int` }).from(news).where(where),
+      withTotal ? db.select({ count: sql<number>`count(*)::int` }).from(news).where(where) : Promise.resolve([{ count: 0 }]),
     ]);
     rows = rowResult;
-    count = countResult[0]?.count ?? 0;
+    count = withTotal ? countResult[0]?.count ?? 0 : rows.length;
   } catch (err) {
     logger.warn("get_news_db_failed", { error: String(err) });
     if (hit) return hit.value;
@@ -592,22 +648,8 @@ export async function getNews(opts: { page?: number; limit?: number; symbol?: st
   }
 
   if (rows.length === 0 && count === 0 && !opts.symbol) {
-    try {
-      if (newsSyncInFlight) {
-        await newsSyncInFlight;
-      } else {
-        lastNewsSync = Date.now();
-        await syncNews();
-      }
-      const [rowResult, countResult] = await Promise.all([
-        db.select().from(news).orderBy(desc(news.publishedAt)).limit(limit).offset((page - 1) * limit),
-        db.select({ count: sql<number>`count(*)::int` }).from(news),
-      ]);
-      rows = rowResult;
-      count = countResult[0]?.count ?? 0;
-    } catch (err) {
-      logger.warn("get_news_cold_sync_failed", { error: String(err) });
-    }
+    // Never block a user request on RSS cold sync. The scheduled refresh will populate the DB.
+    scheduleNewsSync();
   }
 
   const payload: NewsListPayload = { items: rows, total: count, page, limit };

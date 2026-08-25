@@ -546,26 +546,38 @@ export async function cachedWithStaleFallback<T>(
   key: string,
   ttlMs: number,
   loader: () => Promise<T>,
+  options: { shouldCache?: (value: T) => boolean } = {},
 ): Promise<{ value: T; stale: boolean }> {
   const hit = await sharedCacheGet<T>(key);
   if (hit !== undefined) {
     staleShadow.set(key, hit);
     return { value: hit, stale: false };
   }
-  try {
-    const value = await loader();
-    await sharedCacheSet(key, value, ttlMs);
-    if (staleShadow.size >= STALE_SHADOW_MAX) staleShadow.delete(staleShadow.keys().next().value as string);
-    staleShadow.set(key, value);
-    return { value, stale: false };
-  } catch (err) {
-    const shadow = staleShadow.get(key);
-    if (shadow !== undefined) {
-      logger.warn("cache_stale_fallback_used", { key, error: err instanceof Error ? err.message : String(err) });
-      return { value: shadow as T, stale: true };
-    }
-    throw err;
+
+  const startRefresh = () => {
+    const existing = inflightLoaders.get(key);
+    if (existing) return existing as Promise<T>;
+    const promise = (async () => {
+      const value = await loader();
+      if (options.shouldCache?.(value) ?? true) {
+        await sharedCacheSet(key, value, ttlMs);
+        if (staleShadow.size >= STALE_SHADOW_MAX) staleShadow.delete(staleShadow.keys().next().value as string);
+        staleShadow.set(key, value);
+      }
+      return value;
+    })().finally(() => inflightLoaders.delete(key));
+    inflightLoaders.set(key, promise);
+    return promise;
+  };
+
+  const shadow = staleShadow.get(key);
+  if (shadow !== undefined) {
+    // Serve stale immediately; only the background refresh pays upstream latency.
+    void startRefresh().catch((err) => logger.warn("cache_swr_refresh_failed", { key, error: err instanceof Error ? err.message : String(err) }));
+    return { value: shadow as T, stale: true };
   }
+
+  return { value: await startRefresh(), stale: false };
 }
 
 const rateBuckets = new Map<string, number[]>();

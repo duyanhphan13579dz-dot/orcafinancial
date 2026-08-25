@@ -20,6 +20,7 @@ import {
    ═══════════════════════════════════════════════════════════════════════ */
 
 const VNDIRECT = "vndirect-dchart";
+type ProviderFetchOptions = { timeoutMs?: number; retries?: number };
 
 interface DchartHistory {
   t: number[];
@@ -36,12 +37,13 @@ export async function vndirectHistory(
   from: number,
   to: number,
   resolution: Timeframe,
+  options: ProviderFetchOptions = {},
 ): Promise<Ohlcv[]> {
   return getBreaker(VNDIRECT).exec(async () => {
     const url = `https://dchart-api.vndirect.com.vn/dchart/history?symbol=${encodeURIComponent(
       symbol,
     )}&resolution=${resolution}&from=${from}&to=${to}`;
-    const res = await fetchWithRetry(url, { provider: VNDIRECT });
+    const res = await fetchWithRetry(url, { ...options, provider: VNDIRECT });
     const data = await readJsonSafe<DchartHistory>(res, VNDIRECT, url);
     if (!Array.isArray(data.t) || data.t.length === 0) {
       throw new ProviderError(VNDIRECT, `no data for ${symbol} (status=${data.s ?? "?"})`, {
@@ -73,10 +75,10 @@ export async function vndirectHistory(
   });
 }
 
-export async function vndirectQuote(symbol: string): Promise<Quote> {
+export async function vndirectQuote(symbol: string, options: ProviderFetchOptions = {}): Promise<Quote> {
   const to = Math.floor(Date.now() / 1000);
   const from = to - 86400 * 14;
-  const bars = await vndirectHistory(symbol, from, to, "D");
+  const bars = await vndirectHistory(symbol, from, to, "D", options);
   const last = bars[bars.length - 1];
   const prev = bars.length > 1 ? bars[bars.length - 2] : null;
   const validated = DataValidator.quote(
@@ -142,14 +144,14 @@ interface YahooChart {
   };
 }
 
-export async function yahooHistory(symbol: string, from: number, to: number, resolution: Timeframe): Promise<Ohlcv[]> {
+export async function yahooHistory(symbol: string, from: number, to: number, resolution: Timeframe, options: ProviderFetchOptions = {}): Promise<Ohlcv[]> {
   return getBreaker(YAHOO).exec(async () => {
     const interval = resolution === "D" ? "1d" : resolution === "60" ? "60m" : "15m";
     const ySymbol = /^[A-Z0-9]{3}$/.test(symbol) ? `${symbol}.VN` : symbol;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
       ySymbol,
     )}?period1=${from}&period2=${to}&interval=${interval}`;
-    const res = await fetchWithRetry(url, { provider: YAHOO });
+    const res = await fetchWithRetry(url, { ...options, provider: YAHOO });
     const data = await readJsonSafe<YahooChart>(res, YAHOO, url);
     const result = data.chart.result?.[0];
     if (!result?.timestamp?.length) {

@@ -86,6 +86,15 @@ export async function register() {
     console.error("[instrumentation] database readiness/self-ping failed to start:", err);
   }
 
+  // In serverless production, each instance may boot independently. Starting
+  // every scheduler in every instance creates duplicate DB/upstream load.
+  // Run schedulers only when this process is explicitly designated as a worker.
+  const runBackgroundSchedulers = process.env.RUN_BACKGROUND_SCHEDULERS === "1";
+  if (!runBackgroundSchedulers) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", msg: "background_schedulers_disabled", reason: "production_requires_explicit_worker" }));
+    return;
+  }
+
   try {
     const { startAlertDispatcher } = await import("@/lib/alerts");
     startAlertDispatcher();
