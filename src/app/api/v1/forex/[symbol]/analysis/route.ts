@@ -7,12 +7,13 @@ import {
 } from "@/lib/forex/timeframes";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export async function GET(
   req: NextRequest,
   c: { params: Promise<{ symbol: string }> },
 ) {
-  const l = checkRateLimit(req, 60);
+  const l = checkRateLimit(req, 90);
   if (l) return l;
   const { symbol } = await c.params;
   const sym = symbol.toUpperCase();
@@ -22,9 +23,13 @@ export async function GET(
     return fail(`Invalid timeframe for ${sym}: ${tf}`, 400);
   }
   try {
-    return ok(await runForexAnalysis(sym, tf), {
-      timezone: "Asia/Ho_Chi_Minh",
-    });
+    const data = await runForexAnalysis(sym, tf);
+    const response = ok(data, { timezone: "Asia/Ho_Chi_Minh" });
+    response.headers.set(
+      "Cache-Control",
+      "public, s-maxage=15, stale-while-revalidate=45",
+    );
+    return response;
   } catch (e) {
     return handleError(e, `forex_analysis:${symbol}`);
   }

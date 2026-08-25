@@ -18,7 +18,7 @@ import {
 import { ForexIntelligenceCard } from "@/components/forex-intelligence-card";
 
 const ChartSkeleton = () => (
-  <div className="h-[420px] w-full animate-pulse rounded-lg bg-slate-800/40 sm:h-[520px]" />
+  <div className="h-[360px] w-full animate-pulse rounded-lg bg-slate-800/40 sm:h-[440px] lg:h-[520px]" />
 );
 
 const ForexProChart = dynamic(
@@ -35,10 +35,12 @@ function freshnessDot(f?: string) {
 
 function ageLabel(ageMs?: number | null) {
   if (ageMs == null || !Number.isFinite(ageMs)) return null;
-  if (ageMs < 2000) return "Updated just now";
-  if (ageMs < 60_000) return `Updated ${(ageMs / 1000).toFixed(1)}s ago`;
-  return `Updated ${Math.round(ageMs / 60_000)}m ago`;
+  if (ageMs < 2000) return "just now";
+  if (ageMs < 60_000) return `${(ageMs / 1000).toFixed(1)}s`;
+  return `${Math.round(ageMs / 60_000)}m`;
 }
+
+const BAR_LIMIT = 90;
 
 export default function ForexDetail() {
   const symbol = String(useParams().symbol).toUpperCase();
@@ -48,26 +50,60 @@ export default function ForexDetail() {
   const [bars, setBars] = useState<Bar[]>([]);
   const [chartSource, setChartSource] = useState("");
   const [bundleLoading, setBundleLoading] = useState(true);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
   const [chartLoading, setChartLoading] = useState(false);
   const [bundleError, setBundleError] = useState<string | null>(null);
-  const [focusTime, setFocusTime] = useState<number | null>(null);
   const [showEma, setShowEma] = useState(true);
-  const [showBb, setShowBb] = useState(true);
+  const [showBb, setShowBb] = useState(false);
   const [showRsi, setShowRsi] = useState(true);
-  const [showMacd, setShowMacd] = useState(true);
+  const [showMacd, setShowMacd] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const initialDone = useRef(false);
+  const analysisGen = useRef(0);
 
+  const loadAnalysis = useCallback(
+    async (timeframe: string) => {
+      const gen = ++analysisGen.current;
+      setAnalysisLoading(true);
+      try {
+        const a = await api<any>(
+          `/forex/${symbol}/analysis?timeframe=${timeframe}`,
+          { timeoutMs: 25_000 },
+        );
+        if (analysisGen.current !== gen) return;
+        setBundle((prev: any) =>
+          prev
+            ? { ...prev, analysis: a.data, timeframe, light: false }
+            : {
+                analysis: a.data,
+                timeframe,
+                pair: { symbol, name: symbol },
+              },
+        );
+      } catch {
+        /* keep light shell */
+      } finally {
+        if (analysisGen.current === gen) setAnalysisLoading(false);
+      }
+    },
+    [symbol],
+  );
+
+  // Progressive: light bundle first paint → analysis in background
   useEffect(() => {
     const initialTf = defaultTimeframe(symbol);
     setTf(initialTf);
     initialDone.current = false;
-    setFocusTime(null);
     let cancelled = false;
     setBundleLoading(true);
     setBundleError(null);
     setBars([]);
+    setBundle(null);
 
-    void api<any>(`/forex/${symbol}/bundle?timeframe=${initialTf}&limit=120`)
+    void api<any>(
+      `/forex/${symbol}/bundle?timeframe=${initialTf}&limit=${BAR_LIMIT}&light=1`,
+      { timeoutMs: 12_000 },
+    )
       .then((env) => {
         if (cancelled) return;
         setBundle(env.data);
@@ -75,6 +111,7 @@ export default function ForexDetail() {
         setChartSource(env.data.source ?? "");
         setBundleLoading(false);
         initialDone.current = true;
+        void loadAnalysis(initialTf);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -86,33 +123,27 @@ export default function ForexDetail() {
     return () => {
       cancelled = true;
     };
-  }, [symbol]);
+  }, [symbol, loadAnalysis]);
 
   const loadTf = useCallback(
     async (next: string) => {
       setChartLoading(true);
       setBundleError(null);
-      setFocusTime(null);
       try {
         const o = await api<{ bars: Bar[] }>(
-          `/forex/${symbol}/ohlcv?timeframe=${next}&limit=120`,
+          `/forex/${symbol}/ohlcv?timeframe=${next}&limit=${BAR_LIMIT}`,
+          { timeoutMs: 12_000 },
         );
         setBars(o.data.bars ?? []);
         setChartSource(String(o.meta?.source ?? "yahoo"));
-        void api<any>(`/forex/${symbol}/analysis?timeframe=${next}`)
-          .then((a) => {
-            setBundle((prev: any) =>
-              prev ? { ...prev, analysis: a.data, timeframe: next } : prev,
-            );
-          })
-          .catch(() => undefined);
+        void loadAnalysis(next);
       } catch (err) {
         setBundleError(err instanceof Error ? err.message : String(err));
       } finally {
         setChartLoading(false);
       }
     },
-    [symbol],
+    [symbol, loadAnalysis],
   );
 
   const onSelectTf = (x: string) => {
@@ -121,7 +152,10 @@ export default function ForexDetail() {
     if (initialDone.current) void loadTf(x);
   };
 
-  const live = usePoll<any>(`/forex/${symbol}/price`, 5_000);
+  const live = usePoll<any>(`/forex/${symbol}/price`, 5_000, {
+    softTtlMs: 3_000,
+    hardTtlMs: 45_000,
+  });
   const pair = bundle?.pair;
   const q = live.data?.quote ?? bundle?.quote ?? null;
   const p = q ?? live.data?.price ?? bundle?.price;
@@ -154,22 +188,22 @@ export default function ForexDetail() {
   const spreadPips = p?.spreadPips as number | null | undefined;
 
   return (
-    <div className="mx-auto max-w-7xl space-y-4 px-0 sm:space-y-5">
-      <Link href="/forex" className="text-xs text-[#00d4ff]">
+    <div className="mx-auto max-w-7xl space-y-3 sm:space-y-4">
+      <Link href="/forex" className="inline-block text-xs text-[#00d4ff]">
         ← Forex market
       </Link>
 
-      {/* ── Phase 16 Header ── */}
-      <header className="panel flex flex-col gap-3 p-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#00d4ff]/15 text-sm font-black text-[#00d4ff]">
+      {/* Sticky compact header */}
+      <header className="panel sticky top-0 z-20 flex items-center gap-3 p-3 backdrop-blur supports-[backdrop-filter]:bg-slate-900/85 sm:static sm:flex-wrap sm:gap-4 sm:p-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5 sm:gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#00d4ff]/15 text-xs font-black text-[#00d4ff] sm:h-11 sm:w-11 sm:text-sm">
             {symbol === "DXY" ? "$" : symbol.slice(0, 2)}
           </div>
           <div className="min-w-0">
-            <h1 className="truncate text-xl font-black text-white sm:text-2xl">
+            <h1 className="truncate text-lg font-black text-white sm:text-2xl">
               {displayName}
             </h1>
-            <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
               <span className="inline-flex items-center gap-1">
                 <span
                   className={`inline-block h-1.5 w-1.5 rounded-full ${freshnessDot(freshness)}`}
@@ -180,48 +214,62 @@ export default function ForexDetail() {
               </span>
               {ageLabel(ageMs) && <span>{ageLabel(ageMs)}</span>}
               {spreadPips != null && Number.isFinite(spreadPips) && (
-                <span>Spread {spreadPips.toFixed(1)} pip</span>
+                <span className="hidden sm:inline">
+                  Spr {spreadPips.toFixed(1)}p
+                </span>
               )}
-              <span className="truncate">
-                {(p?.source ?? chartSource) || "multi-source"}
-              </span>
-              {fx?.session ? <span>· {fx.session.label}</span> : null}
+              {fx?.session ? (
+                <span className="hidden md:inline">· {fx.session.label}</span>
+              ) : null}
             </div>
           </div>
         </div>
 
-        <div className="sm:ml-auto sm:text-right">
-          <div className="font-mono text-3xl font-black tracking-tight text-white">
+        <div className="shrink-0 text-right">
+          <div className="font-mono text-2xl font-black tracking-tight text-white sm:text-3xl">
             {fmtNum(p?.price, p?.price && p.price > 1000 ? 2 : 5)}
           </div>
-          <div className={`font-bold ${changeColor(p?.changePercent)}`}>
+          <div className={`text-sm font-bold ${changeColor(p?.changePercent)}`}>
             {fmtPct(p?.changePercent)}
           </div>
         </div>
       </header>
 
-      {/* Mobile-first: Intelligence before chart */}
-      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-3">
+      {/* Mobile: signal first · Desktop: chart 2/3 + card 1/3 */}
+      <div className="flex flex-col gap-3 lg:grid lg:grid-cols-3 lg:gap-4">
         <div className="order-1 lg:order-2 lg:col-span-1">
-          <ForexIntelligenceCard
-            symbol={symbol}
-            timeframeLabel={timeframeLabel(tf)}
-            analysis={a}
-          />
+          {a ? (
+            <ForexIntelligenceCard
+              symbol={symbol}
+              timeframeLabel={timeframeLabel(tf)}
+              analysis={a}
+            />
+          ) : (
+            <div className="panel space-y-3 p-4">
+              <div className="h-4 w-24 animate-pulse rounded bg-slate-700/50" />
+              <div className="h-10 w-32 animate-pulse rounded bg-slate-700/40" />
+              <div className="h-20 animate-pulse rounded bg-slate-800/40" />
+              <p className="text-[10px] text-slate-500">
+                {analysisLoading || bundleLoading
+                  ? "Đang tính tín hiệu…"
+                  : "Chưa có phân tích"}
+              </p>
+            </div>
+          )}
         </div>
 
-        <div className="panel order-2 p-3 lg:order-1 lg:col-span-2">
-          <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-            <h2 className="font-semibold text-white">
-              Chart · {symbol}
+        <div className="panel order-2 p-2.5 sm:p-3 lg:order-1 lg:col-span-2">
+          <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-sm font-semibold text-white sm:text-base">
+              Chart
             </h2>
-            <div className="flex gap-1 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="flex gap-1 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {tfs.map((x) => (
                 <button
                   key={x}
                   type="button"
                   onClick={() => onSelectTf(x)}
-                  className={`min-h-9 shrink-0 rounded px-3 text-xs ${
+                  className={`min-h-9 shrink-0 rounded px-2.5 text-xs sm:px-3 ${
                     tf === x
                       ? "bg-[#00d4ff] text-[#0A2540]"
                       : "bg-slate-800 text-slate-400"
@@ -232,7 +280,7 @@ export default function ForexDetail() {
               ))}
             </div>
           </div>
-          <div className="mb-2 flex flex-wrap gap-2">
+          <div className="mb-2 flex flex-wrap gap-1.5">
             {(
               [
                 ["EMA", showEma, setShowEma],
@@ -256,124 +304,157 @@ export default function ForexDetail() {
             ))}
           </div>
           {bundleLoading && !bars.length ? (
-            <div className="flex h-[420px] items-center justify-center text-sm text-slate-500 sm:h-[520px]">
-              Đang tải chart…
-            </div>
+            <ChartSkeleton />
           ) : bars.length > 0 ? (
-            <div className={chartLoading ? "opacity-70" : ""}>
-              <ForexProChart
-                bars={bars}
-                height={typeof window !== "undefined" && window.innerWidth < 640 ? 400 : 520}
-                levels={levels}
-                focusTime={focusTime}
-                showEma={showEma}
-                showBb={showBb}
-                showRsi={showRsi}
-                showMacd={showMacd}
-              />
+            <div className={chartLoading ? "opacity-60" : ""}>
+              {/* CSS-driven height: mobile / tablet / desktop */}
+              <div className="h-[360px] sm:h-[440px] lg:h-[520px]">
+                <ForexProChart
+                  bars={bars}
+                  height={520}
+                  levels={levels}
+                  showEma={showEma}
+                  showBb={showBb}
+                  showRsi={showRsi}
+                  showMacd={showMacd}
+                />
+              </div>
             </div>
           ) : (
-            <div className="flex h-[420px] items-center justify-center text-sm text-rose-400 sm:h-[520px]">
+            <div className="flex h-[360px] items-center justify-center text-sm text-rose-400 sm:h-[440px]">
               {bundleError ?? "Không có dữ liệu OHLCV"}
             </div>
           )}
+          <div className="mt-1 text-[9px] text-slate-600">
+            {chartSource || "—"}
+            {analysisLoading ? " · analysis…" : ""}
+          </div>
         </div>
       </div>
 
-      {/* Analyst narrative */}
-      {analyst?.marketSummary && (
-        <div className="panel space-y-2 p-4 text-xs text-slate-300">
-          <h2 className="font-semibold text-white">AI Analyst Summary</h2>
-          <p>{analyst.marketSummary}</p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div className="rounded border border-emerald-900/40 bg-emerald-500/5 p-2">
-              <div className="text-[10px] font-semibold text-emerald-300">Bull case</div>
-              <p className="mt-1 text-[10px]">{analyst.bullCase}</p>
-            </div>
-            <div className="rounded border border-rose-900/40 bg-rose-500/5 p-2">
-              <div className="text-[10px] font-semibold text-rose-300">Bear case</div>
-              <p className="mt-1 text-[10px]">{analyst.bearCase}</p>
-            </div>
-          </div>
-          {analyst.invalidation && (
-            <p className="text-[10px] text-slate-500">
-              <span className="font-semibold text-slate-400">Invalidation:</span>{" "}
-              {analyst.invalidation}
-            </p>
-          )}
-        </div>
-      )}
-
       {a?.tradeSetup && (
-        <ForexTradeSetupPanel symbol={symbol} setup={a.tradeSetup as TradeSetupData} />
+        <ForexTradeSetupPanel
+          symbol={symbol}
+          setup={a.tradeSetup as TradeSetupData}
+        />
       )}
 
-      {mtf?.frames?.length > 0 && (
-        <div className="panel p-4">
-          <h2 className="mb-2 font-semibold text-white">Multi-Timeframe Trend</h2>
-          <p className="mb-3 text-[10px] text-slate-500">{mtf.summary}</p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
-            {mtf.frames.map((fr: any) => (
-              <div
-                key={fr.timeframe}
-                className="rounded border border-slate-800 p-2 text-xs"
-              >
-                <div className="font-semibold text-white">{fr.label}</div>
-                <div className="uppercase text-slate-400">{fr.bias}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Secondary intel — collapsible on mobile */}
+      {(mtf || fx || macro || analyst) && (
+        <div className="space-y-3">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between rounded-lg border border-slate-800 px-3 py-2 text-xs text-slate-300 lg:hidden"
+            onClick={() => setMoreOpen((v) => !v)}
+          >
+            <span>MTF · Session · Macro · Analyst</span>
+            <span>{moreOpen ? "▲" : "▼"}</span>
+          </button>
 
-      {fx && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="panel p-4 text-xs">
-            <h2 className="mb-1 font-semibold text-white">Session</h2>
-            <div className="text-lg text-[#00d4ff]">{fx.session.label}</div>
-            <div className="text-slate-400">
-              Vol {fx.session.volatility} · Liq {fx.session.liquidity}
-            </div>
-          </div>
-          <div className="panel p-4 text-xs">
-            <h2 className="mb-1 font-semibold text-white">DXY</h2>
-            <div className="text-slate-300">{fx.dxy.note}</div>
-          </div>
-          <div className="panel p-4 text-xs">
-            <h2 className="mb-1 font-semibold text-white">Strength bias</h2>
-            <div className="text-slate-300">{fx.pairBiasFromStrength.note}</div>
-          </div>
-        </div>
-      )}
-
-      {/* Macro calendar strip */}
-      {macro?.upcoming?.length > 0 && (
-        <div className="panel p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="font-semibold text-white">Macro calendar</h2>
-            <span className="text-[10px] text-slate-500">{macro.source}</span>
-          </div>
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {macro.upcoming.slice(0, 8).map((ev: any) => (
-              <div
-                key={ev.id}
-                className={`min-w-[140px] shrink-0 rounded border p-2 text-[10px] ${
-                  ev.impact === "EXTREME" || ev.impact === "HIGH"
-                    ? "border-rose-800/50 bg-rose-500/5"
-                    : "border-slate-800 bg-slate-900/30"
-                }`}
-              >
-                <div className="text-slate-500">
-                  {ev.flag} {ev.impact}
-                </div>
-                <div className="font-semibold text-white line-clamp-2">{ev.title}</div>
-                <div className="mt-1 text-slate-400">
-                  {ev.minutesUntil >= 0
-                    ? `in ${ev.minutesUntil < 60 ? `${ev.minutesUntil}m` : `${Math.round(ev.minutesUntil / 60)}h`}`
-                    : `${Math.abs(ev.minutesUntil)}m ago`}
+          <div
+            className={`space-y-3 ${
+              moreOpen ? "block" : "hidden lg:block"
+            }`}
+          >
+            {analyst?.marketSummary && (
+              <div className="panel space-y-2 p-3 text-xs text-slate-300 sm:p-4">
+                <h2 className="font-semibold text-white">AI Analyst</h2>
+                <p className="line-clamp-4 lg:line-clamp-none">
+                  {analyst.marketSummary}
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="rounded border border-emerald-900/40 bg-emerald-500/5 p-2">
+                    <div className="text-[10px] font-semibold text-emerald-300">
+                      Bull
+                    </div>
+                    <p className="mt-1 text-[10px]">{analyst.bullCase}</p>
+                  </div>
+                  <div className="rounded border border-rose-900/40 bg-rose-500/5 p-2">
+                    <div className="text-[10px] font-semibold text-rose-300">
+                      Bear
+                    </div>
+                    <p className="mt-1 text-[10px]">{analyst.bearCase}</p>
+                  </div>
                 </div>
               </div>
-            ))}
+            )}
+
+            {mtf?.frames?.length > 0 && (
+              <div className="panel p-3 sm:p-4">
+                <h2 className="mb-1 font-semibold text-white">Multi-Timeframe</h2>
+                <p className="mb-2 text-[10px] text-slate-500">{mtf.summary}</p>
+                <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-5 sm:gap-2">
+                  {mtf.frames.map((fr: any) => (
+                    <div
+                      key={fr.timeframe}
+                      className="rounded border border-slate-800 p-1.5 text-center text-[10px] sm:p-2 sm:text-xs"
+                    >
+                      <div className="font-semibold text-white">{fr.label}</div>
+                      <div className="uppercase text-slate-400">{fr.bias}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {fx && (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3">
+                <div className="panel p-3 text-xs">
+                  <h2 className="mb-0.5 font-semibold text-white">Session</h2>
+                  <div className="text-base text-[#00d4ff] sm:text-lg">
+                    {fx.session.label}
+                  </div>
+                  <div className="text-slate-400">
+                    Vol {fx.session.volatility} · Liq {fx.session.liquidity}
+                  </div>
+                </div>
+                <div className="panel p-3 text-xs">
+                  <h2 className="mb-0.5 font-semibold text-white">DXY</h2>
+                  <div className="text-slate-300">{fx.dxy.note}</div>
+                </div>
+                <div className="panel p-3 text-xs">
+                  <h2 className="mb-0.5 font-semibold text-white">Strength</h2>
+                  <div className="text-slate-300">
+                    {fx.pairBiasFromStrength.note}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {macro?.upcoming?.length > 0 && (
+              <div className="panel p-3 sm:p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <h2 className="font-semibold text-white">Macro</h2>
+                  <span className="text-[10px] text-slate-500">
+                    {macro.source}
+                  </span>
+                </div>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {macro.upcoming.slice(0, 6).map((ev: any) => (
+                    <div
+                      key={ev.id}
+                      className={`min-w-[128px] shrink-0 rounded border p-2 text-[10px] ${
+                        ev.impact === "EXTREME" || ev.impact === "HIGH"
+                          ? "border-rose-800/50 bg-rose-500/5"
+                          : "border-slate-800 bg-slate-900/30"
+                      }`}
+                    >
+                      <div className="text-slate-500">
+                        {ev.flag} {ev.impact}
+                      </div>
+                      <div className="line-clamp-2 font-semibold text-white">
+                        {ev.title}
+                      </div>
+                      <div className="mt-1 text-slate-400">
+                        {ev.minutesUntil >= 0
+                          ? `in ${ev.minutesUntil < 60 ? `${ev.minutesUntil}m` : `${Math.round(ev.minutesUntil / 60)}h`}`
+                          : `${Math.abs(ev.minutesUntil)}m ago`}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -55,11 +55,22 @@ function formatAge(ageMs?: number) {
   return `${Math.floor(ageMs / 60_000)}m`;
 }
 
+function SkeletonGrid() {
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div key={i} className="panel h-32 animate-pulse bg-slate-800/30 p-4" />
+      ))}
+    </div>
+  );
+}
+
 export default function ForexPage() {
-  // Phase 2: client poll ~5s aligned with price refresh policy
+  // 6s poll — soft cache keeps UI snappy
   const feed = usePoll<{ prices: Row[]; freshness: Record<string, unknown> }>(
     "/forex/prices",
-    5_000,
+    6_000,
+    { softTtlMs: 4_000, hardTtlMs: 60_000 },
   );
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
@@ -77,36 +88,44 @@ export default function ForexPage() {
   );
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap justify-between gap-3 items-end">
-        <div>
-          <div className="font-mono text-[10px] tracking-[.3em] text-[#00d4ff] uppercase">
-            Global Rates Monitor
+    <div className="mx-auto max-w-7xl space-y-4 sm:space-y-5">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-mono text-[10px] uppercase tracking-[.25em] text-[#00d4ff]">
+            Global Rates
           </div>
-          <h1 className="text-3xl font-black text-white mt-1">Forex, Vàng, Dầu & DXY</h1>
-          <p className="text-sm text-slate-400 mt-1">
-            26 cặp/chỉ số · Realtime tick · GMT+7
+          <h1 className="mt-1 text-2xl font-black text-white sm:text-3xl">
+            Forex · Vàng · Dầu · DXY
+          </h1>
+          <p className="mt-1 text-xs text-slate-400 sm:text-sm">
+            26 cặp · tick realtime · GMT+7
           </p>
         </div>
         <span className="inline-flex items-center gap-2 text-xs text-emerald-300">
-          <i className="h-2 w-2 rounded-full bg-emerald-400 live-dot" />
+          <i className="live-dot h-2 w-2 rounded-full bg-emerald-400" />
           LIVE
+          {feed.isValidating && (
+            <span className="text-[10px] text-slate-500">updating…</span>
+          )}
         </span>
       </div>
 
-      <div className="panel p-3 space-y-3">
+      <div className="panel sticky top-0 z-10 space-y-3 p-3 backdrop-blur supports-[backdrop-filter]:bg-slate-900/80">
         <input
-          className="Input w-full"
+          className="Input w-full min-h-11 text-base sm:text-sm"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Tìm EURUSD, USDVND, XAUUSD..."
+          placeholder="Tìm EURUSD, USDVND, XAUUSD…"
+          autoComplete="off"
+          enterKeyHint="search"
         />
-        <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+        <div className="flex gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {["all", "usd_cross", "vnd_pair", "gold", "oil", "index"].map((c) => (
             <button
               key={c}
+              type="button"
               onClick={() => setCategory(c)}
-              className={`shrink-0 min-h-10 rounded-lg border px-3 text-xs ${
+              className={`min-h-10 shrink-0 rounded-lg border px-3 text-xs ${
                 category === c
                   ? "border-[#00d4ff] bg-[#00d4ff]/15 text-[#00d4ff]"
                   : "border-slate-700 text-slate-400"
@@ -119,60 +138,70 @@ export default function ForexPage() {
       </div>
 
       {feed.error && !feed.data && (
-        <div className="panel border-rose-800 p-4 text-rose-300 text-sm">{feed.error}</div>
+        <div className="panel border-rose-800 p-4 text-sm text-rose-300">
+          {feed.error}
+        </div>
       )}
-      {feed.loading && !feed.data && (
-        <div className="panel p-12 text-center text-slate-500">Đang đồng bộ thị trường ngoại hối...</div>
-      )}
+      {feed.loading && !feed.data && <SkeletonGrid />}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
         {rows.map((r) => (
           <Link
             key={r.symbol}
             href={`/forex/${r.symbol}`}
             prefetch
-            className="panel p-4 hover:border-[#00d4ff]/50 transition active:scale-[.99]"
+            className="panel p-3 transition active:scale-[.99] hover:border-[#00d4ff]/40 sm:p-4"
           >
-            <div className="flex justify-between">
-              <div>
-                <div className="font-black text-white text-lg">{r.name}</div>
-                <div className="text-[10px] text-slate-500">
-                  {LABELS[r.category] ?? r.category} · {r.source}
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate text-base font-black text-white sm:text-lg">
+                  {r.name}
+                </div>
+                <div className="truncate text-[10px] text-slate-500">
+                  {LABELS[r.category] ?? r.category} · {r.symbol}
                 </div>
               </div>
-              <div className="text-right">
-                <span className={`font-mono font-bold ${changeColor(r.changePercent)}`}>
+              <div className="shrink-0 text-right">
+                <span
+                  className={`font-mono text-sm font-bold ${changeColor(r.changePercent)}`}
+                >
                   {fmtPct(r.changePercent)}
                 </span>
                 {r.freshness && (
-                  <div className={`text-[9px] font-mono mt-0.5 ${freshnessClass(r.freshness)}`}>
+                  <div
+                    className={`mt-0.5 font-mono text-[9px] ${freshnessClass(r.freshness)}`}
+                  >
                     {r.freshness}
                     {r.ageMs != null ? ` · ${formatAge(r.ageMs)}` : ""}
                   </div>
                 )}
               </div>
             </div>
-            <div className="text-2xl font-black text-white mt-4 font-mono">
+            <div className="mt-3 font-mono text-xl font-black text-white sm:text-2xl">
               {fmtNum(r.price, r.price > 1000 ? 2 : r.price < 10 ? 5 : 3)}
             </div>
-            <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-slate-500">
-              <span>Bid {fmtNum(r.bid, 5)}</span>
+            <div className="mt-2 grid grid-cols-3 gap-1 text-[10px] text-slate-500">
+              <span className="truncate">Bid {fmtNum(r.bid, 5)}</span>
               <span className="text-center">
                 {r.spreadPips != null
-                  ? `Spr ${fmtNum(r.spreadPips, 1)}p`
-                  : r.spread != null
-                    ? `Spr ${fmtNum(r.spread, 5)}`
-                    : "—"}
+                  ? `${fmtNum(r.spreadPips, 1)}p`
+                  : "—"}
               </span>
-              <span className="text-right">Ask {fmtNum(r.ask, 5)}</span>
+              <span className="truncate text-right">Ask {fmtNum(r.ask, 5)}</span>
             </div>
           </Link>
         ))}
       </div>
 
-      <div className="text-[10px] text-slate-600">
-        Phase 2 realtime: price poll 5s · current candle tick-merge · không phải lời khuyên đầu tư.
-      </div>
+      {!feed.loading && feed.data && rows.length === 0 && (
+        <div className="panel p-8 text-center text-sm text-slate-500">
+          Không có cặp khớp bộ lọc.
+        </div>
+      )}
+
+      <p className="text-[10px] text-slate-600">
+        Dữ liệu tham khảo · không phải lời khuyên đầu tư.
+      </p>
     </div>
   );
 }
