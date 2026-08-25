@@ -22,6 +22,7 @@ import {
 import { scoreSentimentHybrid } from "@/lib/llm";
 import { logger } from "@/lib/logger";
 import { analyzeSentiment } from "@/lib/sentiment";
+import { SECTOR_DEFINITIONS, type MarketPulse, type MarketSnapshot, type MarketStatus, type SectorSnapshot } from "@/types/market";
 
 export const FEATURED_SYMBOLS = [
   "VNM", "VIC", "VHM", "HPG", "FPT", "MWG", "VCB", "TCB", "BID", "CTG",
@@ -81,6 +82,22 @@ async function loadFreshSnapshots(symbols: string[]): Promise<Map<string, Quote>
     logger.warn("snapshot_batch_read_failed", { error: String(err) });
   }
   return out;
+}
+
+/** Read all fresh current snapshots for breadth without fabricating universe data. */
+async function loadMarketSnapshots(): Promise<Quote[]> {
+  try {
+    const cutoff = new Date(Date.now() - SNAPSHOT_FRESH_MS);
+    const rows = await db
+      .select()
+      .from(priceSnapshots)
+      .where(gte(priceSnapshots.updatedAt, cutoff))
+      .limit(2000);
+    return rows.map(snapshotToQuote);
+  } catch (err) {
+    logger.warn("market_snapshot_breadth_read_failed", { error: String(err) });
+    return [];
+  }
 }
 
 export async function getHistory(
@@ -210,11 +227,84 @@ export async function getQuotes(symbols: string[]): Promise<Quote[]> {
   return symbols.map((s) => snaps.get(s)).filter((q): q is Quote => Boolean(q));
 }
 
-export async function getMarketOverview() {
-  return cached("market:overview", OVERVIEW_TTL_MS, async () => {
+function statusFromChange(change: number): MarketStatus {
+  if (change > 0.05) return "up";
+  if (change < -0.05) return "down";
+  return "flat";
+}
+
+function buildBreadth(quotes: Quote[], scope: "featured" | "market"): MarketSnapshot["breadth"] {
+  const advancing = quotes.filter((q) => (q.changePct ?? 0) > 0.01).length;
+  const declining = quotes.filter((q) => (q.changePct ?? 0) < -0.01).length;
+  const unchanged = Math.max(0, quotes.length - advancing - declining);
+  return {
+    advancing,
+    advancers: advancing,
+    declining,
+    decliners: declining,
+    unchanged,
+    sample: quotes.length,
+    ratio: quotes.length ? (advancing - declining) / quotes.length : 0,
+    scope,
+  };
+}
+
+function buildSectors(quotes: Quote[]): SectorSnapshot[] {
+  const bySymbol = new Map(quotes.map((q) => [q.symbol, q]));
+  return SECTOR_DEFINITIONS.map((sector) => {
+    const stocks = sector.symbols.map((symbol) => bySymbol.get(symbol)).filter((q): q is Quote => Boolean(q));
+    const changes = stocks.map((q) => q.changePct).filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+    const averageChangePct = changes.length ? changes.reduce((sum, value) => sum + value, 0) / changes.length : null;
+    const advancing = stocks.filter((q) => (q.changePct ?? 0) > 0.01).length;
+    const declining = stocks.filter((q) => (q.changePct ?? 0) < -0.01).length;
+    const unchanged = Math.max(0, stocks.length - advancing - declining);
+    const strength = stocks.length ? Math.round(((advancing + unchanged * 0.5) / stocks.length) * 100) : null;
+    return {
+      id: sector.id,
+      label: sector.label,
+      shortLabel: sector.shortLabel,
+      averageChangePct,
+      strength,
+      advancing,
+      unchanged,
+      declining,
+      volume: stocks.reduce((sum, q) => sum + q.volume, 0),
+      stocks,
+    };
+  }).filter((sector) => sector.stocks.length > 0);
+}
+
+function buildPulse(indexes: Quote[], breadth: MarketSnapshot["breadth"], sectors: SectorSnapshot[], totalVolume: number): MarketPulse {
+  const primary = indexes.find((q) => q.symbol === "VNINDEX") ?? indexes[0];
+  const trendScore = primary?.changePct ?? 0;
+  const breadthScore = breadth.ratio * 100;
+  const sectorAverage = sectors.length ? sectors.reduce((sum, s) => sum + (s.averageChangePct ?? 0), 0) / sectors.length : 0;
+  const trend: MarketStatus = statusFromChange(trendScore);
+  const breadthStatus: MarketStatus = statusFromChange(breadthScore);
+  const liquidity: MarketStatus = totalVolume > 0 ? "up" : "flat";
+  const foreignFlow = "unknown" as const;
+  const risk: MarketPulse["risk"] = trend === "down" && breadthScore < -20 ? "high" : trend === "flat" || breadthScore < -5 ? "medium" : "low";
+  const regime: MarketPulse["regime"] = trend === "up" && breadthScore > 10 ? "BULLISH_TREND" : trend === "down" && breadthScore < -10 ? "BROAD_RISK_OFF" : Math.abs(sectorAverage) > 0.15 ? "SELECTIVE_ROTATION" : "NEUTRAL";
+  const regimeLabel = { BULLISH_TREND: "BROAD MARKET ADVANCE", BROAD_RISK_OFF: "BROAD RISK-OFF", SELECTIVE_ROTATION: "SELECTIVE ROTATION", BEARISH_TREND: "BEARISH TREND", NEUTRAL: "BALANCED MARKET" }[regime];
+  return {
+    trend,
+    trendScore,
+    breadth: breadthStatus,
+    breadthScore,
+    liquidity,
+    liquidityScore: totalVolume > 0 ? 100 : 0,
+    foreignFlow,
+    risk,
+    regime,
+    regimeLabel,
+    summary: primary ? `VN-Index ${primary.changePct == null ? "chưa có biến động" : `${primary.changePct >= 0 ? "+" : ""}${primary.changePct.toFixed(2)}%`}; breadth nhóm theo dõi ${breadthScore >= 0 ? "nghiêng tích cực" : "nghiêng tiêu cực"}.` : "Chưa đủ dữ liệu để xác định trạng thái thị trường.",
+  };
+}
+
+export async function getMarketOverview(): Promise<MarketSnapshot> {
+  return cached("market:overview:v2", OVERVIEW_TTL_MS, async () => {
     const started = Date.now();
     const indexCodes = INDICES.map((i) => i.code);
-
     const [indexQuotes, quotes, cryptoResult] = await Promise.all([
       getQuotes(indexCodes),
       getQuotes(FEATURED_SYMBOLS),
@@ -223,33 +313,50 @@ export async function getMarketOverview() {
         return [] as CryptoQuote[];
       }),
     ]);
-
     const indexByCode = new Map(indexQuotes.map((q) => [q.symbol, q]));
     const indices = INDICES.map((idx) => {
       const q = indexByCode.get(idx.code);
-      return q ? { ...idx, ...q } : null;
+      return q ? { ...idx, ...q, primary: idx.code === "VNINDEX" } : null;
     }).filter((x): x is NonNullable<typeof x> => x !== null);
-
-    const advancers = quotes.filter((q) => (q.changePct ?? 0) > 0.01).length;
-    const decliners = quotes.filter((q) => (q.changePct ?? 0) < -0.01).length;
-    const unchanged = quotes.length - advancers - decliners;
+    const breadth = buildBreadth(quotes, "featured");
+    const marketUniverse = await loadMarketSnapshots();
+    const marketBreadth = buildBreadth(marketUniverse.length > quotes.length ? marketUniverse : quotes, marketUniverse.length > quotes.length ? "market" : "featured");
+    const largeCapBreadth = buildBreadth(quotes, "featured");
+    const sectors = buildSectors(quotes);
     const sorted = [...quotes].sort((a, b) => (b.changePct ?? 0) - (a.changePct ?? 0));
-
-    await logJob(
-      "market_overview",
-      "ok",
-      `indices=${indices.length} quotes=${quotes.length}`,
-      Date.now() - started,
-    );
-
+    const topVolume = [...quotes].sort((a, b) => b.volume - a.volume).slice(0, 5);
+    const totalVolume = quotes.reduce((sum, q) => sum + q.volume, 0);
+    const newsResult = await getNews({ page: 1, limit: 8 });
+    const newsItems = newsResult.items.map((item) => ({
+      id: item.id,
+      title: item.title,
+      link: item.link,
+      sourceName: item.sourceName,
+      symbols: item.symbols,
+      publishedAt: item.publishedAt.toISOString(),
+      imageUrl: item.imageUrl,
+    }));
+    const generatedAt = new Date().toISOString();
+    const sources = [...new Set([...indices, ...quotes].map((q) => q.source.replace(/-snapshot$/, "")))];
+    const missingSymbols = [...indexCodes, ...FEATURED_SYMBOLS].filter((symbol) => !new Set([...indexQuotes, ...quotes].map((q) => q.symbol)).has(symbol));
+    await logJob("market_overview", "ok", `indices=${indices.length} quotes=${quotes.length} sectors=${sectors.length}`, Date.now() - started);
     return {
       indices,
-      breadth: { advancers, decliners, unchanged, sample: quotes.length },
+      breadth,
+      marketBreadth,
+      largeCapBreadth,
+      sectors,
+      pulse: buildPulse(indexQuotes, marketBreadth, sectors, totalVolume),
+      liquidity: { totalVolume, averageVolume: quotes.length ? totalVolume / quotes.length : 0, status: totalVolume > 0 ? "up" : "flat" },
+      foreignFlow: { status: "unknown", value: null },
       topGainers: sorted.slice(0, 5),
       topLosers: sorted.slice(-5).reverse(),
+      topVolume,
       quotes,
       crypto: cryptoResult,
-      generatedAt: new Date().toISOString(),
+      news: newsItems,
+      quality: { generatedAt, ageSeconds: 0, partial: missingSymbols.length > 0, missingSymbols, stale: false, sources, confidence: quotes.length > 0 ? Math.min(...quotes.map((q) => q.confidence)) : 0 },
+      generatedAt,
     };
   });
 }
