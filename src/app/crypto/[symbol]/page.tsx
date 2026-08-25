@@ -126,7 +126,7 @@ export default function CryptoDetail() {
     setError(null);
 
     void api<Bundle>(
-      `/crypto/${encodeURIComponent(symbol)}/bundle?timeframe=${encodeURIComponent(timeframe)}&limit=200`,
+      `/crypto/${encodeURIComponent(symbol)}/bundle?timeframe=${encodeURIComponent(timeframe)}&limit=120&light=1`,
     )
       .then((res) => {
         if (cancelled) return;
@@ -135,6 +135,20 @@ export default function CryptoDetail() {
         setChartSource(res.data.source ?? "");
         setLoading(false);
         initialDone.current = true;
+        // Keep the first paint focused on coin/price/OHLCV. Analysis is the
+        // expensive path and is hydrated after the chart is visible.
+        void api<Analysis>(
+          `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}`,
+        )
+          .then((analysisRes) => {
+            if (cancelled) return;
+            setBundle((prev) =>
+              prev
+                ? { ...prev, analysis: analysisRes.data, timeframe }
+                : prev,
+            );
+          })
+          .catch(() => undefined);
       })
       .catch(async (err) => {
         if (cancelled) return;
@@ -166,6 +180,18 @@ export default function CryptoDetail() {
             futures: null,
           });
           setError(null);
+          void api<Analysis>(
+            `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}`,
+          )
+            .then((analysisRes) => {
+              if (cancelled) return;
+              setBundle((prev) =>
+                prev
+                  ? { ...prev, analysis: analysisRes.data, timeframe }
+                  : prev,
+              );
+            })
+            .catch(() => undefined);
         } catch {
           setError(err instanceof Error ? err.message : String(err));
         }
@@ -198,11 +224,15 @@ export default function CryptoDetail() {
         })
         .catch(() => undefined);
     };
-    load();
+    // Intel is valuable but not part of the critical first paint. Waiting a
+    // short moment prevents its four upstream legs from competing with the
+    // chart/price bundle on a cold detail page.
+    const boot = window.setTimeout(load, 650);
     const id = setInterval(load, INTEL_POLL_MS);
     const off = whenVisible(load);
     return () => {
       cancelled = true;
+      window.clearTimeout(boot);
       clearInterval(id);
       off();
     };

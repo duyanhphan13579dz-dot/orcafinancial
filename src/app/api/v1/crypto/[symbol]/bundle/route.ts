@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
+import { sharedCacheGetOrSet } from "@/lib/connectors/redis-cache";
 import { getCryptoDetailBundle } from "@/lib/crypto/service";
 
 const V = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
@@ -22,16 +23,27 @@ export async function GET(
     1000,
     Math.max(20, Number(req.nextUrl.searchParams.get("limit") ?? 200)),
   );
+  const light = req.nextUrl.searchParams.get("light") === "1";
   try {
-    const data = await getCryptoDetailBundle(symbol.toUpperCase(), tf, limit);
+    const normalized = symbol.toUpperCase();
+    const ttlMs = light ? 15_000 : 10_000;
+    const cached = await sharedCacheGetOrSet(
+      `crypto:v1:bundle:${normalized}:${tf}:${limit}:${light ? "light" : "full"}`,
+      ttlMs,
+      () => getCryptoDetailBundle(normalized, tf, limit, { light }),
+    );
+    const data = cached.value;
     const response = ok(data, {
       timezone: "Asia/Ho_Chi_Minh",
       source: data.source,
+      cacheHit: cached.hit,
     });
     // Short CDN cache — SWR on server already serves DB-first
     response.headers.set(
       "Cache-Control",
-      "public, s-maxage=10, stale-while-revalidate=45",
+      light
+        ? "public, s-maxage=15, stale-while-revalidate=60"
+        : "public, s-maxage=10, stale-while-revalidate=45",
     );
     return response;
   } catch (e) {

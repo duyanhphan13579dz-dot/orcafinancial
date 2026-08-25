@@ -333,7 +333,7 @@ export async function latestCryptoPrices(limit = 100) {
   return result.rows;
 }
 
-export async function getCryptoCoin(symbol: string) {
+async function loadCryptoCoin(symbol: string) {
   const normalized = normalizeSymbol(symbol);
   const cached = coinCache.get(normalized);
   if (cached && Date.now() - cached.timestamp < COIN_CACHE_TTL) return cached.value;
@@ -356,6 +356,19 @@ export async function getCryptoCoin(symbol: string) {
   const result = { coin, price };
   coinCache.set(normalized, { value: result, timestamp: Date.now() });
   return result;
+}
+
+const coinInflight = new Map<string, Promise<CryptoCoinDetail>>();
+
+export function getCryptoCoin(symbol: string) {
+  const normalized = normalizeSymbol(symbol);
+  const existing = coinInflight.get(normalized);
+  if (existing) return existing;
+  const pending = loadCryptoCoin(normalized).finally(() => {
+    coinInflight.delete(normalized);
+  });
+  coinInflight.set(normalized, pending);
+  return pending;
 }
 
 export async function enrichCryptoProfile(symbol: string) {
@@ -438,7 +451,7 @@ async function persistCryptoBars(coinId: string, timeframe: string, bars: Ohlcv[
   }
 }
 
-export async function syncCryptoOhlcv(symbol: string, timeframe = "1h", limit = 200) {
+async function loadCryptoOhlcv(symbol: string, timeframe = "1h", limit = 200) {
   const normalized = normalizeSymbol(symbol);
   const safeLimit = normalizeLimit(limit, 20, 1000);
 
@@ -504,6 +517,25 @@ export async function syncCryptoOhlcv(symbol: string, timeframe = "1h", limit = 
     } as typeof cryptoCoins.$inferSelect);
 
   return { coin, bars, source: BINANCE_SOURCE, stale: false };
+}
+
+const ohlcvInflight = new Map<
+  string,
+  Promise<Awaited<ReturnType<typeof loadCryptoOhlcv>>>
+>();
+
+export function syncCryptoOhlcv(symbol: string, timeframe = "1h", limit = 200) {
+  const normalized = normalizeSymbol(symbol);
+  const safeLimit = normalizeLimit(limit, 20, 1000);
+  const key = `${normalized}:${timeframe}:${safeLimit}`;
+  const existing = ohlcvInflight.get(key);
+  if (existing) return existing;
+
+  const pending = loadCryptoOhlcv(normalized, timeframe, safeLimit).finally(() => {
+    ohlcvInflight.delete(key);
+  });
+  ohlcvInflight.set(key, pending);
+  return pending;
 }
 
 export async function getCryptoOhlcv(symbol: string, timeframe: string, limit: number) {
@@ -683,31 +715,48 @@ export async function getCryptoMarketSnapshot(
   };
 }
 
-export async function getCryptoDetailBundle(symbol: string, timeframe = "1h", limit = 200) {
+export async function getCryptoDetailBundle(
+  symbol: string,
+  timeframe = "1h",
+  limit = 200,
+  options: { light?: boolean } = {},
+) {
   const sym = normalizeSymbol(symbol);
   if (isStablecoin(sym)) {
     throw new Error(
       `${sym} là stablecoin (đồng định giá ~$1), không có cặp ${sym}/USDT trên Binance để vẽ chart. Chọn BTC, ETH, SOL hoặc coin khác.`,
     );
   }
-  const [detail, ohlcv, analysis, sentiment] = await Promise.all([
-    (async () => {
-      await ensureCryptoFresh(12_000).catch(() => undefined);
-      return getCryptoCoin(sym).catch(() => null);
-    })(),
-    syncCryptoOhlcv(sym, timeframe, limit),
+
+  const detailPromise = (async () => {
+    await ensureCryptoFresh(12_000).catch(() => undefined);
+    return getCryptoCoin(sym).catch(() => null);
+  })();
+  const ohlcvPromise = syncCryptoOhlcv(sym, timeframe, limit);
+
+  if (options.light) {
+    const [detail, ohlcv] = await Promise.all([detailPromise, ohlcvPromise]);
+    return {
+      coin: detail?.coin ?? ohlcv.coin,
+      price: detail?.price ?? null,
+      bars: ohlcv.bars,
+      timeframe,
+      source: ohlcv.source,
+      analysis: null,
+      futures: null,
+      light: true,
+    };
+  }
+
+  const [detail, ohlcv, analysis] = await Promise.all([
+    detailPromise,
+    ohlcvPromise,
     runCryptoAnalysis(sym, timeframe).catch(() => null),
-    getLatestCryptoSentiment(sym).catch(() => null),
   ]);
 
-  const change24h =
-    detail?.price?.change24h != null ? Number(detail.price.change24h) : null;
-
-  const futures = await getCryptoFutures(sym, change24h).catch((err) => {
-    log.warn("futures_bundle_failed", { symbol: sym, error: String(err) });
-    return null;
-  });
-
+  // Futures/order-flow/whale data is already delivered by the batched /intel
+  // endpoint on the client. Keeping it out of the first-paint bundle avoids
+  // four additional upstream calls on the critical path.
   return {
     coin: detail?.coin ?? ohlcv.coin,
     price: detail?.price ?? null,
@@ -715,8 +764,7 @@ export async function getCryptoDetailBundle(symbol: string, timeframe = "1h", li
     timeframe,
     source: ohlcv.source,
     analysis,
-    sentiment,
-    futures,
+    futures: null,
   };
 }
 

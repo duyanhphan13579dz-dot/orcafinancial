@@ -307,7 +307,7 @@ export async function latestForexPrices() {
   return r.rows;
 }
 
-export async function getLiveQuoteContract(
+async function loadLiveQuoteContract(
   symbol: string,
 ): Promise<ForexQuoteContract | null> {
   const sym = symbol.toUpperCase();
@@ -382,6 +382,23 @@ export async function getLiveQuoteContract(
   }
 }
 
+const quoteInflight = new Map<string, Promise<ForexQuoteContract | null>>();
+
+export function getLiveQuoteContract(symbol: string) {
+  const normalized = symbol.toUpperCase();
+  const cached = quoteContractCache.get(normalized);
+  if (cached && Date.now() - cached.timestamp < LIVE_QUOTE_CACHE_TTL) {
+    return Promise.resolve(cached.value);
+  }
+  const existing = quoteInflight.get(normalized);
+  if (existing) return existing;
+  const pending = loadLiveQuoteContract(normalized).finally(() => {
+    quoteInflight.delete(normalized);
+  });
+  quoteInflight.set(normalized, pending);
+  return pending;
+}
+
 export function mapRowsToContracts(
   rows: Array<Record<string, unknown>>,
 ): ForexQuoteContract[] {
@@ -409,7 +426,7 @@ export function mapRowsToContracts(
   });
 }
 
-export async function getForexPair(symbol: string) {
+async function loadForexPair(symbol: string) {
   const normalized = symbol.toUpperCase();
   const cached = pairCache.get(normalized);
   if (cached && Date.now() - cached.timestamp < PAIR_CACHE_TTL) {
@@ -437,6 +454,19 @@ export async function getForexPair(symbol: string) {
   const result = { pair, price };
   pairCache.set(normalized, { value: result, timestamp: Date.now() });
   return result;
+}
+
+const pairInflight = new Map<string, Promise<ForexPairDetail>>();
+
+export function getForexPair(symbol: string) {
+  const normalized = symbol.toUpperCase();
+  const existing = pairInflight.get(normalized);
+  if (existing) return existing;
+  const pending = loadForexPair(normalized).finally(() => {
+    pairInflight.delete(normalized);
+  });
+  pairInflight.set(normalized, pending);
+  return pending;
 }
 
 interface DbOhlcv {
@@ -522,7 +552,7 @@ async function persistBars(
   }
 }
 
-export async function syncForexOhlcv(
+async function loadForexOhlcv(
   symbol: string,
   timeframe: string,
   limit = 120,
@@ -625,6 +655,25 @@ export async function syncForexOhlcv(
     }
     throw netErr;
   }
+}
+
+const ohlcvInflight = new Map<
+  string,
+  Promise<Awaited<ReturnType<typeof loadForexOhlcv>>>
+>();
+
+export function syncForexOhlcv(symbol: string, timeframe: string, limit = 120) {
+  const normalized = symbol.toUpperCase();
+  const safeLimit = Math.min(200, Math.max(40, limit));
+  const key = memKey(normalized, timeframe, safeLimit);
+  const existing = ohlcvInflight.get(key);
+  if (existing) return existing;
+
+  const pending = loadForexOhlcv(normalized, timeframe, safeLimit).finally(() => {
+    ohlcvInflight.delete(key);
+  });
+  ohlcvInflight.set(key, pending);
+  return pending;
 }
 
 export async function runMtfAnalysis(symbol: string) {

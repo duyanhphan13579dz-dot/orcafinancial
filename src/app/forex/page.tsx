@@ -149,7 +149,7 @@ export default function ForexPage() {
           <Link
             key={r.symbol}
             href={`/forex/${r.symbol}`}
-            prefetch
+            prefetch={false}
             className="panel p-3 transition active:scale-[.99] hover:border-[#00d4ff]/40 sm:p-4"
           >
             <div className="flex items-start justify-between gap-2">

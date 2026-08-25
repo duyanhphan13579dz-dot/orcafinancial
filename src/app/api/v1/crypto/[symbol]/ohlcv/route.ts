@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
-
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
+import { sharedCacheGetOrSet } from "@/lib/connectors/redis-cache";
 import { getCryptoOhlcv } from "@/lib/crypto/service";
 import { fetchBinanceKlines } from "@/lib/crypto/connectors";
 
@@ -9,6 +9,14 @@ export const maxDuration = 10;
 
 const VALID = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
 const HARD_MS = 5_500;
+const CACHE_TTL_MS: Record<string, number> = {
+  "1m": 15_000,
+  "5m": 30_000,
+  "15m": 60_000,
+  "1h": 120_000,
+  "4h": 300_000,
+  "1d": 900_000,
+};
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -17,6 +25,13 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
       setTimeout(() => reject(new Error(`${label}_timeout`)), ms),
     ),
   ]);
+}
+
+interface CachedOhlcv {
+  symbol: string;
+  timeframe: string;
+  bars: Awaited<ReturnType<typeof getCryptoOhlcv>>["bars"];
+  source: string;
 }
 
 export async function GET(
@@ -28,65 +43,71 @@ export async function GET(
 
   const { symbol } = await ctx.params;
   const normalized = symbol.toUpperCase();
-
   const timeframe = req.nextUrl.searchParams.get("timeframe") ?? "1h";
-  if (!VALID.has(timeframe)) {
-    return fail("Invalid timeframe", 400);
-  }
+  if (!VALID.has(timeframe)) return fail("Invalid timeframe", 400);
 
   const requestedLimit = Number(req.nextUrl.searchParams.get("limit") ?? 200);
   const limit = Math.min(
     300,
     Math.max(50, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 200),
   );
-
-  const pair = `${normalized}USDT`;
+  const key = `crypto:v1:ohlcv:${normalized}:${timeframe}:${limit}`;
+  const ttlMs = CACHE_TTL_MS[timeframe] ?? 120_000;
 
   try {
-    let bars;
-    let source = "binance-crypto";
+    const cached = await sharedCacheGetOrSet<CachedOhlcv>(key, ttlMs, async () => {
+      try {
+        const data = await withTimeout(
+          getCryptoOhlcv(normalized, timeframe, limit),
+          HARD_MS,
+          "crypto_ohlcv_svc",
+        );
+        return {
+          symbol: normalized,
+          timeframe,
+          bars: data.bars,
+          source: data.source,
+        };
+      } catch (inner) {
+        const pair = `${normalized}USDT`;
+        const bars = await withTimeout(
+          fetchBinanceKlines(pair, timeframe, limit),
+          HARD_MS,
+          "binance_klines",
+        );
+        console.warn(
+          "[crypto_ohlcv] service/timeout → direct Binance",
+          normalized,
+          timeframe,
+          inner instanceof Error ? inner.message : inner,
+        );
+        return {
+          symbol: normalized,
+          timeframe,
+          bars,
+          source: "binance-crypto-direct",
+        };
+      }
+    });
 
-    try {
-      const data = await withTimeout(
-        getCryptoOhlcv(normalized, timeframe, limit),
-        HARD_MS,
-        "crypto_ohlcv_svc",
-      );
-      bars = data.bars;
-      source = data.source;
-    } catch (inner) {
-      bars = await withTimeout(
-        fetchBinanceKlines(pair, timeframe, limit),
-        HARD_MS,
-        "binance_klines",
-      );
-      source = "binance-crypto-direct";
-      console.warn(
-        "[crypto_ohlcv] service/timeout → direct Binance",
-        normalized,
-        timeframe,
-        inner instanceof Error ? inner.message : inner,
-      );
-    }
-
-    if (!bars?.length) {
+    if (!cached.value.bars?.length) {
       return fail(`Không có dữ liệu chart cho ${normalized} (${timeframe})`, 502);
     }
 
     const response = ok(
-      { symbol: normalized, timeframe, bars },
-      { source, timezone: "Asia/Ho_Chi_Minh" },
-    );
-
-    response.headers.set(
-      "Cache-Control",
-      "public, s-maxage=20, stale-while-revalidate=90",
+      cached.value,
+      {
+        source: cached.value.source,
+        timezone: "Asia/Ho_Chi_Minh",
+        cacheHit: cached.hit,
+      },
+      { cacheSeconds: Math.max(5, Math.floor(ttlMs / 1000)) },
     );
     response.headers.set(
       "Vercel-CDN-Cache-Control",
-      "public, s-maxage=20, stale-while-revalidate=90",
+      `public, s-maxage=${Math.max(5, Math.floor(ttlMs / 1000))}, stale-while-revalidate=90`,
     );
-
+    response.headers.set("X-Cache-Hit", cached.hit);
     return response;
   } catch (err) {
     return handleError(err, `crypto_ohlcv:${normalized}:${timeframe}`);
