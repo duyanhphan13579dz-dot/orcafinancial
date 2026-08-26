@@ -1,0 +1,14 @@
+import { randomUUID } from "node:crypto";
+import { and, eq } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/db";
+import { stockPortfolioHoldings } from "@/db/schema";
+import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
+
+function getSession(req: NextRequest) { const existing = req.cookies.get("vnstock_session")?.value; const valid = Boolean(existing && /^[a-f0-9-]{36}$/i.test(existing)); return { id: valid ? existing as string : randomUUID(), isNew: !valid }; }
+function withCookie(res: NextResponse, id: string, isNew: boolean) { if (isNew) res.cookies.set("vnstock_session", id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: 31536000, path: "/" }); return res; }
+function validSymbol(value?: string) { const symbol = value?.toUpperCase().trim() ?? ""; return /^[A-Z0-9]{1,15}$/.test(symbol) ? symbol : null; }
+
+export async function GET(req: NextRequest) { const limited = checkRateLimit(req, 60); if (limited) return limited; const s = getSession(req); try { const rows = await db.select().from(stockPortfolioHoldings).where(eq(stockPortfolioHoldings.sessionId, s.id)); return withCookie(ok({ items: rows, count: rows.length }), s.id, s.isNew); } catch (err) { return handleError(err, "stock-portfolio_get"); } }
+export async function POST(req: NextRequest) { const limited = checkRateLimit(req, 30); if (limited) return limited; const s = getSession(req); try { const body = await req.json() as { symbol?: string; quantity?: number; averageCost?: number; notes?: string }; const symbol = validSymbol(body.symbol); if (!symbol || typeof body.quantity !== "number" || body.quantity < 0 || typeof body.averageCost !== "number" || body.averageCost < 0) return fail("holding payload không hợp lệ", 400); const [saved] = await db.insert(stockPortfolioHoldings).values({ sessionId: s.id, symbol, quantity: body.quantity, averageCost: body.averageCost, notes: body.notes?.slice(0, 500) ?? "", updatedAt: new Date() }).onConflictDoUpdate({ target: [stockPortfolioHoldings.sessionId, stockPortfolioHoldings.symbol], set: { quantity: body.quantity, averageCost: body.averageCost, notes: body.notes?.slice(0, 500) ?? "", updatedAt: new Date() } }).returning(); return withCookie(ok(saved), s.id, s.isNew); } catch (err) { return handleError(err, "stock-portfolio_post"); } }
+export async function DELETE(req: NextRequest) { const limited = checkRateLimit(req, 30); if (limited) return limited; const s = getSession(req); const symbol = validSymbol(req.nextUrl.searchParams.get("symbol") ?? undefined); if (!symbol) return fail("Invalid symbol", 400); try { await db.delete(stockPortfolioHoldings).where(and(eq(stockPortfolioHoldings.sessionId, s.id), eq(stockPortfolioHoldings.symbol, symbol))); return withCookie(ok({ symbol, removed: true }), s.id, s.isNew); } catch (err) { return handleError(err, "stock-portfolio_delete"); } }

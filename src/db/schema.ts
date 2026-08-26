@@ -464,3 +464,63 @@ export const stockReportHistory = pgTable(
   },
   (t) => [index("stock_report_history_symbol_idx").on(t.symbol, t.generatedAt), index("stock_report_history_session_idx").on(t.sessionId, t.generatedAt)],
 );
+
+export const stockPortfolioHoldings = pgTable(
+  "stock_portfolio_holdings",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: varchar("session_id", { length: 64 }).notNull(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    quantity: doublePrecision("quantity").notNull().default(0),
+    averageCost: doublePrecision("average_cost").notNull().default(0),
+    notes: text("notes").notNull().default(""),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("stock_portfolio_holdings_session_symbol_uq").on(t.sessionId, t.symbol), index("stock_portfolio_holdings_session_idx").on(t.sessionId, t.updatedAt)],
+);
+
+export const stockUserPreferences = pgTable(
+  "stock_user_preferences",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: varchar("session_id", { length: 64 }).notNull().unique(),
+    riskProfile: varchar("risk_profile", { length: 20 }).notNull().default("balanced"),
+    horizon: varchar("horizon", { length: 20 }).notNull().default("medium"),
+    maxPositionPct: doublePrecision("max_position_pct").notNull().default(10),
+    alertThresholdPct: doublePrecision("alert_threshold_pct").notNull().default(5),
+    includeEstimateData: boolean("include_estimate_data").notNull().default(false),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+export const stockAlertRules = pgTable(
+  "stock_alert_rules",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: varchar("session_id", { length: 64 }).notNull(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    type: varchar("type", { length: 20 }).notNull(),
+    threshold: doublePrecision("threshold"),
+    enabled: boolean("enabled").notNull().default(true),
+    lastTriggeredAt: timestamp("last_triggered_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("stock_alert_rules_session_idx").on(t.sessionId, t.enabled), index("stock_alert_rules_symbol_idx").on(t.symbol, t.type)],
+);
+
+export const stockAlertEvents = pgTable(
+  "stock_alert_events",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: varchar("session_id", { length: 64 }).notNull(),
+    ruleId: integer("rule_id"),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    type: varchar("type", { length: 20 }).notNull(),
+    severity: varchar("severity", { length: 15 }).notNull(),
+    message: text("message").notNull(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("stock_alert_events_session_idx").on(t.sessionId, t.createdAt), index("stock_alert_events_unread_idx").on(t.sessionId, t.readAt)],
+);
