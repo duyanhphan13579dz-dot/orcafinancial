@@ -30,11 +30,17 @@ import { logger } from "@/lib/logger";
 /** Fetch (or generate) the full quarterly financial data for a symbol. */
 export async function ensureQuarterlyFinancials(symbol: string, numQuarters = 4): Promise<FinancialQuarter[]> {
   // Check if we already have enough persisted
-  const existing = await db
-    .select()
-    .from(financialStatements)
-    .where(eq(financialStatements.symbol, symbol))
-    .orderBy(desc(financialStatements.fiscalYear), desc(financialStatements.period));
+  let existing: Array<typeof financialStatements.$inferSelect> = [];
+  try {
+    existing = await db
+      .select()
+      .from(financialStatements)
+      .where(eq(financialStatements.symbol, symbol))
+      .orderBy(desc(financialStatements.fiscalYear), desc(financialStatements.period));
+  } catch (err) {
+    // A missing/unavailable DB must not prevent degraded, clearly disclosed reports.
+    logger.warn("financial_statements_db_unavailable_using_market_fallback", { symbol, error: String(err) });
+  }
 
   const byKey = new Map<string, { type: StatementType; period: string; fiscalYear: number; data: any }>();
   for (const row of existing) {
@@ -183,11 +189,17 @@ export async function getProfile(symbol: string): Promise<CompanyProfile> {
 }
 
 async function getProfileUncached(symbol: string): Promise<CompanyProfile> {
-  const existing = await db.select().from(companyProfiles).where(eq(companyProfiles.symbol, symbol)).limit(1);
+  let existing: Array<typeof companyProfiles.$inferSelect> = [];
+  try {
+    existing = await db.select().from(companyProfiles).where(eq(companyProfiles.symbol, symbol)).limit(1);
+  } catch (err) {
+    logger.warn("company_profile_db_unavailable_using_market_fallback", { symbol, error: String(err) });
+  }
   if (existing.length > 0) {
     const row = existing[0];
     // Try to enrich with real company name
-    const companyRow = await db.select().from(companies).where(eq(companies.symbol, symbol)).limit(1);
+    let companyRow: Array<typeof companies.$inferSelect> = [];
+    try { companyRow = await db.select().from(companies).where(eq(companies.symbol, symbol)).limit(1); } catch (err) { logger.warn("company_db_unavailable_using_profile_symbol", { symbol, error: String(err) }); }
     return {
       symbol,
       name: companyRow[0]?.name ?? symbol,
@@ -214,8 +226,9 @@ async function getProfileUncached(symbol: string): Promise<CompanyProfile> {
   const quarters = await ensureQuarterlyFinancials(symbol, 1);
   const shares = quarters[0]?.income.sharesOutstanding ?? 1000;
 
-  // Look up company name from companies table
-  const companyRow = await db.select().from(companies).where(eq(companies.symbol, symbol)).limit(1);
+  // Look up company name from companies table when available.
+  let companyRow: Array<typeof companies.$inferSelect> = [];
+  try { companyRow = await db.select().from(companies).where(eq(companies.symbol, symbol)).limit(1); } catch (err) { logger.warn("company_db_unavailable_using_symbol_name", { symbol, error: String(err) }); }
   const name = companyRow[0]?.name ?? symbol;
   const exchange = companyRow[0]?.exchange ?? "HOSE";
 
