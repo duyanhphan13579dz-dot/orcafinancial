@@ -10,6 +10,8 @@ import type { BacktestResult } from "@/lib/stock-intelligence/backtest-engine";
 import type { CrossModuleContext } from "@/lib/stock-intelligence/cross-module-engine";
 import type { BusinessIntelligence } from "@/lib/stock-intelligence/moat-engine";
 import type { InvestmentThesis } from "@/lib/stock-intelligence/investment-thesis";
+import fs from "node:fs";
+import path from "node:path";
 
 export interface StockAnalysisPdfPayload {
   symbol: string;
@@ -29,8 +31,8 @@ export interface StockAnalysisPdfPayload {
   dataConfidence: number;
 }
 
-const FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-const FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
+const FONT = path.join(process.cwd(), "public/fonts/DejaVuSans.ttf");
+const FONT_BOLD = path.join(process.cwd(), "public/fonts/DejaVuSans-Bold.ttf");
 const BLUE = "#0A2540";
 const MUTED = "#55718d";
 const LINE = "#d5e0ea";
@@ -48,9 +50,17 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     doc.on("data", (chunk: Buffer) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
-    try { doc.registerFont("orca", FONT).registerFont("orca-bold", FONT_BOLD); } catch { /* system fallback */ }
-    const regular = "orca";
-    const bold = "orca-bold";
+    let regular = "Helvetica";
+    let bold = "Helvetica-Bold";
+    try {
+      if (fs.existsSync(FONT) && fs.existsSync(FONT_BOLD)) {
+        doc.registerFont("orca", FONT).registerFont("orca-bold", FONT_BOLD);
+        regular = "orca";
+        bold = "orca-bold";
+      }
+    } catch {
+      // PDFKit's built-in fonts keep report generation alive on restricted runtimes.
+    }
     const title = (text: string) => { if (doc.y > 700) doc.addPage(); doc.moveDown(0.5).font(bold).fontSize(15).fillColor(BLUE).text(text); doc.moveDown(0.18).strokeColor(LINE).moveTo(48, doc.y).lineTo(547, doc.y).stroke(); doc.moveDown(0.35); };
     const paragraph = (text: string, color = "#172b3f") => doc.font(regular).fontSize(9.4).fillColor(color).text(safeText(text), { lineGap: 2.2, paragraphGap: 4 });
     const row = (label: string, value: string, color = "#172b3f") => { doc.font(regular).fontSize(9).fillColor(MUTED).text(label, 54, doc.y, { width: 185, continued: true }); doc.font(bold).fillColor(color).text(`  ${value}`); };

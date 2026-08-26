@@ -1117,7 +1117,14 @@ export default function StockPage({
           { credentials: "include" },
         );
         if (!response.ok) {
-          throw new Error("Không thể tạo báo cáo phân tích lúc này.");
+          let detail = "Không thể tạo báo cáo phân tích lúc này.";
+          try {
+            const body = (await response.json()) as { error?: string; meta?: { code?: string } };
+            if (body.error) detail = `${body.error}${body.meta?.code ? ` [${body.meta.code}]` : ""}`;
+          } catch {
+            detail = `Không thể tạo báo cáo phân tích lúc này (HTTP ${response.status}).`;
+          }
+          throw new Error(detail);
         }
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
