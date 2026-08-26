@@ -19,9 +19,9 @@ export const FOREX_CACHE = {
   /** Analysis payload (heavier) */
   analysisTtlMs: 18_000,
   /** Hard wall-clock for upstream network in route handlers */
-  hardDeadlineMs: 4_500,
+  hardDeadlineMs: 3_800,
   /** Soft deadline for preferred path before fallback */
-  softDeadlineMs: 3_200,
+  softDeadlineMs: 3_100,
 } as const;
 
 export function pricesKey() {

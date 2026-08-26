@@ -139,6 +139,7 @@ export default function CryptoDetail() {
 
     void api<Bundle>(
       `/crypto/${encodeURIComponent(symbol)}/bundle?timeframe=${encodeURIComponent(timeframe)}&limit=120&light=1`,
+      { timeoutMs: 4_200 },
     )
       .then((res) => {
         if (cancelled) return;
@@ -154,7 +155,8 @@ export default function CryptoDetail() {
         // expensive path and is hydrated after the chart is visible.
         void api<Analysis>(
           `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&fast=1`,
-        )
+            { timeoutMs: 4_200 },
+          )
           .then((analysisRes) => {
             if (cancelled) return;
             setBundle((prev) =>
@@ -170,6 +172,7 @@ export default function CryptoDetail() {
         try {
           const o = await api<{ bars: Bar[] }>(
             `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(timeframe)}&limit=200`,
+            { timeoutMs: 4_200 },
           );
           if (cancelled) return;
           const fallbackBars = o.data.bars ?? [];
@@ -200,6 +203,7 @@ export default function CryptoDetail() {
           setError(null);
           void api<Analysis>(
             `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&fast=1`,
+            { timeoutMs: 4_200 },
           )
             .then((analysisRes) => {
               if (cancelled) return;
@@ -229,8 +233,10 @@ export default function CryptoDetail() {
     let cancelled = false;
     const load = () => {
       if (!isDocumentVisible()) return;
-      void api<IntelPayload>(`/crypto/${encodeURIComponent(symbol)}/intel`)
-        .then((r) => {
+      void api<IntelPayload>(
+        `/crypto/${encodeURIComponent(symbol)}/intel`,
+        { timeoutMs: 3_600 },
+      ).then((r) => {
           if (cancelled) return;
           const d = r.data;
           if (d.orderFlow) setOrderFlow(d.orderFlow);
@@ -267,6 +273,7 @@ export default function CryptoDetail() {
       try {
         const o = await api<{ bars: Bar[] }>(
           `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(tf)}&limit=200`,
+          { timeoutMs: 4_200 },
         );
         const nextBars = o.data.bars ?? [];
         setBars(nextBars);
@@ -275,6 +282,7 @@ export default function CryptoDetail() {
         setChartSource(String(o.meta?.source ?? "binance"));
         void api<Analysis>(
           `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(tf)}&fast=1`,
+          { timeoutMs: 4_200 },
         )
           .then((a) => {
             setBundle((prev) =>

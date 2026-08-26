@@ -78,7 +78,7 @@ export default function ForexDetail() {
       try {
         const a = await api<any>(
           `/forex/${symbol}/analysis?timeframe=${timeframe}${fast ? "&fast=1" : ""}`,
-          { timeoutMs: 25_000 },
+          { timeoutMs: fast ? 4_200 : 8_500 },
         );
         if (analysisGen.current !== gen) return;
         setBundle((prev: any) =>
@@ -114,7 +114,7 @@ export default function ForexDetail() {
 
     void api<any>(
       `/forex/${symbol}/bundle?timeframe=${initialTf}&limit=${BAR_LIMIT}&light=1`,
-      { timeoutMs: 12_000 },
+      { timeoutMs: 4_200 },
     )
       .then((env) => {
         if (cancelled) return;
@@ -151,7 +151,7 @@ export default function ForexDetail() {
       try {
         const o = await api<{ bars: Bar[] }>(
           `/forex/${symbol}/ohlcv?timeframe=${next}&limit=${BAR_LIMIT}`,
-          { timeoutMs: 12_000 },
+          { timeoutMs: 4_200 },
         );
         const nextBars = o.data.bars ?? [];
         setBars(nextBars);
@@ -205,6 +205,7 @@ export default function ForexDetail() {
   const live = usePoll<any>(`/forex/${symbol}/price`, 5_000, {
     softTtlMs: 3_000,
     hardTtlMs: 45_000,
+    timeoutMs: 3_600,
   });
   const pair = bundle?.pair;
   const q = live.data?.quote ?? bundle?.quote ?? null;

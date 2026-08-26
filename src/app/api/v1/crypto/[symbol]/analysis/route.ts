@@ -8,6 +8,17 @@ export const dynamic = "force-dynamic";
 const VALID = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
 const CACHE_TTL_MS = 15_000;
 const FAST_CACHE_TTL_MS = 8_000;
+const FAST_BUDGET_MS = 3_800;
+const FULL_BUDGET_MS = 8_500;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms),
+    ),
+  ]);
+}
 
 export async function GET(
   req: NextRequest,
@@ -27,7 +38,13 @@ export async function GET(
     const cached = await sharedCacheGetOrSet(
       `crypto:v1:analysis:${normalized}:${timeframe}:${fast ? "fast" : "full"}`,
       ttlMs,
-      () => runCryptoAnalysis(normalized, timeframe, { fast }),
+      () =>
+        withTimeout(
+          runCryptoAnalysis(normalized, timeframe, { fast }),
+          fast ? FAST_BUDGET_MS : FULL_BUDGET_MS,
+          fast ? "crypto_signal_fast" : "crypto_analysis_full",
+        ),
+      { staleTtlMs: fast ? 60_000 : 120_000 },
     );
     return ok(
       cached.value,

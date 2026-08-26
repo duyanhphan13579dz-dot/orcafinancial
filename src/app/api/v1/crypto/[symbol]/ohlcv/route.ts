@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 10;
 
 const VALID = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
-const HARD_MS = 5_500;
+const HARD_MS = 3_800;
 const CACHE_TTL_MS: Record<string, number> = {
   "1m": 15_000,
   "5m": 30_000,
@@ -59,10 +59,12 @@ export async function GET(
 
   try {
     const cached = await sharedCacheGetOrSet<CachedOhlcv>(key, ttlMs, async () => {
+      const deadline = Date.now() + HARD_MS;
+      const remaining = () => Math.max(100, deadline - Date.now());
       try {
         const data = await withTimeout(
           getCryptoOhlcv(normalized, timeframe, limit, before),
-          HARD_MS,
+          remaining(),
           "crypto_ohlcv_svc",
         );
         return {
@@ -76,7 +78,7 @@ export async function GET(
         const pair = `${normalized}USDT`;
         const bars = await withTimeout(
           fetchBinanceKlines(pair, timeframe, limit, before),
-          HARD_MS,
+          remaining(),
           "binance_klines",
         );
         console.warn(
@@ -93,7 +95,7 @@ export async function GET(
           hasMore: bars.length >= limit,
         };
       }
-    });
+    }, { staleTtlMs: 60_000 });
 
     if (!cached.value.bars?.length) {
       return fail(`Không có dữ liệu chart cho ${normalized} (${timeframe})`, 502);

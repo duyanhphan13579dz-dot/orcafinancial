@@ -154,8 +154,8 @@ export async function api<T>(
 export type UsePollOptions = {
   softTtlMs?: number;
   hardTtlMs?: number;
-  enabled?: boolean;
   timeoutMs?: number;
+  enabled?: boolean;
 };
 
 export function usePoll<T>(
@@ -166,6 +166,7 @@ export function usePoll<T>(
   const softTtl = options.softTtlMs ?? Math.min(intervalMs, DEFAULT_SOFT_TTL_MS);
   const hardTtl = options.hardTtlMs ?? DEFAULT_HARD_TTL_MS;
   const enabled = options.enabled !== false;
+  const timeoutMs = options.timeoutMs ?? (intervalMs > 0 ? Math.min(intervalMs - 200, 8_000) : 8_000);
 
   const cached = path ? readCache(path, hardTtl) : null;
 
@@ -192,7 +193,7 @@ export function usePoll<T>(
       else if (!readCache(p, hardTtl)) setLoading(true);
 
       try {
-        const env = await api<T>(p, options.timeoutMs ? { timeoutMs: options.timeoutMs } : undefined);
+        const env = await api<T>(p, { timeoutMs });
         if (pathRef.current !== p) return;
         setData(env.data);
         setMeta(env.meta ?? null);
@@ -207,13 +208,12 @@ export function usePoll<T>(
         }
       }
     },
-    [hardTtl, options.timeoutMs],
+    [hardTtl, timeoutMs],
   );
 
   useEffect(() => {
     if (!path || !enabled) {
       // Reset loading when a consumer disables polling or clears its path.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLoading(false);
       return;
     }

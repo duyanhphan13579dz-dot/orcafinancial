@@ -4,7 +4,19 @@ import { sharedCacheGetOrSet } from "@/lib/connectors/redis-cache";
 import { getCryptoDetailBundle } from "@/lib/crypto/service";
 
 const V = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
+const FAST_BUDGET_MS = 3_800;
+const FULL_BUDGET_MS = 8_500;
 export const dynamic = "force-dynamic";
+export const maxDuration = 10;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms),
+    ),
+  ]);
+}
 
 /**
  * Combined first-paint endpoint: coin + live price + OHLCV + analysis + sentiment.
@@ -30,13 +42,20 @@ export async function GET(
     const cached = await sharedCacheGetOrSet(
       `crypto:v1:bundle:${normalized}:${tf}:${limit}:${light ? "light" : "full"}`,
       ttlMs,
-      () => getCryptoDetailBundle(normalized, tf, limit, { light }),
+      () =>
+        withTimeout(
+          getCryptoDetailBundle(normalized, tf, limit, { light }),
+          light ? FAST_BUDGET_MS : FULL_BUDGET_MS,
+          light ? "crypto_bundle_light" : "crypto_bundle_full",
+        ),
+      { staleTtlMs: light ? 60_000 : 120_000 },
     );
     const data = cached.value;
     const response = ok(data, {
       timezone: "Asia/Ho_Chi_Minh",
       source: data.source,
       cacheHit: cached.hit,
+      degraded: cached.hit === "l1" && data.source?.includes("cache"),
     });
     // Short CDN cache — SWR on server already serves DB-first
     response.headers.set(

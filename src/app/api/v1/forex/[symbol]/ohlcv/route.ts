@@ -103,12 +103,14 @@ export async function GET(
     let bars;
     let source = "yahoo-forex";
     let quote = null as Awaited<ReturnType<typeof getLiveQuoteContract>>;
+    const deadline = Date.now() + FOREX_CACHE.hardDeadlineMs;
+    const remaining = () => Math.max(100, deadline - Date.now());
 
     try {
       if (before !== undefined && limit <= 200) {
         const historical = await withBudget(
           syncForexOhlcv(sym, tf, limit, before),
-          FOREX_CACHE.softDeadlineMs,
+          Math.min(FOREX_CACHE.softDeadlineMs, remaining()),
           "forex_history_svc",
         );
         bars = historical.bars;
@@ -117,7 +119,7 @@ export async function GET(
       } else if (limit > 200) {
         const historical = await withBudget(
           fetchForexBars(sym, tf, limit, before),
-          FOREX_CACHE.hardDeadlineMs,
+          remaining(),
           "yahoo_bars",
         );
         bars = historical.bars;
@@ -126,7 +128,7 @@ export async function GET(
       } else {
         const d = await withBudget(
           syncForexOhlcv(sym, tf, limit),
-          FOREX_CACHE.softDeadlineMs,
+          Math.min(FOREX_CACHE.softDeadlineMs, remaining()),
           "forex_ohlcv_svc",
         );
         bars = d.bars;
@@ -137,7 +139,7 @@ export async function GET(
       const [live, q] = await Promise.all([
         withBudget(
           fetchForexBars(sym, tf, limit, before),
-          FOREX_CACHE.hardDeadlineMs,
+          remaining(),
           "yahoo_bars",
         ),
         before ? Promise.resolve(null) : getLiveQuoteContract(sym).catch(() => null),
