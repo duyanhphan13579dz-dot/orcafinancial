@@ -26,6 +26,7 @@ import { MemoForexIntelligenceCard } from "@/components/forex-intelligence-card"
 import ForexScalpingPanel, {
   type ForexScalpingResultView,
 } from "@/components/forex-scalping-panel";
+import ForexPaperJournal from "@/components/forex-paper-journal";
 
 const ChartSkeleton = () => (
   <div className="h-[360px] w-full animate-pulse rounded-lg bg-slate-800/40 sm:h-[440px] lg:h-[520px]" />
@@ -296,6 +297,10 @@ export default function ForexDetail() {
     setScalpingResult(next);
   }, []);
 
+  const saveScalpingSetup = useCallback(async (candidate: NonNullable<ForexScalpingResultView["bestCandidate"]>) => {
+    await api("/forex/scalping-journal", { method: "POST", body: JSON.stringify({ candidate }) });
+  }, []);
+
   const levels = useMemo(() => {
     if (!a && !scalpingResult?.bestCandidate) return null;
     const scalp = scalpingResult?.bestCandidate;
@@ -383,6 +388,7 @@ export default function ForexDetail() {
             spreadPips={spreadPips}
             sessionLabel={fx?.session?.label}
             onResult={handleScalpingResult}
+            onSaveSetup={saveScalpingSetup}
           />
           {a ? (
             <MemoForexIntelligenceCard
@@ -488,6 +494,8 @@ export default function ForexDetail() {
           setup={a.tradeSetup as TradeSetupData}
         />
       )}
+
+      <ForexPaperJournal symbol={symbol} candidate={scalpingResult?.bestCandidate} />
 
       {/* Secondary intel — collapsible on mobile */}
       {(mtf || fx || macro || analyst) && (
