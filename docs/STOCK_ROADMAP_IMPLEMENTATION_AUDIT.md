@@ -64,3 +64,10 @@ Giới hạn còn lại là giới hạn vận hành/dữ liệu: môi trường
 The latest VNM quality review has been converted into implementation changes rather than remaining as recommendations. The report now applies unit-consistent market-cap wording, per-period estimate labeling, valuation-confidence gating, normalized scenario arithmetic with displayed weighted contributions, forecast assumption bridge, health-score methodology, DuPont decomposition, evidence coverage for moat dimensions, cleaned causal chains and localized investment-thesis points. The technical state `Nắm giữ` is now presented separately from a low-confidence valuation conclusion.
 
 The final sample PDF generated after this revision is a valid eight-page A4 document. The confidence-gated executive summary states that valuation is not sufficiently reliable for a conclusion at the observed 45% data confidence; it does not promote the 38.77/other model fair value into a definitive target. The text scan found no targeted raw English fragments, and all extracted pages contain substantive content.
+
+
+## Financial health scoring audit addendum — 27 August 2026
+
+The Basic module formula audit identified and corrected a material architecture issue: it had a legacy price-return proxy scorer separate from the statement-based health engine. `generateFundamentalReport` now uses the canonical quarterly financial sequence and `evaluateHealthDetail` for its six health groups.
+
+The audit also corrected missing-data behavior, removed the duplicate OCF/net-income contribution in the cash-flow group, added ROIC and working-capital intensity, and implemented the standard DuPont identity. The documented group weights remain 10% liquidity, 20% leverage, 15% efficiency, 25% profitability, 15% growth and 15% cash flow, totaling 100%. Automated tests cover weight reconstruction, DuPont arithmetic and available-indicator scoring.

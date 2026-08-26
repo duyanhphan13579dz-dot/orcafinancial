@@ -14,6 +14,8 @@
  */
 
 import type { Ohlcv } from "@/lib/connectors/core";
+import { generateQuarterlyFinancials } from "@/lib/financial-statements";
+import { evaluateHealthDetail, type HealthDetail } from "@/lib/financial-health-detail";
 
 /* ═══════════════════════════════════════════════════════════════════════
    TYPES
@@ -77,6 +79,17 @@ export interface DuPontResult {
   equityMultiplier: number;
   roe: number;
   description: string;
+}
+
+export function calculateDuPont(netProfitMarginPct: number, assetTurnover: number, equityMultiplier: number): DuPontResult {
+  const roe = netProfitMarginPct * assetTurnover * equityMultiplier;
+  return {
+    netProfitMargin: netProfitMarginPct,
+    assetTurnover,
+    equityMultiplier,
+    roe: Number(roe.toFixed(2)),
+    description: `ROE = biên ròng ${netProfitMarginPct.toFixed(1)}% × vòng quay tài sản ${assetTurnover.toFixed(2)} × đòn bẩy vốn chủ ${equityMultiplier.toFixed(2)} = ${roe.toFixed(1)}% — phân tích nguồn sinh lời`,
+  };
 }
 
 export interface FundamentalReport {
@@ -269,24 +282,26 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
   const closes = bars.map((b) => b.close);
   const n = closes.length;
   const currentPrice = closes[n - 1];
+  if (!Number.isFinite(currentPrice) || currentPrice <= 0) throw new Error(`Invalid price history for ${symbol}`);
 
-  // Quarterly breakdown
+  // Quarterly market breakdown and canonical financial health input.
   const quarterlyMetrics = computeQuarterly(bars);
+  const financialQuarters = generateQuarterlyFinancials(symbol, bars, 8);
+  const healthDetail: HealthDetail = evaluateHealthDetail(symbol, financialQuarters);
 
-  // Proxy EPS: approximate from price level and typical P/E range for VN market (12–18)
+  // EPS and BVPS are derived from the canonical synthetic statement sequence in this environment.
+  // They remain estimates until provider-grade filings are available.
+  const latestFinancial = financialQuarters[0];
   const typicalPE = 14;
-  const epsProxy = currentPrice / typicalPE;
-
-  // Proxy book value: approximate from price / typical P/B (1.5–2.5)
   const typicalPB = 2.0;
-  const bvpsProxy = currentPrice / typicalPB;
+  const epsProxy = latestFinancial?.income.eps ?? currentPrice / typicalPE;
+  const bvpsProxy = latestFinancial?.balance.bookValuePerShare ?? currentPrice / typicalPB;
 
-  // ROE, ROA, ROS proxies from returns
   const ret1y = n > 252 ? ((closes[n - 1] - closes[n - 253]) / closes[n - 253]) * 100 : null;
   const ret6m = n > 132 ? ((closes[n - 1] - closes[n - 133]) / closes[n - 133]) * 100 : null;
-  const roeProxy = ret1y;
-  const roaProxy = ret1y !== null ? ret1y * 0.55 : null;
-  const rosProxy = ret6m !== null ? ret6m * 0.3 : null;
+  const roeProxy = latestFinancial?.balance.equity ? latestFinancial.income.netIncome * 4 / latestFinancial.balance.equity * 100 : null;
+  const roaProxy = latestFinancial?.balance.totalAssets ? latestFinancial.income.netIncome * 4 / latestFinancial.balance.totalAssets * 100 : null;
+  const rosProxy = latestFinancial?.income.revenue ? latestFinancial.income.netIncome / latestFinancial.income.revenue * 100 : null;
 
   // CAGR 3y (if enough data)
   let cagr3y: number | null = null;
@@ -295,21 +310,19 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
     cagr3y = (Math.pow(currentPrice / priceStart, 1 / 3) - 1) * 100;
   }
 
-  // DuPont decomposition (proxy)
-  const netProfitMargin = rosProxy ?? 8;
-  const assetTurnover = 0.65; // typical VN equity
-  const equityMultiplier = typicalPB;
-  const dupontROE = netProfitMargin * assetTurnover * equityMultiplier / 100;
-  const dupont: DuPontResult = {
-    netProfitMargin,
-    assetTurnover,
-    equityMultiplier,
-    roe: Number(dupontROE.toFixed(2)),
-    description: `ROE = ${netProfitMargin.toFixed(1)}% × ${assetTurnover.toFixed(2)} × ${equityMultiplier.toFixed(2)} = ${dupontROE.toFixed(1)}% — phân tích nguồn sinh lời`,
-  };
+  // DuPont decomposition: ROE (%) = net profit margin (%) × asset turnover × equity multiplier.
+  const netProfitMargin = rosProxy ?? 0;
+  const assetTurnover = latestFinancial?.balance.totalAssets ? (latestFinancial.income.revenue * 4) / latestFinancial.balance.totalAssets : 0;
+  const equityMultiplier = latestFinancial?.balance.equity ? latestFinancial.balance.totalAssets / latestFinancial.balance.equity : 0;
+  const dupont = calculateDuPont(netProfitMargin, assetTurnover, equityMultiplier);
 
-  // Financial Health
-  const financialHealth = computeFinancialHealth(bars);
+  // Financial Health: one canonical statement-based engine for the Basic module and PDF.
+  const financialHealth: FinancialHealthResult = {
+    overallScore: healthDetail.overall,
+    rating: healthDetail.rating,
+    breakdown: Object.fromEntries(healthDetail.groups.map((group) => [group.key, { score: group.score, detail: `${group.narrative} Trọng số ${(group.weight * 100).toFixed(0)}%; đóng góp ${(group.weighted).toFixed(2)} điểm.` }])) as FinancialHealthResult["breakdown"],
+    indicators: Object.fromEntries(healthDetail.groups.flatMap((group) => group.indicators.map((indicator) => [indicator.key, indicator.value]))) as FinancialHealthResult["indicators"],
+  };
 
   // Valuation
   const pe = typicalPE;
@@ -384,7 +397,7 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
     financialHealth,
     valuation,
     generatedAt: new Date().toISOString(),
-    dataSource: "Derived from real OHLCV data (VNDirect/Yahoo). P/E, P/B, EPS are market-proxy estimates. Real financial statements required for exact figures.",
+    dataSource: "Giá/khối lượng lấy từ dữ liệu thị trường; các báo cáo tài chính được sinh từ chuỗi benchmark synthetic nhất quán để phục vụ giao diện khi provider filing chưa khả dụng. EPS, BVPS và các tỷ số là ước tính, không phải số liệu doanh nghiệp đã kiểm toán.",
     disclaimer: "Các chỉ số tài chính được ước tính từ dữ liệu giá thật. Để có số liệu chính xác, cần báo cáo tài chính chính thức. Không phải lời khuyên đầu tư.",
   };
 }

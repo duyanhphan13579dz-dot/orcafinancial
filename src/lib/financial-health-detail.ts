@@ -21,8 +21,8 @@ export interface IndicatorDetail {
   label: string;
   value: number | null;
   unit: string;
-  /** Score 0..100 for this individual indicator. */
-  score: number;
+  /** Score 0..100 for this individual indicator; null means unavailable, never neutral 50. */
+  score: number | null;
   /** Short Vietnamese note, e.g. "Tốt", "Cần cải thiện". */
   verdict: string;
 }
@@ -76,9 +76,14 @@ function verdictOf(score: number): string {
   return "Rất yếu";
 }
 
-function ind(key: string, label: string, value: number | null, unit: string, score01: number): IndicatorDetail {
-  const score = Math.round(clamp01(score01) * 100);
-  return { key, label, value: value === null ? null : Number(value.toFixed(2)), unit, score, verdict: verdictOf(score) };
+function ind(key: string, label: string, value: number | null, unit: string, score01: number | null): IndicatorDetail {
+  const score = score01 == null ? null : Math.round(clamp01(score01) * 100);
+  return { key, label, value: value === null ? null : Number(value.toFixed(2)), unit, score, verdict: score == null ? "Chưa có dữ liệu" : verdictOf(score) };
+}
+
+function scoreAvg(indicators: IndicatorDetail[]): number {
+  const scores = indicators.flatMap((indicator) => indicator.score == null ? [] : [indicator.score]);
+  return Math.round(avg(scores));
 }
 
 export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): HealthDetail {
@@ -119,10 +124,12 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
   const fcfMargin = inc.revenue > 0 ? cf.freeCashFlow / inc.revenue * 100 : null;
   const cfoToNi = Math.abs(inc.netIncome) > 0 ? cf.operatingCashFlow / inc.netIncome : null;
   const dividendPayout = Math.abs(inc.netIncome) > 0 ? cf.dividendsPaid / inc.netIncome : null;
-  const earningsQuality = Math.abs(inc.netIncome) > 0 ? cf.operatingCashFlow / inc.netIncome : null;
   const fcfConversion = Math.abs(inc.netIncome) > 0 ? cf.freeCashFlow / inc.netIncome : null;
   const netDebt = bal.totalLiabilities - bal.cashAndEquivalents - bal.shortTermInvestments;
   const netDebtToEbitda = inc.ebitda > 0 ? netDebt / (inc.ebitda * 4) : null;
+  const investedCapital = bal.equity + bal.longTermDebt - bal.cashAndEquivalents - bal.shortTermInvestments;
+  const roic = investedCapital > 0 ? (inc.operatingIncome * 4 * (1 - 0.2)) / investedCapital * 100 : null;
+  const workingCapitalIntensity = inc.revenue > 0 ? (bal.receivables + bal.inventory - bal.currentLiabilities) / inc.revenue * 100 : null;
   const debtDueWithin12m = bal.debtDueWithin12m ?? bal.shortTermDebt ?? null;
   const debtMaturityCoverage = debtDueWithin12m !== null ? (bal.cashAndEquivalents + cf.operatingCashFlow) / Math.max(debtDueWithin12m, 1) : null;
   const revGrowthYoY = yearAgo && yearAgo.income.revenue > 0 ? (inc.revenue / yearAgo.income.revenue - 1) * 100 : null;
@@ -132,11 +139,11 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
 
   // ── Liquidity ──
   const liqInds: IndicatorDetail[] = [
-    ind("currentRatio", "Tỷ số thanh toán hiện hành", currentRatio, "lần", currentRatio !== null ? ramp(currentRatio, 0.8, 2.0) : 0.5),
-    ind("quickRatio", "Tỷ số thanh toán nhanh", quickRatio, "lần", quickRatio !== null ? ramp(quickRatio, 0.5, 1.5) : 0.5),
-    ind("cashRatio", "Tỷ số tiền / nợ ngắn hạn", cashRatio, "lần", cashRatio !== null ? ramp(cashRatio, 0.05, 0.4) : 0.5),
+    ind("currentRatio", "Tỷ số thanh toán hiện hành", currentRatio, "lần", currentRatio !== null ? ramp(currentRatio, 0.8, 2.0) : null),
+    ind("quickRatio", "Tỷ số thanh toán nhanh", quickRatio, "lần", quickRatio !== null ? ramp(quickRatio, 0.5, 1.5) : null),
+    ind("cashRatio", "Tỷ số tiền / nợ ngắn hạn", cashRatio, "lần", cashRatio !== null ? ramp(cashRatio, 0.05, 0.4) : null),
   ];
-  const liqScore = Math.round(avg(liqInds.map((i) => i.score)));
+  const liqScore = scoreAvg(liqInds);
   const liqNarrative = liqScore >= 70
     ? "Khả năng thanh toán ngắn hạn vững chắc; quỹ tiền mặt đủ che nợ đến hạn trong nhiều tháng."
     : liqScore >= 45
@@ -145,13 +152,13 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
 
   // ── Leverage ──
   const levInds: IndicatorDetail[] = [
-    ind("debtEquity", "Nợ / Vốn chủ sở hữu", debtEquity, "lần", debtEquity !== null ? ramp(debtEquity, 2.0, 0.4, false) : 0.5),
-    ind("debtToAssets", "Nợ / Tổng tài sản", debtToAssets, "%", debtToAssets !== null ? ramp(debtToAssets * 100, 80, 30, false) : 0.5),
-    ind("interestCoverage", "EBIT / Lãi vay", interestCoverage, "lần", interestCoverage !== null ? ramp(interestCoverage, 1.5, 8) : 0.5),
-    ind("netDebtToEbitda", "Nợ ròng / EBITDA năm hóa", netDebtToEbitda, "lần", netDebtToEbitda !== null ? ramp(netDebtToEbitda, 4, 0.5, false) : 0.5),
-    ind("debtMaturityCoverage", "Tiền + OCF / nợ đáo hạn 12 tháng", debtMaturityCoverage, "lần", debtMaturityCoverage !== null ? ramp(debtMaturityCoverage, 0.8, 2.5) : 0.5),
+    ind("debtEquity", "Nợ / Vốn chủ sở hữu", debtEquity, "lần", debtEquity !== null ? ramp(debtEquity, 2.0, 0.4, false) : null),
+    ind("debtToAssets", "Nợ / Tổng tài sản", debtToAssets, "%", debtToAssets !== null ? ramp(debtToAssets * 100, 80, 30, false) : null),
+    ind("interestCoverage", "EBIT / Lãi vay", interestCoverage, "lần", interestCoverage !== null ? ramp(interestCoverage, 1.5, 8) : null),
+    ind("netDebtToEbitda", "Nợ ròng / EBITDA năm hóa", netDebtToEbitda, "lần", netDebtToEbitda !== null ? ramp(netDebtToEbitda, 4, 0.5, false) : null),
+    ind("debtMaturityCoverage", "Tiền + OCF / nợ đáo hạn 12 tháng", debtMaturityCoverage, "lần", debtMaturityCoverage !== null ? ramp(debtMaturityCoverage, 0.8, 2.5) : null),
   ];
-  const levScore = Math.round(avg(levInds.map((i) => i.score)));
+  const levScore = scoreAvg(levInds);
   const levNarrative = levScore >= 70
     ? "Đòn bẩy tài chính thấp, chi phí lãi vay được che phủ nhiều lần bởi lợi nhuận hoạt động — dư địa vay thêm để mở rộng vẫn lớn."
     : levScore >= 45
@@ -160,12 +167,12 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
 
   // ── Efficiency (MỚI) ──
   const effInds: IndicatorDetail[] = [
-    ind("ebitdaMargin", "Biên EBITDA", ebitdaMargin !== null ? ebitdaMargin * 100 : null, "%", ebitdaMargin !== null ? ramp(ebitdaMargin, 0.05, 0.30) : 0.5),
-    ind("assetTurnover", "Vòng quay tổng tài sản", assetTurnover, "vòng/năm", assetTurnover !== null ? ramp(assetTurnover, 0.3, 1.5) : 0.5),
-    ind("inventoryTurnover", "Vòng quay hàng tồn kho", inventoryTurnover, "vòng/năm", inventoryTurnover !== null ? ramp(inventoryTurnover, 2, 10) : 0.5),
-    ind("dso", "Ngày phải thu bình quân", dso, "ngày", dso !== null ? ramp(dso, 120, 30, false) : 0.5),
+    ind("ebitdaMargin", "Biên EBITDA", ebitdaMargin !== null ? ebitdaMargin * 100 : null, "%", ebitdaMargin !== null ? ramp(ebitdaMargin, 0.05, 0.30) : null),
+    ind("assetTurnover", "Vòng quay tổng tài sản", assetTurnover, "vòng/năm", assetTurnover !== null ? ramp(assetTurnover, 0.3, 1.5) : null),
+    ind("inventoryTurnover", "Vòng quay hàng tồn kho", inventoryTurnover, "vòng/năm", inventoryTurnover !== null ? ramp(inventoryTurnover, 2, 10) : null),
+    ind("dso", "Ngày phải thu bình quân", dso, "ngày", dso !== null ? ramp(dso, 120, 30, false) : null),
   ];
-  const effScore = Math.round(avg(effInds.map((i) => i.score)));
+  const effScore = scoreAvg(effInds);
   const effNarrative = effScore >= 70
     ? "Hiệu quả vận hành nổi bật: biên EBITDA cao, tài sản quay vòng nhanh, tồn kho và công nợ được quản lý chặt."
     : effScore >= 45
@@ -174,12 +181,13 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
 
   // ── Profitability ──
   const profInds: IndicatorDetail[] = [
-    ind("roe", "ROE (năm hoá)", roe, "%", roe !== null ? ramp(roe, 5, 22) : 0.5),
-    ind("roa", "ROA (năm hoá)", roa, "%", roa !== null ? ramp(roa, 2, 12) : 0.5),
-    ind("netMargin", "Biên lợi nhuận ròng", netMargin, "%", netMargin !== null ? ramp(netMargin, 3, 18) : 0.5),
-    ind("grossMargin", "Biên lợi nhuận gộp", grossMargin, "%", grossMargin !== null ? ramp(grossMargin, 10, 45) : 0.5),
+    ind("roe", "ROE (năm hoá)", roe, "%", roe !== null ? ramp(roe, 5, 22) : null),
+    ind("roa", "ROA (năm hoá)", roa, "%", roa !== null ? ramp(roa, 2, 12) : null),
+    ind("netMargin", "Biên lợi nhuận ròng", netMargin, "%", netMargin !== null ? ramp(netMargin, 3, 18) : null),
+    ind("grossMargin", "Biên lợi nhuận gộp", grossMargin, "%", grossMargin !== null ? ramp(grossMargin, 10, 45) : null),
+    ind("roic", "ROIC (năm hoá)", roic, "%", roic !== null ? ramp(roic, 4, 18) : null),
   ];
-  const profScore = Math.round(avg(profInds.map((i) => i.score)));
+  const profScore = scoreAvg(profInds);
   const profNarrative = profScore >= 70
     ? "Sức sinh lời vượt trội: ROE ở nhóm dẫn đầu ngành, biên gộp và biên ròng ổn định qua nhiều quý."
     : profScore >= 45
@@ -188,15 +196,15 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
 
   // ── Growth ──
   const growthInds: IndicatorDetail[] = [
-    ind("revGrowthQoQ", "Tăng trưởng doanh thu QoQ", revGrowth, "%", revGrowth !== null ? ramp(revGrowth, -5, 15) : 0.5),
-    ind("niGrowthQoQ", "Tăng trưởng LN ròng QoQ", niGrowth, "%", niGrowth !== null ? ramp(niGrowth, -10, 25) : 0.5),
-    ind("ebitdaGrowthQoQ", "Tăng trưởng EBITDA QoQ", ebitdaGrowth, "%", ebitdaGrowth !== null ? ramp(ebitdaGrowth, -5, 20) : 0.5),
-    ind("revGrowthYoY", "Tăng trưởng doanh thu YoY", revGrowthYoY, "%", revGrowthYoY !== null ? ramp(revGrowthYoY, -10, 20) : 0.5),
-    ind("niGrowthYoY", "Tăng trưởng LN ròng YoY", niGrowthYoY, "%", niGrowthYoY !== null ? ramp(niGrowthYoY, -20, 30) : 0.5),
-    ind("ytdRevenue", "Doanh thu YTD", ytdRevenue, "tỷ", ytdRevenue !== null ? ramp(ytdRevenue, 0, Math.max(1, inc.revenue * 4)) : 0.5),
-    ind("ytdNetIncome", "LN ròng YTD", ytdNetIncome, "tỷ", ytdNetIncome !== null ? ramp(ytdNetIncome, 0, Math.max(1, Math.abs(inc.netIncome) * 4)) : 0.5),
+    ind("revGrowthQoQ", "Tăng trưởng doanh thu QoQ", revGrowth, "%", revGrowth !== null ? ramp(revGrowth, -5, 15) : null),
+    ind("niGrowthQoQ", "Tăng trưởng LN ròng QoQ", niGrowth, "%", niGrowth !== null ? ramp(niGrowth, -10, 25) : null),
+    ind("ebitdaGrowthQoQ", "Tăng trưởng EBITDA QoQ", ebitdaGrowth, "%", ebitdaGrowth !== null ? ramp(ebitdaGrowth, -5, 20) : null),
+    ind("revGrowthYoY", "Tăng trưởng doanh thu YoY", revGrowthYoY, "%", revGrowthYoY !== null ? ramp(revGrowthYoY, -10, 20) : null),
+    ind("niGrowthYoY", "Tăng trưởng LN ròng YoY", niGrowthYoY, "%", niGrowthYoY !== null ? ramp(niGrowthYoY, -20, 30) : null),
+    ind("ytdRevenue", "Doanh thu YTD", ytdRevenue, "tỷ", ytdRevenue !== null ? ramp(ytdRevenue, 0, Math.max(1, inc.revenue * 4)) : null),
+    ind("ytdNetIncome", "LN ròng YTD", ytdNetIncome, "tỷ", ytdNetIncome !== null ? ramp(ytdNetIncome, 0, Math.max(1, Math.abs(inc.netIncome) * 4)) : null),
   ];
-  const growthScore = Math.round(avg(growthInds.map((i) => i.score)));
+  const growthScore = scoreAvg(growthInds);
   const growthNarrative = growthScore >= 70
     ? "Đà tăng trưởng mạnh và đồng đều ở cả doanh thu lẫn lợi nhuận — động lực chính cho định giá lại cổ phiếu."
     : growthScore >= 45
@@ -204,16 +212,17 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
       : "Tăng trưởng âm hoặc trì trệ; thị phần có thể đang bị bào mòn hoặc doanh nghiệp đang trong chu kỳ suy giảm.";
 
   // ── Cashflow ──
+  const payoutScore = dividendPayout === null ? null : clamp01(1 - Math.abs(dividendPayout - 0.5) / 0.5);
   const cfInds: IndicatorDetail[] = [
-    ind("fcfMargin", "Biên dòng tiền tự do", fcfMargin, "%", fcfMargin !== null ? ramp(fcfMargin, -5, 15) : 0.5),
-    ind("cfoToNi", "OCF / Lợi nhuận ròng", cfoToNi, "lần", cfoToNi !== null ? ramp(cfoToNi, 0.5, 1.3) : 0.5),
-    ind("dividendPayout", "Tỷ lệ chi trả cổ tức", dividendPayout, "%", dividendPayout !== null ? ramp(dividendPayout, 0, 0.7) : 0.3),
-    ind("earningsQuality", "Chất lượng lợi nhuận (OCF / LN)", earningsQuality, "lần", earningsQuality !== null ? ramp(earningsQuality, 0.5, 1.3) : 0.5),
-    ind("fcfConversion", "FCF / Lợi nhuận ròng", fcfConversion, "lần", fcfConversion !== null ? ramp(fcfConversion, 0.3, 1.1) : 0.5),
+    ind("fcfMargin", "Biên dòng tiền tự do", fcfMargin, "%", fcfMargin !== null ? ramp(fcfMargin, -5, 15) : null),
+    ind("cfoToNi", "OCF / Lợi nhuận ròng", cfoToNi, "lần", cfoToNi !== null ? ramp(cfoToNi, 0.5, 1.3) : null),
+    ind("dividendPayout", "Tỷ lệ chi trả cổ tức", dividendPayout, "%", payoutScore),
+    ind("fcfConversion", "FCF / Lợi nhuận ròng", fcfConversion, "lần", fcfConversion !== null ? ramp(fcfConversion, 0.3, 1.1) : null),
+    ind("workingCapitalIntensity", "Vốn lưu động / doanh thu", workingCapitalIntensity, "%", workingCapitalIntensity !== null ? ramp(workingCapitalIntensity, 35, 10, false) : null),
   ];
-  const cfScore = Math.round(avg(cfInds.map((i) => i.score)));
+  const cfScore = scoreAvg(cfInds);
   const cfNarrative = cfScore >= 70
-    ? "Dòng tiền tự do dồi dào, chất lượng lợi nhuận cao (OCF ≥ LN ròng); chính sách cổ tức ổn định tạo sức hấp dẫn dài hạn."
+    ? "Dòng tiền tự do dồi dào, chất lượng lợi nhuận cao; chính sách cổ tức ổn định tạo sức hấp dẫn dài hạn."
     : cfScore >= 45
       ? "Dòng tiền ở mức trung bình; cần theo dõi chênh lệch giữa lợi nhuận kế toán và dòng tiền thực để đánh giá chất lượng LN."
       : "Dòng tiền yếu hoặc âm; lợi nhuận kế toán chưa chuyển hoá thành tiền mặt — rủi ro về tính bền vững của kết quả kinh doanh.";

@@ -68,3 +68,14 @@ The report layer now enforces the following additional invariants:
 | Narrative hygiene | Causal chains and thesis points are normalized to Vietnamese before PDF rendering; raw engine terminology must not leak into the final report. |
 
 The analysis-report cache key is versioned as `analysis-report-pdf-v9` for this revision, ensuring the quality changes are not masked by earlier cached PDF artifacts.
+
+
+## Financial health formula audit — 27 August 2026
+
+The Basic module now consumes the canonical statement-based health engine rather than the former price-return proxy scorer. The six group weights remain explicitly fixed at 10% liquidity, 20% leverage, 15% operating efficiency, 25% profitability, 15% growth and 15% cash flow; their sum is asserted by automated tests to equal 100%.
+
+Each indicator is normalized through a bounded ramp between a documented bad and good threshold. A missing indicator has `score: null` and is excluded from the group average; it is never assigned a neutral 50/100 score. The cash-flow group no longer counts the same OCF/net-income ratio twice. Its indicators are free-cash-flow margin, OCF/net income, dividend payout around a policy-neutral band, FCF conversion and working-capital intensity. Profitability now includes ROIC, calculated as annualized NOPAT divided by invested capital.
+
+DuPont is calculated using the standard identity `ROE (%) = net profit margin (%) × asset turnover × equity multiplier`, where asset turnover is annualized revenue divided by total assets and equity multiplier is total assets divided by equity. This formula is implemented in the exported `calculateDuPont` helper and covered by automated tests.
+
+The previous price-return proxy scorer remains in the source only as legacy code for backward compatibility; it is no longer used by `generateFundamentalReport`. The Basic report uses the canonical quarterly statement sequence and labels its data as synthetic/estimated until provider-grade filings are available.
