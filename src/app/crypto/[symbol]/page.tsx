@@ -14,6 +14,7 @@ import {
 } from "@/components/crypto-intel-panels";
 import { MemoCryptoOnChainPanel } from "@/components/crypto-onchain-panel";
 import { MemoCryptoSentimentPanel } from "@/components/crypto-sentiment-panel";
+import CryptoScalpingPanel from "@/components/crypto-scalping-panel";
 import { api, changeColor, fmtNum, fmtPct } from "@/lib/client";
 import { isDocumentVisible, whenVisible } from "@/lib/client-visibility";
 import {
@@ -509,6 +510,8 @@ export default function CryptoDetail() {
           </div>
         )}
       </div>
+
+      <CryptoScalpingPanel symbol={symbol} />
 
       <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
         {futures?.available && <MemoFuturesPanel data={futures} />}

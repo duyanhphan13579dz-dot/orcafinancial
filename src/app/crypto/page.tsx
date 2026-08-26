@@ -19,6 +19,7 @@ import {
   fmtVol,
   usePoll,
 } from "@/lib/client";
+import CryptoScalpingBoard from "@/components/crypto-scalping-board";
 
 import {
   createBinanceMarketWebSocket,
@@ -753,6 +754,8 @@ export default function CryptoPage() {
       {/* ------------------------------------------------------------------ */}
       {/* MARKET TABLE                                                       */}
       {/* ------------------------------------------------------------------ */}
+
+      <CryptoScalpingBoard />
 
       <div className="panel overflow-x-auto">
 
