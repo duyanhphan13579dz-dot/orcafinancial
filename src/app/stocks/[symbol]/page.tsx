@@ -595,6 +595,8 @@ export default function StockPage({
 
   const [watchMsg, setWatchMsg] =
     useState<string | null>(null);
+  const [analysisReportLoading, setAnalysisReportLoading] =
+    useState(false);
 
   /* ==========================================================
    * STOCK / API DATA
@@ -1106,6 +1108,36 @@ export default function StockPage({
       );
     };
 
+  const downloadAnalysisReport =
+    async () => {
+      setAnalysisReportLoading(true);
+      try {
+        const response = await fetch(
+          `/api/v1/stocks/${encodeURIComponent(symbol)}/analysis-report`,
+          { credentials: "include" },
+        );
+        if (!response.ok) {
+          throw new Error("Không thể tạo báo cáo phân tích lúc này.");
+        }
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `${symbol}_BAO_CAO_PHAN_TICH.pdf`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.URL.revokeObjectURL(url);
+      } catch (error) {
+        setWatchMsg(
+          error instanceof Error
+            ? error.message
+            : "Không thể tải báo cáo.",
+        );
+      } finally {
+        setAnalysisReportLoading(false);
+      }
+    };
   /* ==========================================================
    * RENDER
    * ========================================================== */
@@ -1220,15 +1252,24 @@ export default function StockPage({
             </>
           )}
 
-          <button
-            onClick={
-              addToWatchlist
-            }
-            className="ml-auto rounded-md border border-cyan-700 bg-cyan-500/10 px-3 py-1.5 text-sm text-cyan-300 hover:bg-cyan-500/20"
-          >
-            {watchMsg ??
-              "+ Watchlist"}
-          </button>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={downloadAnalysisReport}
+              disabled={analysisReportLoading}
+              className="rounded-md border border-amber-700 bg-amber-500/10 px-3 py-1.5 text-sm font-medium text-amber-300 hover:bg-amber-500/20 disabled:cursor-wait disabled:opacity-60"
+            >
+              {analysisReportLoading
+                ? "Đang tạo PDF…"
+                : "BÁO CÁO PHÂN TÍCH"}
+            </button>
+            <button
+              onClick={addToWatchlist}
+              className="rounded-md border border-cyan-700 bg-cyan-500/10 px-3 py-1.5 text-sm text-cyan-300 hover:bg-cyan-500/20"
+            >
+              {watchMsg ?? "+ Watchlist"}
+            </button>
+          </div>
         </div>
 
         {quoteError && (
