@@ -21,27 +21,22 @@ function signalClass(signal: Row["signal"]) {
 export default function CryptoScalpingBoard() {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open || rows.length || loading) return;
+    if (!open || rows.length) return;
     let cancelled = false;
-    setLoading(true);
     void api<{ results: Row[] }>("/crypto/scalping?orderFlow=0", { timeoutMs: 4_000 })
       .then((response) => {
         if (!cancelled) setRows(response.data.results ?? []);
       })
       .catch((reason) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [open, rows.length, loading]);
+  }, [open, rows.length]);
 
   return (
     <section className="panel border border-[#00d4ff]/20 p-3 sm:p-4">
@@ -54,7 +49,7 @@ export default function CryptoScalpingBoard() {
       </button>
       {open && (
         <div className="mt-3 border-t border-white/10 pt-3">
-          {loading && <div className="h-20 animate-pulse rounded-lg bg-slate-800/50" />}
+          {open && !rows.length && !error && <div className="h-20 animate-pulse rounded-lg bg-slate-800/50" />}
           {error && <div className="text-xs text-rose-300">Không tải được scanner: {error}</div>}
           {rows.length > 0 && (
             <div className="overflow-x-auto">
@@ -77,7 +72,7 @@ export default function CryptoScalpingBoard() {
               </table>
             </div>
           )}
-          {!loading && !error && !rows.length && <div className="text-xs text-slate-400">Chưa có setup đạt điều kiện. Hệ thống không tự động gửi lệnh.</div>}
+          {!error && rows.length === 0 && !open && <div className="text-xs text-slate-400">Chưa có setup đạt điều kiện. Hệ thống không tự động gửi lệnh.</div>}
           <div className="mt-3 text-[10px] text-slate-500">Research/paper-only scanner · Module A/B/C · Không phải khuyến nghị đầu tư.</div>
         </div>
       )}

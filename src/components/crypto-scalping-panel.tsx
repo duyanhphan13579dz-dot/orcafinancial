@@ -38,13 +38,11 @@ function signalClass(signal: ScalpingResult["signal"]) {
 export default function CryptoScalpingPanel({ symbol }: { symbol: string }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<ScalpingResult | null>(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open || data || loading) return;
+    if (!open || data) return;
     let cancelled = false;
-    setLoading(true);
     void api<ScalpingResult>(
       `/crypto/${encodeURIComponent(symbol)}/scalping?orderFlow=0`,
       { timeoutMs: 4_000 },
@@ -54,14 +52,11 @@ export default function CryptoScalpingPanel({ symbol }: { symbol: string }) {
       })
       .catch((reason) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [open, data, loading, symbol]);
+  }, [open, data, symbol]);
 
   const candidate = data?.bestCandidate;
   return (
@@ -84,7 +79,7 @@ export default function CryptoScalpingPanel({ symbol }: { symbol: string }) {
 
       {open && (
         <div className="mt-3 border-t border-white/10 pt-3">
-          {loading && <div className="h-24 animate-pulse rounded-lg bg-slate-800/50" />}
+          {open && !data && !error && <div className="h-24 animate-pulse rounded-lg bg-slate-800/50" />}
           {error && <div className="text-xs text-rose-300">Không tải được scalping: {error}</div>}
           {data && (
             <>

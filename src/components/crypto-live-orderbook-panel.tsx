@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createBinanceOrderBookWebSocket,
   type LiveOrderBookState,
@@ -28,11 +28,11 @@ function pressureClass(pressure: LiveOrderBookState["pressure"]) {
 export default function CryptoLiveOrderBookPanel({ symbol }: { symbol: string }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<LiveOrderBookState | null>(null);
-  const [resync, setResync] = useState<(() => void) | null>(null);
+  const resyncRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!open) {
-      setResync(null);
+      resyncRef.current = null;
       return;
     }
     const connection = createBinanceOrderBookWebSocket({
@@ -40,10 +40,10 @@ export default function CryptoLiveOrderBookPanel({ symbol }: { symbol: string })
       depthLimit: 1000,
       onState: setState,
     });
-    setResync(() => connection.resync);
+    resyncRef.current = connection.resync;
     return () => {
       connection.disconnect();
-      setResync(null);
+      resyncRef.current = null;
     };
   }, [open, symbol]);
 
@@ -129,7 +129,7 @@ export default function CryptoLiveOrderBookPanel({ symbol }: { symbol: string })
               </div>
 
               <div className="mt-3 flex items-center justify-between gap-2">
-                <button type="button" onClick={() => resync?.()} className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:border-[#00d4ff]/50 hover:text-white">Resync snapshot</button>
+                <button type="button" onClick={() => resyncRef.current?.()} className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:border-[#00d4ff]/50 hover:text-white">Resync snapshot</button>
                 <div className="text-right text-[10px] text-slate-500">100ms diff stream · cập nhật UI 250ms · paper/research only</div>
               </div>
             </>
