@@ -42,7 +42,6 @@ export interface IngestResult {
 const globalForIngest = globalThis as typeof globalThis & {
   __orcaLastIngest?: IngestResult;
   __orcaIngestHistory?: IngestResult[];
-  __orcaIngestPromise?: Promise<IngestResult>;
 };
 if (!globalForIngest.__orcaIngestHistory) globalForIngest.__orcaIngestHistory = [];
 
@@ -72,19 +71,6 @@ async function previousVnd(commodityId: string, before: Date): Promise<number | 
       .limit(1),
   ).catch(() => []);
   return rows.length ? rows[0].priceVnd : null;
-}
-
-/**
- * Coalesce callers so a slow provider can never create overlapping ingestion
- * cycles. The returned promise is shared by the scheduler and manual refresh.
- */
-export function startIngestCycle(opts: { force?: boolean } = {}): Promise<IngestResult> {
-  if (globalForIngest.__orcaIngestPromise) return globalForIngest.__orcaIngestPromise;
-  const promise = ingestCycle(opts).finally(() => {
-    globalForIngest.__orcaIngestPromise = undefined;
-  });
-  globalForIngest.__orcaIngestPromise = promise;
-  return promise;
 }
 
 /**
@@ -133,38 +119,28 @@ export async function ingestCycle(opts: { force?: boolean } = {}): Promise<Inges
 
   const snapshot = cycle.selected;
 
-  // ── 2. Resolve catalogue, FX and previous prices in three batched reads. ──
+  // ── 2. Resolve commodity ids once. ──
   const catalogue = await safeDbQuery("commodity_catalogue", () =>
     db.select({ id: commodities.id, symbol: commodities.symbol }).from(commodities),
   ).catch(() => [] as Array<{ id: string; symbol: string }>);
   const idBySymbol = new Map(catalogue.map((c) => [c.symbol, c.id]));
-  const previousRows = await safeDbQuery("commodity_previous_prices", () => db.execute(sql`
-    SELECT DISTINCT ON (commodity_id) commodity_id, price_vnd
-    FROM commodity_prices
-    WHERE date < ${bucketAt}
-    ORDER BY commodity_id, date DESC
-  `)).catch(() => ({ rows: [] } as { rows: Array<{ commodity_id: string; price_vnd: number }> }));
-  const previousById = new Map((previousRows.rows as Array<{ commodity_id: string; price_vnd: number }>).map((r) => [r.commodity_id, Number(r.price_vnd)]));
-  const fxRows = await safeDbQuery("commodity_fx_rates", () => db.execute(sql`
-    SELECT DISTINCT ON (currency) currency, rate
-    FROM exchange_rates
-    ORDER BY currency, date DESC
-  `)).catch(() => ({ rows: [] } as { rows: Array<{ currency: string; rate: number }> }));
-  const fxByCurrency = new Map((fxRows.rows as Array<{ currency: string; rate: number }>).map((r) => [r.currency, Number(r.rate)]));
 
-  // ── 3. Build rows synchronously, then persist concurrently. ──
+  // ── 3. Persist — every row tagged with the SAME source. ──
+  let written = 0;
   let changed = 0;
-  const rows: Array<Record<string, unknown>> = [];
+
   for (const q of snapshot.quotes) {
     const commodityId = idBySymbol.get(q.symbol);
     if (!commodityId) continue;
-    const rate = q.currency === "VND" ? null : fxByCurrency.get(q.currency) ?? null;
-    const priceVnd = q.currency === "VND" ? q.price : rate && rate > 0 ? q.price * rate : null;
-    if (priceVnd === null) {
+
+    const conv = await toVnd(q);
+    if (!conv) {
       log.warn("fx_missing_for_quote", { symbol: q.symbol, currency: q.currency });
       continue;
     }
-    const prev = previousById.get(commodityId) ?? null;
+    const { priceVnd, rate } = conv;
+
+    const prev = await previousVnd(commodityId, bucketAt);
     const movedPct = prev && prev > 0 ? ((priceVnd - prev) / prev) * 100 : null;
     if (movedPct !== null && Math.abs(movedPct) > 0.0001) changed++;
 
@@ -190,28 +166,35 @@ export async function ingestCycle(opts: { force?: boolean } = {}): Promise<Inges
       source: snapshot.source, // ← single source for the whole cycle
     };
 
-    rows.push(row);
+    try {
+      await db
+        .insert(commodityPrices)
+        .values(row)
+        .onConflictDoUpdate({
+          target: [commodityPrices.commodityId, commodityPrices.date],
+          set: {
+            price: row.price,
+            priceVnd: row.priceVnd,
+            currencyRate: row.currencyRate,
+            prevClose: row.prevClose,
+            changePct1d: row.changePct1d,
+            changePct7d: row.changePct7d,
+            changePct30d: row.changePct30d,
+            changePctYtd: row.changePctYtd,
+            changePct1y: row.changePct1y,
+            high52w: row.high52w,
+            low52w: row.low52w,
+            source: row.source,
+          },
+        });
+      written++;
+    } catch (err) {
+      log.error("price_upsert_failed", {
+        symbol: q.symbol,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
-
-  const writes = await Promise.allSettled(rows.map((row) => db
-    .insert(commodityPrices)
-    .values(row as typeof commodityPrices.$inferInsert)
-    .onConflictDoUpdate({
-      target: [commodityPrices.commodityId, commodityPrices.date],
-      set: {
-        price: sql`excluded.price`, priceVnd: sql`excluded.price_vnd`,
-        currencyRate: sql`excluded.currency_rate`, prevClose: sql`excluded.prev_close`,
-        changePct1d: sql`excluded.change_pct_1d`, changePct7d: sql`excluded.change_pct_7d`,
-        changePct30d: sql`excluded.change_pct_30d`, changePctYtd: sql`excluded.change_pct_ytd`,
-        changePct1y: sql`excluded.change_pct_1y`, high52w: sql`excluded.high_52w`,
-        low52w: sql`excluded.low_52w`, source: sql`excluded.source`,
-      },
-    })));
-  let written = 0;
-  writes.forEach((result, index) => {
-    if (result.status === "fulfilled") written++;
-    else log.error("price_upsert_failed", { symbol: snapshot.quotes[index]?.symbol, error: String(result.reason) });
-  });
 
   const result: IngestResult = {
     ok: written > 0,
@@ -259,3 +242,6 @@ export async function pruneOldIntraday(days = 30): Promise<number> {
     return 0;
   }
 }
+
+/** Backward-compatible scheduler entry point. */
+export const startIngestCycle = ingestCycle;

@@ -265,6 +265,7 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
   const [metric, setMetric] = useState<Metric>("tradingValue");
   const [exchange, setExchange] = useState("all");
   const [sector, setSector] = useState("all");
+  const [industry, setIndustry] = useState("all");
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [selected, setSelected] = useState<Item | null>(null);
@@ -314,17 +315,22 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
     () => [...new Set(allItems.map((item) => item.sector).filter(Boolean))].sort(),
     [allItems],
   );
+  const industries = useMemo(
+    () => [...new Set(allItems.filter((item) => sector === "all" || item.sector === sector).map((item) => item.industry).filter(Boolean))].sort(),
+    [allItems, sector],
+  );
   const filtered = useMemo(
     () =>
       allItems.filter(
         (item) =>
           (exchange === "all" || item.exchange === exchange) &&
           (sector === "all" || item.sector === sector) &&
+          (industry === "all" || item.industry === industry) &&
           (!deferredQuery ||
             item.symbol.includes(deferredQuery.toUpperCase()) ||
             item.name.toLowerCase().includes(deferredQuery.toLowerCase())),
       ),
-    [allItems, exchange, sector, deferredQuery],
+    [allItems, exchange, sector, industry, deferredQuery],
   );
   const groups = useMemo(() => {
     const map = new Map<string, Item[]>();
@@ -400,6 +406,14 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
                 {x}
               </option>
             ))}
+          </select>
+          <select
+            value={industry}
+            onChange={(e) => setIndustry(e.target.value)}
+            className={`${selectClass} max-w-[180px]`}
+          >
+            <option value="all">Tất cả ngành con</option>
+            {industries.map((x) => <option key={x} value={x}>{x}</option>)}
           </select>
           <select
             value={metric}
