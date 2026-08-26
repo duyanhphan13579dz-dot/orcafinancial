@@ -46,6 +46,10 @@ export interface BalanceData {
   longTermInvestments: number;
   totalAssets: number;
   currentLiabilities: number;
+  /** Optional debt maturity fields; absent when the filing does not disclose a schedule. */
+  shortTermDebt?: number;
+  debtDueWithin12m?: number;
+  debtMaturityBuckets?: { within12m: number; oneToThreeYears: number; overThreeYears: number };
   longTermDebt: number;
   totalLiabilities: number;
   equity: number;
@@ -238,6 +242,9 @@ export function generateQuarterlyFinancials(
         longTermInvestments: Math.round(totalAssets * 0.04 * qRand()),
         totalAssets: Math.round(totalAssets),
         currentLiabilities: Math.round(currentLiabilities),
+        shortTermDebt: Math.round(currentLiabilities * 0.15),
+        debtDueWithin12m: Math.round(currentLiabilities * 0.15),
+        debtMaturityBuckets: { within12m: Math.round(currentLiabilities * 0.15), oneToThreeYears: Math.round(ltDebt * 0.45), overThreeYears: Math.round(ltDebt * 0.55) },
         longTermDebt: Math.round(ltDebt),
         totalLiabilities: Math.round(totalLiabilities),
         equity: Math.round(equityThisQ),

@@ -43,6 +43,8 @@ export interface HealthDetail {
   rating: string;
   groups: GroupDetail[];
   summary: string;
+  asOfPeriod: string;
+  dataQuality: { currentStateOnly: true; periodsUsed: number; debtMaturityDisclosed: boolean };
 }
 
 const WEIGHTS = {
@@ -82,8 +84,10 @@ function ind(key: string, label: string, value: number | null, unit: string, sco
 export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): HealthDetail {
   const latest = qs[0];
   const prev = qs[1];
+  const yearAgo = qs.find((quarter) => quarter.quarter === latest?.quarter && quarter.fiscalYear === (latest?.fiscalYear ?? 0) - 1);
+  const ytd = qs.filter((quarter) => quarter.fiscalYear === latest?.fiscalYear && quarter.quarter <= (latest?.quarter ?? 0));
   if (!latest) {
-    return { symbol, overall: 0, rating: "E", groups: [], summary: "Không đủ dữ liệu để đánh giá." };
+    return { symbol, overall: 0, rating: "E", groups: [], summary: "Không đủ dữ liệu để đánh giá.", asOfPeriod: "—", dataQuality: { currentStateOnly: true, periodsUsed: 0, debtMaturityDisclosed: false } };
   }
   const inc = latest.income;
   const bal = latest.balance;
@@ -115,6 +119,16 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
   const fcfMargin = inc.revenue > 0 ? cf.freeCashFlow / inc.revenue * 100 : null;
   const cfoToNi = Math.abs(inc.netIncome) > 0 ? cf.operatingCashFlow / inc.netIncome : null;
   const dividendPayout = Math.abs(inc.netIncome) > 0 ? cf.dividendsPaid / inc.netIncome : null;
+  const earningsQuality = Math.abs(inc.netIncome) > 0 ? cf.operatingCashFlow / inc.netIncome : null;
+  const fcfConversion = Math.abs(inc.netIncome) > 0 ? cf.freeCashFlow / inc.netIncome : null;
+  const netDebt = bal.totalLiabilities - bal.cashAndEquivalents - bal.shortTermInvestments;
+  const netDebtToEbitda = inc.ebitda > 0 ? netDebt / (inc.ebitda * 4) : null;
+  const debtDueWithin12m = bal.debtDueWithin12m ?? bal.shortTermDebt ?? null;
+  const debtMaturityCoverage = debtDueWithin12m !== null ? (bal.cashAndEquivalents + cf.operatingCashFlow) / Math.max(debtDueWithin12m, 1) : null;
+  const revGrowthYoY = yearAgo && yearAgo.income.revenue > 0 ? (inc.revenue / yearAgo.income.revenue - 1) * 100 : null;
+  const niGrowthYoY = yearAgo && Math.abs(yearAgo.income.netIncome) > 0 ? (inc.netIncome / yearAgo.income.netIncome - 1) * 100 : null;
+  const ytdRevenue = ytd.length > 0 ? ytd.reduce((sum, quarter) => sum + quarter.income.revenue, 0) : null;
+  const ytdNetIncome = ytd.length > 0 ? ytd.reduce((sum, quarter) => sum + quarter.income.netIncome, 0) : null;
 
   // ── Liquidity ──
   const liqInds: IndicatorDetail[] = [
@@ -134,6 +148,8 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
     ind("debtEquity", "Nợ / Vốn chủ sở hữu", debtEquity, "lần", debtEquity !== null ? ramp(debtEquity, 2.0, 0.4, false) : 0.5),
     ind("debtToAssets", "Nợ / Tổng tài sản", debtToAssets, "%", debtToAssets !== null ? ramp(debtToAssets * 100, 80, 30, false) : 0.5),
     ind("interestCoverage", "EBIT / Lãi vay", interestCoverage, "lần", interestCoverage !== null ? ramp(interestCoverage, 1.5, 8) : 0.5),
+    ind("netDebtToEbitda", "Nợ ròng / EBITDA năm hóa", netDebtToEbitda, "lần", netDebtToEbitda !== null ? ramp(netDebtToEbitda, 4, 0.5, false) : 0.5),
+    ind("debtMaturityCoverage", "Tiền + OCF / nợ đáo hạn 12 tháng", debtMaturityCoverage, "lần", debtMaturityCoverage !== null ? ramp(debtMaturityCoverage, 0.8, 2.5) : 0.5),
   ];
   const levScore = Math.round(avg(levInds.map((i) => i.score)));
   const levNarrative = levScore >= 70
@@ -175,6 +191,10 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
     ind("revGrowthQoQ", "Tăng trưởng doanh thu QoQ", revGrowth, "%", revGrowth !== null ? ramp(revGrowth, -5, 15) : 0.5),
     ind("niGrowthQoQ", "Tăng trưởng LN ròng QoQ", niGrowth, "%", niGrowth !== null ? ramp(niGrowth, -10, 25) : 0.5),
     ind("ebitdaGrowthQoQ", "Tăng trưởng EBITDA QoQ", ebitdaGrowth, "%", ebitdaGrowth !== null ? ramp(ebitdaGrowth, -5, 20) : 0.5),
+    ind("revGrowthYoY", "Tăng trưởng doanh thu YoY", revGrowthYoY, "%", revGrowthYoY !== null ? ramp(revGrowthYoY, -10, 20) : 0.5),
+    ind("niGrowthYoY", "Tăng trưởng LN ròng YoY", niGrowthYoY, "%", niGrowthYoY !== null ? ramp(niGrowthYoY, -20, 30) : 0.5),
+    ind("ytdRevenue", "Doanh thu YTD", ytdRevenue, "tỷ", ytdRevenue !== null ? ramp(ytdRevenue, 0, Math.max(1, inc.revenue * 4)) : 0.5),
+    ind("ytdNetIncome", "LN ròng YTD", ytdNetIncome, "tỷ", ytdNetIncome !== null ? ramp(ytdNetIncome, 0, Math.max(1, Math.abs(inc.netIncome) * 4)) : 0.5),
   ];
   const growthScore = Math.round(avg(growthInds.map((i) => i.score)));
   const growthNarrative = growthScore >= 70
@@ -188,6 +208,8 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
     ind("fcfMargin", "Biên dòng tiền tự do", fcfMargin, "%", fcfMargin !== null ? ramp(fcfMargin, -5, 15) : 0.5),
     ind("cfoToNi", "OCF / Lợi nhuận ròng", cfoToNi, "lần", cfoToNi !== null ? ramp(cfoToNi, 0.5, 1.3) : 0.5),
     ind("dividendPayout", "Tỷ lệ chi trả cổ tức", dividendPayout, "%", dividendPayout !== null ? ramp(dividendPayout, 0, 0.7) : 0.3),
+    ind("earningsQuality", "Chất lượng lợi nhuận (OCF / LN)", earningsQuality, "lần", earningsQuality !== null ? ramp(earningsQuality, 0.5, 1.3) : 0.5),
+    ind("fcfConversion", "FCF / Lợi nhuận ròng", fcfConversion, "lần", fcfConversion !== null ? ramp(fcfConversion, 0.3, 1.1) : 0.5),
   ];
   const cfScore = Math.round(avg(cfInds.map((i) => i.score)));
   const cfNarrative = cfScore >= 70
@@ -218,7 +240,7 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
       : "Không có nhóm nào ở mức báo động; doanh nghiệp cân bằng trên cả 6 khía cạnh."
   }`;
 
-  return { symbol, overall, rating, groups, summary };
+  return { symbol, overall, rating, groups, summary, asOfPeriod: latest.period, dataQuality: { currentStateOnly: true, periodsUsed: qs.length, debtMaturityDisclosed: Boolean(debtDueWithin12m !== null || bal.debtMaturityBuckets) } };
 }
 
 function avg(xs: number[]): number {

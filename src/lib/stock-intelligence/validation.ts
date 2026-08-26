@@ -15,6 +15,13 @@ export interface ValidationResult {
   checkedAt: string;
 }
 
+export interface DataQualitySnapshot {
+  completeness: { expectedPeriods: number; presentPeriods: number; ratio: number };
+  freshness: { latestPeriod: string | null; ageDays: number | null; stale: boolean; thresholdDays: number };
+  reconciliation: { status: "pass" | "warning" | "fail"; warningCount: number; errorCount: number };
+  validation: ValidationResult;
+}
+
 export function validateFinancialQuarters(quarters: FinancialQuarter[]): ValidationResult {
   const issues: ValidationIssue[] = [];
   const seen = new Set<string>();
@@ -56,6 +63,28 @@ export function validatePeriods(labels: string[], expectedLatest?: string): Vali
   if (normalized.length !== new Set(normalized).size) issues.push({ code: "duplicate_period", field: "period", message: "Có kỳ dữ liệu bị trùng.", severity: "error" });
   if (expectedLatest && normalized.length > 0 && normalized[0] !== expectedLatest) issues.push({ code: "wrong_period", field: "latestPeriod", message: `Kỳ mới nhất không khớp kỳ mong đợi ${expectedLatest}.`, severity: "warning" });
   return { valid: !issues.some((issue) => issue.severity === "error"), issues, checkedAt: new Date().toISOString() };
+}
+
+export function buildDataQualitySnapshot(
+  quarters: FinancialQuarter[],
+  validation: ValidationResult,
+  options?: { expectedPeriods?: number; staleAfterDays?: number; asOf?: Date },
+): DataQualitySnapshot {
+  const expectedPeriods = Math.max(options?.expectedPeriods ?? quarters.length, 1);
+  const staleAfterDays = options?.staleAfterDays ?? 120;
+  const asOf = options?.asOf ?? new Date();
+  const latest = [...quarters].sort((a, b) => `${b.fiscalYear}-${b.quarter}`.localeCompare(`${a.fiscalYear}-${a.quarter}`))[0] ?? null;
+  const latestPeriod = latest?.period ?? null;
+  const latestEnd = latest ? new Date(Date.UTC(latest.fiscalYear, latest.quarter * 3, 0)) : null;
+  const ageDays = latestEnd ? Math.max(0, Math.floor((asOf.getTime() - latestEnd.getTime()) / 86_400_000)) : null;
+  const warningCount = validation.issues.filter((issue) => issue.severity === "warning").length;
+  const errorCount = validation.issues.filter((issue) => issue.severity === "error").length;
+  return {
+    completeness: { expectedPeriods, presentPeriods: quarters.length, ratio: Number(Math.min(1, quarters.length / expectedPeriods).toFixed(3)) },
+    freshness: { latestPeriod, ageDays, stale: ageDays === null || ageDays > staleAfterDays, thresholdDays: staleAfterDays },
+    reconciliation: { status: errorCount > 0 ? "fail" : warningCount > 0 ? "warning" : "pass", warningCount, errorCount },
+    validation,
+  };
 }
 
 export function validateProviderValues(values: Array<{ provider: string; value: number | null }>): ValidationResult {

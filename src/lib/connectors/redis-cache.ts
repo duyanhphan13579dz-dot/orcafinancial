@@ -14,6 +14,20 @@ import { logger } from "@/lib/logger";
 
 const localCache = new Map<string, { value: unknown; expiresAt: number }>();
 const MAX_L1 = 1_200;
+const cacheMetrics = { l1Hits: 0, l2Hits: 0, misses: 0, sets: 0, singleFlightJoins: 0, errors: 0, totalReadLatencyMs: 0, reads: 0 };
+
+export function getSharedCacheMetrics() {
+  const reads = cacheMetrics.reads;
+  return {
+    ...cacheMetrics,
+    averageReadLatencyMs: reads > 0 ? Number((cacheMetrics.totalReadLatencyMs / reads).toFixed(2)) : 0,
+    l1HitRate: reads > 0 ? Number((cacheMetrics.l1Hits / reads).toFixed(4)) : 0,
+    l2HitRate: reads > 0 ? Number((cacheMetrics.l2Hits / reads).toFixed(4)) : 0,
+    missRate: reads > 0 ? Number((cacheMetrics.misses / reads).toFixed(4)) : 0,
+    l1Size: localCache.size,
+    redisConfigured: isSharedCacheConfigured(),
+  };
+}
 
 let redis: Redis | null = null;
 let redisInitLogged = false;
@@ -105,8 +119,14 @@ export function assertRedisForProduction(): {
 
 /** L1 first, then Redis L2. */
 export async function sharedCacheGet<T>(key: string): Promise<T | undefined> {
+  const started = Date.now();
+  cacheMetrics.reads += 1;
   const l1 = readL1<T>(key);
-  if (l1 !== undefined) return l1;
+  if (l1 !== undefined) {
+    cacheMetrics.l1Hits += 1;
+    cacheMetrics.totalReadLatencyMs += Date.now() - started;
+    return l1;
+  }
 
   const client = getRedis();
   if (client) {
@@ -115,16 +135,20 @@ export async function sharedCacheGet<T>(key: string): Promise<T | undefined> {
       if (value !== null && value !== undefined) {
         // Short L1 mirror so next same-instance hit is free
         touchL1(key, value, 4_000);
+        cacheMetrics.l2Hits += 1;
+        cacheMetrics.totalReadLatencyMs += Date.now() - started;
         return value;
       }
-      return undefined;
     } catch (err) {
+      cacheMetrics.errors += 1;
       logger.warn("redis_cache_get_failed", {
         key,
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
+  cacheMetrics.misses += 1;
+  cacheMetrics.totalReadLatencyMs += Date.now() - started;
   return undefined;
 }
 
@@ -133,6 +157,7 @@ export async function sharedCacheSet<
   T,
 >(key: string, value: T, ttlMs: number): Promise<void> {
   touchL1(key, value, ttlMs);
+  cacheMetrics.sets += 1;
   const client = getRedis();
   if (!client) return;
   const ex = Math.max(1, Math.ceil(ttlMs / 1000));
@@ -169,6 +194,8 @@ export async function sharedCacheGetOrSet<T>(
       inflight.delete(key);
     });
     inflight.set(key, pending);
+  } else {
+    cacheMetrics.singleFlightJoins += 1;
   }
 
   try {

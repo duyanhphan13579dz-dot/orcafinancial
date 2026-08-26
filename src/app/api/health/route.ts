@@ -1,5 +1,5 @@
 import { allBreakerStatuses, getStaleFlags } from "@/lib/connectors/core";
-import { assertRedisForProduction, pingRedis } from "@/lib/connectors/redis-cache";
+import { assertRedisForProduction, getSharedCacheMetrics, pingRedis } from "@/lib/connectors/redis-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +54,7 @@ export async function GET() {
   const degraded = connectors.filter((c) => c.status === "DEGRADED").length;
 
   const redisOk = redisAssert.ok && (redisAssert.configured ? redisPing.ok : !redisAssert.required);
+  const cacheMetrics = getSharedCacheMetrics();
   const ok = dbOk && down === 0 && redisOk;
 
   const body = {
@@ -74,6 +75,7 @@ export async function GET() {
       attempts: dbAttempts,
       ...(dbHealthSnapshot ?? {}),
     },
+    cacheMetrics,
     redis: {
       required: redisAssert.required,
       configured: redisAssert.configured,
