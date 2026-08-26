@@ -7,6 +7,9 @@ import type { ForecastScenarioResult } from "@/lib/stock-intelligence/forecast-e
 import type { RiskAssessment } from "@/lib/stock-intelligence/risk-engine";
 import type { NewsIntelligenceResult } from "@/lib/stock-intelligence/news-intelligence";
 import type { BacktestResult } from "@/lib/stock-intelligence/backtest-engine";
+import type { CrossModuleContext } from "@/lib/stock-intelligence/cross-module-engine";
+import type { BusinessIntelligence } from "@/lib/stock-intelligence/moat-engine";
+import type { InvestmentThesis } from "@/lib/stock-intelligence/investment-thesis";
 
 export interface StockAnalysisPdfPayload {
   symbol: string;
@@ -19,6 +22,9 @@ export interface StockAnalysisPdfPayload {
   risk: RiskAssessment;
   news: NewsIntelligenceResult;
   backtest: BacktestResult;
+  crossModule?: CrossModuleContext;
+  business?: BusinessIntelligence;
+  thesis?: InvestmentThesis;
   source: string;
   dataConfidence: number;
 }
@@ -87,8 +93,31 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     row("Mức rủi ro", `${payload.risk.level} · ${payload.risk.overall}/100`); row("Rủi ro chính", payload.risk.mainRisk); row("Backtest accuracy", `${(payload.backtest.metrics.recommendationAccuracy * 100).toFixed(1)}%`); row("News trend 7 ngày", payload.news.trend.d7.toFixed(3));
     payload.news.events.slice(0, 5).forEach((event) => bullet(`[${event.impact.toUpperCase()} · ${event.category}] ${event.title}`));
     if (payload.risk.tradePlan) { doc.moveDown(0.25); paragraph(`Trade plan nghiên cứu: vùng vào ${money(payload.risk.tradePlan.entryLow)}–${money(payload.risk.tradePlan.entryHigh)}, stop loss ${money(payload.risk.tradePlan.stopLoss)}, TP1 ${money(payload.risk.tradePlan.takeProfit1)}, TP2 ${money(payload.risk.tradePlan.takeProfit2)}; R/R ${payload.risk.tradePlan.riskReward1}x / ${payload.risk.tradePlan.riskReward2}x.`, MUTED); }
-    title("6. NHẬN XÉT CHUNG VỀ DOANH NGHIỆP");
+    if (payload.crossModule || payload.business || payload.thesis) {
+      title("6. CROSS-MODULE, MOAT VÀ INVESTMENT THESIS");
+      if (payload.crossModule) {
+        row("Market regime", `${payload.crossModule.market.regimeLabel} · risk ${payload.crossModule.market.risk}`);
+        row("Cross-module score", payload.crossModule.aggregateScore == null ? "N/A" : `${payload.crossModule.aggregateScore}/100`);
+        payload.crossModule.signals.filter((signal) => signal.direction !== "unknown").slice(0, 5).forEach((signal) => bullet(`[${signal.module.toUpperCase()} · ${signal.direction}] ${signal.headline}: ${signal.evidence}`));
+        payload.crossModule.causalChains.slice(0, 3).forEach((chain) => bullet(`[CAUSAL · ${chain.impact}] ${chain.title}: ${chain.links.map((link) => `${link.from} → ${link.to}`).join(" → ")}`));
+      }
+      if (payload.business) {
+        row("Moat score", `${payload.business.moat.score}/100 · ${payload.business.moat.rating}`);
+        payload.business.moat.factors.slice(0, 5).forEach((factor) => bullet(`[MOAT] ${factor.label}: ${factor.score}/100 — ${factor.evidence}`));
+        payload.business.growthDrivers.slice(0, 3).forEach((driver) => bullet(`[GROWTH · ${driver.direction}] ${driver.driver}: ${driver.evidence}`));
+      }
+      if (payload.thesis) {
+        row("Investment thesis", `${payload.thesis.stance}${payload.thesis.score == null ? "" : ` · ${payload.thesis.score}/100`}`);
+        payload.thesis.whyBuy.slice(0, 3).forEach((item) => bullet(`[WHY BUY] ${item.title}: ${item.detail}`));
+        payload.thesis.whyNotBuy.slice(0, 3).forEach((item) => bullet(`[WHY NOT] ${item.title}: ${item.detail}`, RED));
+        payload.thesis.invalidation.slice(0, 3).forEach((item) => bullet(`[INVALIDATION] ${item.title}: ${item.detail}`, MUTED));
+      }
+    }
+    title("7. NHẬN XÉT CHUNG VỀ DOANH NGHIỆP");
     paragraph(`Doanh nghiệp ${payload.profile.name} hoạt động trong ${payload.profile.industry}. Sức khỏe tài chính hiện ở mức ${payload.health.rating} với điểm ${payload.health.overall}/100; technical engine cho tín hiệu ${payload.technical.recommendation}. Kịch bản cơ sở được xây dựng từ xu hướng lịch sử và phải được xem xét lại khi có báo cáo tài chính, tin tức hoặc thay đổi thị trường mới.`);
+    if (payload.crossModule) bullet(`Cross-module disclosure: ${payload.crossModule.disclosure}`);
+    if (payload.business) bullet(`Moat disclosure: ${payload.business.disclosure}`);
+    if (payload.thesis) bullet(`Thesis disclosure: ${payload.thesis.disclosure}`);
     bullet(`Nguồn dữ liệu thô: ${payload.source}.`); bullet(`Dữ liệu được lấy qua data-engine tại thời điểm ${new Date(payload.generatedAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}.`); bullet("Các trường estimate/degraded không phải số liệu audited actual; forecast, fair value và trade plan không phải cam kết giá.");
     doc.moveDown(0.8); doc.font(regular).fontSize(8).fillColor(MUTED).text("Báo cáo chỉ nhằm mục đích nghiên cứu, không phải lời khuyên đầu tư cá nhân. Nhà đầu tư cần tự đánh giá khẩu vị rủi ro, tính thanh khoản, thuế, phí và thông tin công bố chính thức.");
     const range = doc.bufferedPageRange();
