@@ -5,7 +5,14 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { Bar } from "@/components/candle-chart";
-import { api, changeColor, fmtNum, fmtPct, usePoll } from "@/lib/client";
+import { api, changeColor, fmtNum, fmtPct } from "@/lib/client";
+import {
+  createBiquoteForexWebSocket,
+  fetchBiquoteOhlc,
+  type BiquoteForexBar,
+  type BiquoteForexStatus,
+} from "@/lib/forex/biquote-websocket";
+import type { ForexQuoteContract } from "@/lib/forex/types";
 import {
   defaultTimeframe,
   timeframeLabel,
@@ -44,7 +51,24 @@ const BAR_LIMIT = 90;
 
 function mergeBars(older: Bar[], current: Bar[]): Bar[] {
   const byTime = new Map<number, Bar>();
-  for (const bar of [...older, ...current]) byTime.set(bar.time, bar);
+  for (const bar of [...older, ...current]) {
+    const previous = byTime.get(bar.time);
+    if (!previous) {
+      byTime.set(bar.time, bar);
+      continue;
+    }
+    const previousVolume = Number(previous.volume ?? 0);
+    const nextVolume = Number(bar.volume ?? 0);
+    byTime.set(bar.time, {
+      ...previous,
+      ...bar,
+      open: previous.open,
+      high: Math.max(previous.high, bar.high),
+      low: Math.min(previous.low, bar.low),
+      close: bar.close,
+      volume: Math.max(previousVolume, nextVolume),
+    });
+  }
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
 
@@ -59,6 +83,10 @@ export default function ForexDetail() {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [chartLoading, setChartLoading] = useState(false);
   const [bundleError, setBundleError] = useState<string | null>(null);
+  const [liveQuote, setLiveQuote] = useState<ForexQuoteContract | null>(null);
+  const [liveBar, setLiveBar] = useState<BiquoteForexBar | null>(null);
+  const [biquoteStatus, setBiquoteStatus] = useState<BiquoteForexStatus>("connecting");
+  const connectionRef = useRef<ReturnType<typeof createBiquoteForexWebSocket> | null>(null);
   const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
   const [historyHasMore, setHistoryHasMore] = useState(true);
   const [showEma, setShowEma] = useState(true);
@@ -113,22 +141,18 @@ export default function ForexDetail() {
     let cancelled = false;
 
     void api<any>(
-      `/forex/${symbol}/bundle?timeframe=${initialTf}&limit=${BAR_LIMIT}&light=1`,
+      `/forex/${symbol}/bundle?timeframe=${initialTf}&limit=${BAR_LIMIT}&light=1&ws=1`,
       { timeoutMs: 3_900 },
     )
       .then((env) => {
         if (cancelled) return;
         setBundle(env.data);
-        const initialBars = env.data.bars ?? [];
-        setBars(initialBars);
-        historyBeforeRef.current = initialBars[0]?.time ?? null;
-        setHistoryHasMore(initialBars.length >= BAR_LIMIT);
-        setChartSource(env.data.source ?? "");
+        setBars([]);
+        historyBeforeRef.current = null;
+        setHistoryHasMore(true);
+        setChartSource("Biquote OHLC + Biquote WebSocket");
         setBundleLoading(false);
         initialDone.current = true;
-        void loadAnalysis(initialTf, true).then(() => {
-          if (!cancelled) void loadAnalysis(initialTf);
-        });
       })
       .catch((err) => {
         if (cancelled) return;
@@ -142,33 +166,78 @@ export default function ForexDetail() {
     };
   }, [symbol, loadAnalysis]);
 
-  const loadTf = useCallback(
-    async (next: string) => {
-      setChartLoading(true);
-      setHistoryHasMore(true);
-      historyBeforeRef.current = null;
-      setBundleError(null);
+  useEffect(() => {
+    let active = true;
+    setChartLoading(true);
+    setBundleError(null);
+    setBars([]);
+    setLiveQuote(null);
+    setLiveBar(null);
+    setBiquoteStatus("connecting");
+    setHistoryHasMore(true);
+    historyBeforeRef.current = null;
+    setChartSource("Biquote OHLC + Biquote WebSocket");
+
+    const connection = createBiquoteForexWebSocket({
+      symbol,
+      timeframe: tf,
+      onQuote: (quote) => {
+        if (active) setLiveQuote(quote);
+      },
+      onBar: (bar) => {
+        if (!active) return;
+        setLiveBar(bar);
+        if (bar.isClosed) {
+          setBars((current) => mergeBars(current, [bar]));
+        }
+      },
+      onStatus: (status) => {
+        if (active) setBiquoteStatus(status);
+      },
+    });
+    connectionRef.current = connection;
+
+    void connection.loadHistory(300).then((history) => {
+      if (!active) return;
+      const initialBars = history.bars as Bar[];
+      setBars(initialBars);
+      historyBeforeRef.current = initialBars[0]?.time ?? null;
+      setHistoryHasMore(history.hasMore);
+      setChartLoading(false);
+      setChartSource("Biquote OHLC + Biquote WebSocket");
+      void loadAnalysis(tf, true).then(() => {
+        if (active) void loadAnalysis(tf);
+      });
+    }).catch(async (error) => {
+      if (!active) return;
       try {
-        const o = await api<{ bars: Bar[] }>(
-          `/forex/${symbol}/ohlcv?timeframe=${next}&limit=${BAR_LIMIT}`,
-          { timeoutMs: 3_900 },
+        const fallback = await api<{ bars: Bar[] }>(
+          `/forex/${symbol}/ohlcv?timeframe=${tf}&limit=300`,
+          { timeoutMs: 6_000 },
         );
-        const nextBars = o.data.bars ?? [];
-        setBars(nextBars);
-        historyBeforeRef.current = nextBars[0]?.time ?? null;
-        setHistoryHasMore(o.meta?.hasMore === true || nextBars.length >= BAR_LIMIT);
-        setChartSource(String(o.meta?.source ?? "yahoo"));
-        void loadAnalysis(next, true).then(() => {
-          void loadAnalysis(next);
+        if (!active) return;
+        const fallbackBars = fallback.data.bars ?? [];
+        setBars(fallbackBars);
+        historyBeforeRef.current = fallbackBars[0]?.time ?? null;
+        setHistoryHasMore(fallback.meta?.hasMore === true || fallbackBars.length >= BAR_LIMIT);
+        setChartSource("Biquote WebSocket unavailable · degraded fallback");
+        setBiquoteStatus("error");
+        void loadAnalysis(tf, true).then(() => {
+          if (active) void loadAnalysis(tf);
         });
-      } catch (err) {
-        setBundleError(err instanceof Error ? err.message : String(err));
+      } catch {
+        if (active) setBundleError(error instanceof Error ? error.message : "Biquote OHLC unavailable");
       } finally {
-        setChartLoading(false);
+        if (active) setChartLoading(false);
       }
-    },
-    [symbol, loadAnalysis],
-  );
+    });
+
+    return () => {
+      active = false;
+      if (connectionRef.current === connection) connectionRef.current = null;
+      connection.disconnect();
+    };
+  }, [symbol, tf, loadAnalysis]);
 
   const loadMoreHistory = useCallback(async () => {
     if (historyLoadingRef.current || !historyHasMore || historyBeforeRef.current == null) return;
@@ -176,18 +245,24 @@ export default function ForexDetail() {
     setHistoryLoadingMore(true);
     const before = historyBeforeRef.current;
     try {
-      const page = await api<{ bars: Bar[] }>(
-        `/forex/${symbol}/ohlcv?timeframe=${tf}&limit=${BAR_LIMIT}&before=${before}`,
-        { timeoutMs: 6_000 },
-      );
-      const older = page.data.bars ?? [];
+      let page: { bars: Bar[]; hasMore: boolean };
+      try {
+        page = await fetchBiquoteOhlc(symbol, tf, BAR_LIMIT, before);
+      } catch {
+        const fallback = await api<{ bars: Bar[] }>(
+          `/forex/${symbol}/ohlcv?timeframe=${tf}&limit=${BAR_LIMIT}&before=${before}`,
+          { timeoutMs: 6_000 },
+        );
+        page = { bars: fallback.data.bars ?? [], hasMore: fallback.meta?.hasMore === true };
+      }
+      const older = page.bars;
       if (!older.length) {
         setHistoryHasMore(false);
         return;
       }
       setBars((current) => mergeBars(older, current));
       historyBeforeRef.current = older[0]?.time ?? before;
-      setHistoryHasMore(page.meta?.hasMore === true || older.length >= BAR_LIMIT);
+      setHistoryHasMore(page.hasMore || older.length >= BAR_LIMIT);
     } catch {
       // Keep the current chart visible; the next edge trigger can retry.
     } finally {
@@ -199,17 +274,11 @@ export default function ForexDetail() {
   const onSelectTf = (x: string) => {
     if (x === tf) return;
     setTf(x);
-    if (initialDone.current) void loadTf(x);
   };
 
-  const live = usePoll<any>(`/forex/${symbol}/price`, 5_000, {
-    softTtlMs: 3_000,
-    hardTtlMs: 45_000,
-    timeoutMs: 3_600,
-  });
   const pair = bundle?.pair;
-  const q = live.data?.quote ?? bundle?.quote ?? null;
-  const p = q ?? live.data?.price ?? bundle?.price;
+  const q = liveQuote ?? bundle?.quote ?? null;
+  const p = q ?? bundle?.price;
   const a = bundle?.analysis;
   const mtf = a?.mtf;
   const fx = a?.fxIntelligence;
@@ -234,7 +303,13 @@ export default function ForexDetail() {
       ? `${symbol.slice(0, 3)}/${symbol.slice(3)}`
       : symbol);
 
-  const freshness = p?.freshness as string | undefined;
+  const freshness = biquoteStatus === "live"
+    ? "LIVE"
+    : biquoteStatus === "stale"
+      ? "STALE"
+      : biquoteStatus === "error"
+        ? "DEGRADED"
+        : p?.freshness as string | undefined;
   const ageMs = p?.ageMs as number | undefined;
   const spreadPips = p?.spreadPips as number | null | undefined;
 
@@ -354,14 +429,14 @@ export default function ForexDetail() {
               </button>
             ))}
           </div>
-          {bundleLoading && !bars.length ? (
+          {(bundleLoading || chartLoading) && !bars.length ? (
             <ChartSkeleton />
           ) : bars.length > 0 ? (
             <div className={chartLoading ? "opacity-60" : ""}>
               {/* CSS-driven height: mobile / tablet / desktop */}
               <div className="h-[360px] sm:h-[440px] lg:h-[520px]">
                 <ForexProChart
-                  bars={bars}
+                  bars={mergeBars(bars, liveBar ? [liveBar] : [])}
                   height={520}
                   onLoadMore={loadMoreHistory}
                   loadingMore={historyLoadingMore}

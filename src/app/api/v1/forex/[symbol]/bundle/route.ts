@@ -5,6 +5,7 @@ import {
   getLiveQuoteContract,
   syncForexOhlcv,
 } from "@/lib/forex/service";
+import { FOREX_BY_SYMBOL } from "@/lib/forex/data";
 import {
   defaultTimeframe,
   isValidTimeframe,
@@ -46,8 +47,42 @@ export async function GET(
   const light =
     req.nextUrl.searchParams.get("light") === "1" ||
     req.nextUrl.searchParams.get("fast") === "1";
+  const websocketMode = req.nextUrl.searchParams.get("ws") === "1";
 
   try {
+    if (websocketMode) {
+      const def = FOREX_BY_SYMBOL.get(sym);
+      if (!def) return fail("Forex pair not found", 404);
+      const data = {
+        pair: {
+          symbol: def.symbol,
+          name: def.name,
+          category: def.category,
+          baseCurrency: def.baseCurrency,
+          quoteCurrency: def.quoteCurrency,
+        },
+        price: null,
+        quote: null,
+        bars: [],
+        timeframe,
+        source: "biquote-websocket",
+        analysis: null as null,
+        light: true,
+        websocket: true,
+      };
+      const response = ok(data, {
+        timezone: "Asia/Ho_Chi_Minh",
+        source: data.source,
+        freshness: "OFFLINE",
+        ageMs: null,
+        light: true,
+        websocket: true,
+      });
+      response.headers.set("Cache-Control", "public, s-maxage=60, stale-while-revalidate=300");
+      response.headers.set("X-Data-Mode", "biquote-websocket");
+      return response;
+    }
+
     if (light) {
       const oKey = ohlcvKey(sym, timeframe, limit);
       const cached = await fxCacheGet<{

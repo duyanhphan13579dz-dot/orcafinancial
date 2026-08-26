@@ -1,8 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { changeColor, fmtNum, fmtPct, usePoll } from "@/lib/client";
+import { createBiquoteMarketWebSocket, type BiquoteMarketStatus } from "@/lib/forex/biquote-market-websocket";
+import type { ForexQuoteContract } from "@/lib/forex/types";
+import { FOREX_PAIRS } from "@/lib/forex/data";
 
 interface Row {
   symbol: string;
@@ -66,25 +69,46 @@ function SkeletonGrid() {
 }
 
 export default function ForexPage() {
-  // 6s poll — soft cache keeps UI snappy
+  // REST is metadata/degraded fallback; live prices arrive from one Biquote stream.
   const feed = usePoll<{ prices: Row[]; freshness: Record<string, unknown> }>(
     "/forex/prices",
-    6_000,
-    { softTtlMs: 4_000, hardTtlMs: 60_000 },
+    60_000,
+    { softTtlMs: 30_000, hardTtlMs: 300_000 },
   );
+  const [liveQuotes, setLiveQuotes] = useState<Record<string, ForexQuoteContract>>({});
+  const [marketStatus, setMarketStatus] = useState<BiquoteMarketStatus>("connecting");
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
 
+  useEffect(() => {
+    const symbols = FOREX_PAIRS
+      .filter((pair) => !pair.derived && !["BRENTUSD", "WTIUSD"].includes(pair.symbol))
+      .map((pair) => pair.symbol);
+    const connection = createBiquoteMarketWebSocket({
+      symbols,
+      onQuote: (quote) => setLiveQuotes((current) => ({ ...current, [quote.symbol]: quote })),
+      onStatus: setMarketStatus,
+    });
+    return () => connection.disconnect();
+  }, []);
+
   const rows = useMemo(
     () =>
-      (feed.data?.prices ?? []).filter(
+      (feed.data?.prices ?? []).map((base) => ({
+        ...base,
+        ...(liveQuotes[base.symbol] ?? {}),
+        freshness: liveQuotes[base.symbol]
+          ? marketStatus === "live" ? "LIVE" : marketStatus === "stale" ? "STALE" : "DEGRADED"
+          : base.freshness,
+        source: liveQuotes[base.symbol]?.source ?? base.source,
+      })).filter(
         (x) =>
           (category === "all" || x.category === category) &&
           (!query ||
             x.symbol.includes(query.toUpperCase()) ||
             x.name.toLowerCase().includes(query.toLowerCase())),
       ),
-    [feed.data, category, query],
+    [feed.data, liveQuotes, marketStatus, category, query],
   );
 
   return (
@@ -102,10 +126,10 @@ export default function ForexPage() {
           </p>
         </div>
         <span className="inline-flex items-center gap-2 text-xs text-emerald-300">
-          <i className="live-dot h-2 w-2 rounded-full bg-emerald-400" />
-          LIVE
+          <i className={`live-dot h-2 w-2 rounded-full ${marketStatus === "live" ? "bg-emerald-400" : "bg-amber-400"}`} />
+          {marketStatus === "live" ? "LIVE" : marketStatus === "reconnecting" ? "RECONNECT" : "DEGRADED"}
           {feed.isValidating && (
-            <span className="text-[10px] text-slate-500">updating…</span>
+            <span className="text-[10px] text-slate-500">metadata…</span>
           )}
         </span>
       </div>
