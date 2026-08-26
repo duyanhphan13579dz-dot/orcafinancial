@@ -1,7 +1,6 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, handleError, ok } from "@/lib/api";
-import { ingestCycle } from "@/lib/commodities/ingest";
-import { initializeCommodities, initializeStockImpacts } from "@/lib/commodities/service";
+import { startIngestCycle } from "@/lib/commodities/ingest";
 import { getCommodityScannerStatus } from "@/lib/commodities/scheduler";
 
 export const dynamic = "force-dynamic";
@@ -17,25 +16,17 @@ export async function POST(req: NextRequest) {
   if (limited) return limited;
 
   try {
-    await initializeCommodities();
-    await initializeStockImpacts();
-
-    const result = await ingestCycle({ force: true });
-
+    // Never hold the HTTP request open while scraping upstream HTML. The
+    // scheduler and the shared promise below coalesce concurrent refreshes.
+    void startIngestCycle({ force: true }).catch(() => undefined);
     return ok(
       {
-        success: result.ok,
-        selectedSource: result.source,
-        reason: result.reason,
-        quotesReceived: result.quotesReceived,
-        rowsWritten: result.rowsWritten,
-        rowsChanged: result.rowsChanged,
-        vnTime: result.vnTime,
-        durationMs: result.durationMs,
-        probes: result.probes,
+        accepted: true,
+        running: true,
+        message: "Đã bắt đầu làm mới dữ liệu ở chế độ nền.",
         scanner: getCommodityScannerStatus(),
       },
-      { source: result.source ?? "none" },
+      { source: "commodities-engine" },
     );
   } catch (err) {
     return handleError(err, "commodities_refresh");

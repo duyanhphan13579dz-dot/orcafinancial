@@ -18,7 +18,7 @@
  */
 
 import { forProvider } from "@/lib/logger";
-import { ingestCycle, pruneOldIntraday } from "./ingest";
+import { startIngestCycle, pruneOldIntraday } from "./ingest";
 import { initializeCommodities, initializeStockImpacts } from "./service";
 import { getPrimarySource, getSecondarySource } from "./sources";
 import { vnLabel } from "./time";
@@ -58,7 +58,7 @@ async function tick(): Promise<void> {
   globalForSched.__orcaCommodityLastTickAt = new Date().toISOString();
 
   try {
-    await ingestCycle();
+    await startIngestCycle();
   } catch (err) {
     log.error("tick_failed", { error: err instanceof Error ? err.message : String(err) });
   } finally {

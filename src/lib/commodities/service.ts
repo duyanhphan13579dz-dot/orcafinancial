@@ -200,6 +200,8 @@ export interface CommodityPriceWithDetails {
   currency: string;
   date: Date;
   source: string | null;
+  dataAgeSeconds: number;
+  freshness: "live" | "delayed" | "stale";
   prevClose: number | null;
   high52w: number | null;
   low52w: number | null;
@@ -282,6 +284,10 @@ export async function getLatestCommodityPrices(): Promise<CommodityPriceWithDeta
     const absFromPct = (pct: number | null): number | null =>
       pct === null ? null : priceVnd - priceVnd / (1 + pct / 100);
 
+    const dataAgeSeconds = Math.max(0, Math.round((Date.now() - new Date(row.date).getTime()) / 1000));
+    const freshness: CommodityPriceWithDetails["freshness"] =
+      dataAgeSeconds <= 90 ? "live" : dataAgeSeconds <= 15 * 60 ? "delayed" : "stale";
+
     return {
       symbol: row.symbol,
       name: row.name,
@@ -293,6 +299,8 @@ export async function getLatestCommodityPrices(): Promise<CommodityPriceWithDeta
       currency: row.currency,
       date: new Date(row.date),
       source: row.source ?? null,
+      dataAgeSeconds,
+      freshness,
       prevClose: num(row.prevClose),
       high52w: num(row.high52w),
       low52w: num(row.low52w),

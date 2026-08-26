@@ -433,37 +433,33 @@ export interface ScanCycleResult {
 export async function runScanCycle(): Promise<ScanCycleResult> {
   const primary = getPrimarySource();
   const secondary = getSecondarySource();
+  const scan = (source: SourceId) => source === "simplize" ? scanSimplize() : scanVietnamBiz();
 
-  // Scan both in parallel: continuous health visibility for both sources,
-  // while selection still yields a single authoritative dataset.
-  const [simplize, vietnambiz] = await Promise.all([scanSimplize(), scanVietnamBiz()]);
-  const byId: Record<SourceId, SourceSnapshot> = { simplize, vietnambiz };
-
-  const p = byId[primary];
-  const s = byId[secondary];
-
-  let selected: SourceSnapshot | null = null;
-  let reason: string;
-
+  // Start both probes immediately so fallback health is still measured, but do
+  // not make the happy path wait for the slower secondary HTML page. A healthy
+  // primary is authoritative and can be persisted as soon as it is available.
+  const secondaryPromise = scan(secondary);
+  const p = await scan(primary);
   if (p.ok) {
-    selected = p;
-    reason = `primary "${primary}" healthy (${p.quotes.length} quotes, ${p.latencyMs}ms)`;
-  } else if (s.ok) {
-    selected = s;
-    reason = `primary "${primary}" failed (${p.error}); fell back to "${secondary}" (${s.quotes.length} quotes)`;
-  } else {
-    reason = `both sources failed — primary: ${p.error}; secondary: ${s.error}`;
+    void secondaryPromise.then((s) => log.debug("secondary_probe_completed", {
+      source: s.source, ok: s.ok, rows: s.quotes.length, latencyMs: s.latencyMs,
+    })).catch(() => undefined);
+    const reason = `primary "${primary}" healthy (${p.quotes.length} quotes, ${p.latencyMs}ms)`;
+    log.info("scan_cycle_fast_path", { primary, secondary, selectedSource: p.source, selectedQuotes: p.quotes.length, reason });
+    return { selected: p, reason, probes: [p] };
   }
 
-  log.info("scan_cycle", {
-    primary,
-    secondary,
-    selectedSource: selected?.source ?? null,
-    selectedQuotes: selected?.quotes.length ?? 0,
-    reason,
-    simplize: { ok: simplize.ok, rows: simplize.quotes.length, ms: simplize.latencyMs },
-    vietnambiz: { ok: vietnambiz.ok, rows: vietnambiz.quotes.length, ms: vietnambiz.latencyMs },
-  });
+  const s = await secondaryPromise;
+  const selected = s.ok ? s : null;
+  const reason = s.ok
+    ? `primary "${primary}" failed (${p.error}); fell back to "${secondary}" (${s.quotes.length} quotes)`
+    : `both sources failed — primary: ${p.error}; secondary: ${s.error}`;
 
-  return { selected, reason, probes: [simplize, vietnambiz] };
+  log.info("scan_cycle", {
+    primary, secondary, selectedSource: selected?.source ?? null,
+    selectedQuotes: selected?.quotes.length ?? 0, reason,
+    primaryProbe: { ok: p.ok, rows: p.quotes.length, ms: p.latencyMs },
+    secondaryProbe: { ok: s.ok, rows: s.quotes.length, ms: s.latencyMs },
+  });
+  return { selected, reason, probes: [p, s] };
 }
