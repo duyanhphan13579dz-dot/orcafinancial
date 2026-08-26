@@ -23,7 +23,9 @@ import {
   type TradeSetupData,
 } from "@/components/forex-trade-setup";
 import { MemoForexIntelligenceCard } from "@/components/forex-intelligence-card";
-import ForexScalpingPanel from "@/components/forex-scalping-panel";
+import ForexScalpingPanel, {
+  type ForexScalpingResultView,
+} from "@/components/forex-scalping-panel";
 
 const ChartSkeleton = () => (
   <div className="h-[360px] w-full animate-pulse rounded-lg bg-slate-800/40 sm:h-[440px] lg:h-[520px]" />
@@ -78,6 +80,7 @@ export default function ForexDetail() {
   const tfs = useMemo(() => [...timeframesFor(symbol)], [symbol]);
   const [tf, setTf] = useState(() => defaultTimeframe(symbol));
   const [bundle, setBundle] = useState<any>(null);
+  const [scalpingResult, setScalpingResult] = useState<ForexScalpingResultView | null>(null);
   const [bars, setBars] = useState<Bar[]>([]);
   const [chartSource, setChartSource] = useState("");
   const [bundleLoading, setBundleLoading] = useState(true);
@@ -169,15 +172,18 @@ export default function ForexDetail() {
 
   useEffect(() => {
     let active = true;
-    setChartLoading(true);
-    setBundleError(null);
-    setBars([]);
-    setLiveQuote(null);
-    setLiveBar(null);
-    setBiquoteStatus("connecting");
-    setHistoryHasMore(true);
-    historyBeforeRef.current = null;
-    setChartSource("Biquote OHLC + Biquote WebSocket");
+    queueMicrotask(() => {
+      if (!active) return;
+      setChartLoading(true);
+      setBundleError(null);
+      setBars([]);
+      setLiveQuote(null);
+      setLiveBar(null);
+      setBiquoteStatus("connecting");
+      setHistoryHasMore(true);
+      historyBeforeRef.current = null;
+      setChartSource("Biquote OHLC + Biquote WebSocket");
+    });
 
     const connection = createBiquoteForexWebSocket({
       symbol,
@@ -286,17 +292,22 @@ export default function ForexDetail() {
   const macro = a?.macro;
   const analyst = a?.analyst;
 
+  const handleScalpingResult = useCallback((next: ForexScalpingResultView | null) => {
+    setScalpingResult(next);
+  }, []);
+
   const levels = useMemo(() => {
-    if (!a) return null;
+    if (!a && !scalpingResult?.bestCandidate) return null;
+    const scalp = scalpingResult?.bestCandidate;
     return {
-      support: a.levels?.support ?? null,
-      resistance: a.levels?.resistance ?? null,
-      entry: a.levels?.entry ?? a.entryPrice,
-      stopLoss: a.levels?.stopLoss ?? a.stopLoss,
-      takeProfit: a.levels?.takeProfit ?? a.takeProfit,
-      takeProfit2: a.levels?.takeProfit2 ?? a.takeProfit2 ?? null,
+      support: a?.levels?.support ?? null,
+      resistance: a?.levels?.resistance ?? null,
+      entry: scalp?.entry ?? a?.levels?.entry ?? a?.entryPrice,
+      stopLoss: scalp?.stopLoss ?? a?.levels?.stopLoss ?? a?.stopLoss,
+      takeProfit: scalp?.takeProfit ?? a?.levels?.takeProfit ?? a?.takeProfit,
+      takeProfit2: a?.levels?.takeProfit2 ?? a?.takeProfit2 ?? null,
     };
-  }, [a]);
+  }, [a, scalpingResult]);
 
   const displayName =
     pair?.name ??
@@ -364,7 +375,15 @@ export default function ForexDetail() {
 
       {/* Mobile: signal first · Desktop: chart 2/3 + card 1/3 */}
       <div className="flex flex-col gap-3 lg:grid lg:grid-cols-3 lg:gap-4">
-        <div className="order-1 lg:order-2 lg:col-span-1">
+        <div className="order-1 space-y-3 lg:order-2 lg:col-span-1">
+          <ForexScalpingPanel
+            symbol={symbol}
+            marketStatus={biquoteStatus}
+            quoteAgeMs={ageMs}
+            spreadPips={spreadPips}
+            sessionLabel={fx?.session?.label}
+            onResult={handleScalpingResult}
+          />
           {a ? (
             <MemoForexIntelligenceCard
               symbol={symbol}
@@ -469,8 +488,6 @@ export default function ForexDetail() {
           setup={a.tradeSetup as TradeSetupData}
         />
       )}
-
-      <ForexScalpingPanel symbol={symbol} />
 
       {/* Secondary intel — collapsible on mobile */}
       {(mtf || fx || macro || analyst) && (

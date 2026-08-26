@@ -6,6 +6,7 @@ import { changeColor, fmtNum, fmtPct, usePoll } from "@/lib/client";
 import { createBiquoteMarketWebSocket, type BiquoteMarketStatus } from "@/lib/forex/biquote-market-websocket";
 import type { ForexQuoteContract } from "@/lib/forex/types";
 import { FOREX_PAIRS } from "@/lib/forex/data";
+import ForexScalpingBoard from "@/components/forex-scalping-board";
 
 interface Row {
   symbol: string;
@@ -160,6 +161,8 @@ export default function ForexPage() {
           ))}
         </div>
       </div>
+
+      <ForexScalpingBoard />
 
       {feed.error && !feed.data && (
         <div className="panel border-rose-800 p-4 text-sm text-rose-300">
