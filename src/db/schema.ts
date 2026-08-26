@@ -228,9 +228,11 @@ export const reports = pgTable(
     contentHtml: text("content_html").notNull(),
     title: varchar("title", { length: 200 }).notNull(),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    reportId: varchar("report_id", { length: 80 }),
+    version: integer("version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("reports_type_date_uq").on(t.type, t.reportDate), index("reports_date_idx").on(t.reportDate)],
+  (t) => [uniqueIndex("reports_type_date_uq").on(t.type, t.reportDate), uniqueIndex("reports_report_id_uq").on(t.reportId), index("reports_date_idx").on(t.reportDate)],
 );
 
 export {

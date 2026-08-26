@@ -22,6 +22,7 @@ export { generateMarketSummary } from "./summary-generate";
 export { vnTodayKey, isVnWeekday } from "./report-utils";
 
 import { vnTodayKey, viShortDate, fmt, fmtVol, pct } from "./report-utils";
+import { availabilityFor, buildReportQuality, enrichReportHtml, normalizeAndDeduplicateNews, reportId, type ReportMetadata } from "./report-contract";
 
 function vnParts(d: Date = new Date()) {
   const fmt = new Intl.DateTimeFormat("en-GB", {
@@ -309,13 +310,14 @@ export async function generateMorningBrief(date: Date = new Date()) {
   const log = forProvider("reports-morning");
   log.info("generate_start", { date: dateKey });
 
-  const [overview, bars, newsItems, globalIndices] = await Promise.all([
+  const [overview, bars, rawNewsItems, globalIndices] = await Promise.all([
     withTimeout(getMarketOverview().catch(() => null), 14_000, null),
     withTimeout(loadVnIndexBars(), 14_000, [] as Ohlcv[]),
     withTimeout(loadRecentNews(50), 12_000, [] as Awaited<ReturnType<typeof loadRecentNews>>),
     withTimeout(loadGlobalSnapshots(), 10_000, [] as Awaited<ReturnType<typeof loadGlobalSnapshots>>),
   ]);
 
+  const newsItems = normalizeAndDeduplicateNews(rawNewsItems as { title: string; link: string; sourceName: string; publishedAt?: string | Date | null }[], 50);
   const vn = overview?.indices?.find((i) => i.code === "VNINDEX") ?? overview?.indices?.[0] ?? null;
   const analysis = bars.length >= 30 ? analyze("VNINDEX", bars) : null;
   const support = analysis?.supportResistance?.support ?? null;
@@ -392,7 +394,7 @@ export async function generateMorningBrief(date: Date = new Date()) {
     newsCatalog,
   );
 
-  const html = renderMorningHtml({
+  const baseHtml = renderMorningHtml({
     date,
     headline: narrative?.headline || "Điểm tin đầu ngày & chiến lược thận trọng",
     lede:
@@ -446,15 +448,23 @@ export async function generateMorningBrief(date: Date = new Date()) {
     llmMeta,
   });
 
-  const saved = await storePersist("morning", dateKey, html, `Morning Brief ${dateKey}`, {
-    vnIndex: vn?.close ?? null,
-    changePct: vn?.changePct ?? null,
-    newsCount: newsItems.length,
-    globalCount: globalIndices.length,
-    latencyMs: Date.now() - startedAt,
-    llm: Boolean(narrative),
-    llmModel: llmMeta ?? null,
-  });
+  const generatedAt = new Date().toISOString();
+  const overviewQuality = (overview as { quality?: { ageSeconds?: number | null; sources?: string[]; missingSymbols?: string[] } } | null)?.quality;
+  const metadata: ReportMetadata = {
+    reportId: reportId("morning", dateKey),
+    engineVersion: "2.4.0",
+    type: "morning",
+    date: dateKey,
+    publicationTime: generatedAt,
+    timestamps: { marketData: (overview as { generatedAt?: string } | null)?.generatedAt ?? null, news: newsItems[0]?.publishedAt ? String(newsItems[0].publishedAt) : null, macro: globalIndices.length ? generatedAt : null, generated: generatedAt },
+    availability: { market: availabilityFor(vn?.close, overviewQuality?.ageSeconds), news: availabilityFor(newsItems.length), macro: availabilityFor(globalIndices.length), technical: availabilityFor(bars.length >= 30) },
+    sources: [...(overviewQuality?.sources ?? []), "RSS News", "Yahoo Finance"].map((name) => ({ name, status: "LIVE" as const })),
+    quality: buildReportQuality({ marketAvailable: vn?.close != null, newsCount: newsItems.length, macroAvailable: globalIndices.length > 0, sourceCount: (overviewQuality?.sources?.length ?? 0) + 2, aiValidated: Boolean(narrative), missing: overviewQuality?.missingSymbols ?? [] }),
+    generatedAt,
+    version: 1,
+  };
+  const html = enrichReportHtml(baseHtml, metadata);
+  const saved = await storePersist("morning", dateKey, html, `Morning Brief ${dateKey}`, metadata);
   log.info("generate_done", {
     date: dateKey,
     id: saved.id,
@@ -473,6 +483,9 @@ export async function generateMorningBrief(date: Date = new Date()) {
 }
 
 export async function getStoredReport(type: ReportType, dateKey: string) {
+  return (await storeGet(type, dateKey))?.html ?? null;
+}
+export async function getStoredReportWithMetadata(type: ReportType, dateKey: string) {
   return storeGet(type, dateKey);
 }
 export async function listRecentReports(limit = 14) {

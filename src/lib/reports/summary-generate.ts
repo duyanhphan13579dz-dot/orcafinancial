@@ -14,6 +14,7 @@ import {
 } from "./llm-narrative";
 import { renderSummaryHtml } from "./summary-html";
 import { vnTodayKey, viShortDate, fmt, fmtVol, pct } from "./report-utils";
+import { availabilityFor, buildReportQuality, enrichReportHtml, normalizeAndDeduplicateNews, reportId, type ReportMetadata } from "./report-contract";
 
 async function loadVnIndexBars(days = 120): Promise<Ohlcv[]> {
   const to = Math.floor(Date.now() / 1000);
@@ -80,13 +81,14 @@ export async function generateMarketSummary(date: Date = new Date()) {
   const log = forProvider("reports-summary");
   log.info("generate_start", { date: dateKey });
 
-  const [overview, bars, newsItems, globalIndices] = await Promise.all([
+  const [overview, bars, rawNewsItems, globalIndices] = await Promise.all([
     withTimeout(getMarketOverview().catch(() => null), 14_000, null),
     withTimeout(loadVnIndexBars(), 14_000, [] as Ohlcv[]),
     withTimeout(loadRecentNews(40), 12_000, [] as Awaited<ReturnType<typeof loadRecentNews>>),
     withTimeout(loadGlobalSnapshots(), 10_000, [] as Awaited<ReturnType<typeof loadGlobalSnapshots>>),
   ]);
 
+  const newsItems = normalizeAndDeduplicateNews(rawNewsItems as { title: string; link: string; sourceName: string; publishedAt?: string | Date | null }[], 50);
   const emptyIdx = {
     close: null as number | null,
     changePct: null as number | null,
@@ -210,7 +212,7 @@ export async function generateMarketSummary(date: Date = new Date()) {
         ? "Tổng thể phiên nghiêng tiêu cực. Ưu tiên phòng thủ cho đến khi hỗ trợ được giữ vững và độ rộng cải thiện."
         : "Tổng thể phiên trung lập thiên thận trọng. Chờ breakout/breakdown có thanh khoản trước khi mở rộng vị thế.");
 
-  const html = renderSummaryHtml({
+  const baseHtml = renderSummaryHtml({
     date,
     headline: narrative?.headline || "Đọc vị phiên hôm nay & kế hoạch phiên tới",
     lede:
@@ -237,16 +239,23 @@ export async function generateMarketSummary(date: Date = new Date()) {
     llmMeta,
   });
 
-  const saved = await storePersist("summary", dateKey, html, `Market Summary ${dateKey}`, {
-    vnIndex: vn.close,
-    changePct: vn.changePct,
-    advancers: adv,
-    decliners: dec,
-    newsCount: newsItems.length,
-    latencyMs: Date.now() - startedAt,
-    llm: Boolean(narrative),
-    llmModel: llmMeta ?? null,
-  });
+  const generatedAt = new Date().toISOString();
+  const overviewQuality = (overview as { quality?: { ageSeconds?: number | null; sources?: string[]; missingSymbols?: string[] }; generatedAt?: string } | null)?.quality;
+  const metadata: ReportMetadata = {
+    reportId: reportId("summary", dateKey),
+    engineVersion: "2.4.0",
+    type: "summary",
+    date: dateKey,
+    publicationTime: generatedAt,
+    timestamps: { marketData: (overview as { generatedAt?: string } | null)?.generatedAt ?? null, news: newsItems[0]?.publishedAt ? String(newsItems[0].publishedAt) : null, macro: globalIndices.length ? generatedAt : null, generated: generatedAt },
+    availability: { market: availabilityFor(vn.close, overviewQuality?.ageSeconds), news: availabilityFor(newsItems.length), macro: availabilityFor(globalIndices.length), technical: availabilityFor(bars.length >= 30) },
+    sources: [...(overviewQuality?.sources ?? []), "RSS News", "Yahoo Finance"].map((name) => ({ name, status: "LIVE" as const })),
+    quality: buildReportQuality({ marketAvailable: vn.close != null, newsCount: newsItems.length, macroAvailable: globalIndices.length > 0, sourceCount: (overviewQuality?.sources?.length ?? 0) + 2, aiValidated: Boolean(narrative), missing: overviewQuality?.missingSymbols ?? [] }),
+    generatedAt,
+    version: 1,
+  };
+  const html = enrichReportHtml(baseHtml, metadata);
+  const saved = await storePersist("summary", dateKey, html, `Market Summary ${dateKey}`, metadata);
   log.info("generate_done", {
     date: dateKey,
     id: saved.id,

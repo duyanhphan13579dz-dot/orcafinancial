@@ -78,6 +78,7 @@ interface SchedulerJob {
   todayKey: string | null;
   target: string;
   minutesUntilTarget: number | null;
+  isTimeReached: boolean;
 }
 interface SchedulerStatus {
   started: boolean;
@@ -179,7 +180,9 @@ export default function ReportsPage() {
     }
   };
 
+  // The refresh loop intentionally synchronizes the UI with the report API.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
     const id = setInterval(refresh, 15_000);
     return () => clearInterval(id);
@@ -233,6 +236,7 @@ export default function ReportsPage() {
       const minsPast = -minutesToTarget(now, j.hh, j.mm);
       if (minsPast < 5) continue;
       if (triggering[j.type]) continue;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAutoBackfilled((s) => ({ ...s, [j.type]: true }));
       void doTrigger(j.type, true);
     }
@@ -254,7 +258,13 @@ export default function ReportsPage() {
   };
 
   const doPrint = () => {
-    iframeRef.current?.contentWindow?.print();
+    if (!preview) return;
+    const a = document.createElement("a");
+    a.href = `/api/v1/reports/${preview.type}/pdf?date=${preview.date}`;
+    a.download = `ORCA_${preview.type}_${preview.date}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   };
   const doDownloadHtml = () => {
     if (!preview) return;
@@ -353,7 +363,7 @@ export default function ReportsPage() {
               <span className="font-mono text-[11px] text-slate-300 tabular-nums">{countdownLabel}</span>
               {job && (
                 <span className="font-mono text-[10px] text-slate-500">
-                  hôm nay: {job.successesToday}/{job.attemptsToday || 0} lần thành công
+                  {job.lastSuccessAt ? `Published ${fmtCreatedAtVn(job.lastSuccessAt)}` : job.isTimeReached ? "Chờ retry" : `Scheduled ${job.target}`} · {job.attemptsToday} attempt(s)
                 </span>
               )}
             </div>
@@ -382,7 +392,7 @@ export default function ReportsPage() {
             </button>
             {todayRow && (
               <button onClick={() => void openPreview(todayRow)} className="btn-orca-outline text-xs">
-                Xem & in PDF
+                Tải PDF production
               </button>
             )}
           </div>
@@ -555,7 +565,7 @@ export default function ReportsPage() {
             <div className="text-sm text-slate-500 py-8 text-center">Đang tải…</div>
           ) : reports.length === 0 ? (
             <div className="text-sm text-slate-500 py-8 text-center italic">
-              Chưa có bản tin. Nhấn "Phát hành ngay" để tạo bản đầu tiên.
+              Chưa có bản tin. Nhấn &quot;Phát hành ngay&quot; để tạo bản đầu tiên.
             </div>
           ) : (
             <ul className="space-y-2">
@@ -618,7 +628,7 @@ export default function ReportsPage() {
               </div>
               <div className="flex gap-2 flex-wrap">
                 <button onClick={doPrint} className="btn-orca text-xs">
-                  In / Lưu PDF
+                  Tải PDF production
                 </button>
                 <button onClick={doDownloadHtml} className="btn-orca-outline text-xs">
                   Tải HTML

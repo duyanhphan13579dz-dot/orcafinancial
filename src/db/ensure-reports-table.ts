@@ -23,6 +23,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS reports_type_date_uq
 
 CREATE INDEX IF NOT EXISTS reports_date_idx
   ON reports (report_date);
+
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS report_id varchar(80);
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+CREATE UNIQUE INDEX IF NOT EXISTS reports_report_id_uq
+  ON reports (report_id)
+  WHERE report_id IS NOT NULL;
 `;
 
 export async function ensureReportsTable(): Promise<void> {
