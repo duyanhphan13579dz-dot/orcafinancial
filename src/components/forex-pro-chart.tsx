@@ -53,6 +53,8 @@ interface ForexProChartProps {
   loadingMore?: boolean;
   hasMore?: boolean;
   loadMoreThreshold?: number;
+  /** Use append/update semantics for candle-by-candle playback. */
+  incremental?: boolean;
 }
 
 function setLine(
@@ -78,6 +80,7 @@ export function ForexProChart({
   loadingMore = false,
   hasMore = true,
   loadMoreThreshold = 30,
+  incremental = false,
 }: ForexProChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -117,6 +120,9 @@ export function ForexProChart({
     if (!bars.length) {
       return null;
     }
+    if (incremental && !showEma && !showBb && !showRsi && !showMacd) {
+      return { ema20: [], ema50: [], ema200: [], bb: { upper: [], middle: [], lower: [] }, rsi: [], macd: { macd: [], signal: [], histogram: [] }, sr: null };
+    }
     const ema20 = showEma ? buildEmaSeries(bars, 20) : [];
     const ema50 = showEma ? buildEmaSeries(bars, 50) : [];
     const ema200 = showEma ? buildEmaSeries(bars, 200) : [];
@@ -125,7 +131,7 @@ export function ForexProChart({
     const macd = showMacd ? buildMacdSeries(bars) : { macd: [], signal: [], histogram: [] };
     const sr = swingSupportResistance(bars);
     return { ema20, ema50, ema200, bb, rsi, macd, sr };
-  }, [bars, showEma, showBb, showRsi, showMacd]);
+  }, [bars, showEma, showBb, showRsi, showMacd, incremental]);
 
   // Create chart once
   useEffect(() => {
@@ -332,15 +338,13 @@ export function ForexProChart({
       : -1;
     const prependedCount = existingFirstIndex > 0 ? existingFirstIndex : 0;
 
-    candleRef.current.setData(
-      bars.map((b) => ({
-        time: b.time as Time,
-        open: b.open,
-        high: b.high,
-        low: b.low,
-        close: b.close,
-      })),
-    );
+    const isAppend = incremental && previous.length > 0 && bars.length === previous.length + 1 && bars[0]?.time === previous[0]?.time;
+    const lastBar = bars.at(-1);
+    if (isAppend && lastBar) {
+      candleRef.current.update({ time: lastBar.time as Time, open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close });
+    } else {
+      candleRef.current.setData(bars.map((b) => ({ time: b.time as Time, open: b.open, high: b.high, low: b.low, close: b.close })));
+    }
 
     if (showEma) {
       setLine(ema20Ref.current, seriesData.ema20);
@@ -379,9 +383,9 @@ export function ForexProChart({
       });
     }
 
-    previousBarsRef.current = bars.map((bar) => ({ ...bar }));
+    previousBarsRef.current = bars;
     pendingPrependRangeRef.current = null;
-  }, [bars, seriesData, showEma, showBb, showRsi, showMacd]);
+  }, [bars, seriesData, showEma, showBb, showRsi, showMacd, incremental]);
 
   // Price lines: S/R + trade levels
   useEffect(() => {
@@ -413,14 +417,14 @@ export function ForexProChart({
       priceLinesRef.current.push(pl);
     };
 
-    const sr = seriesData?.sr;
+    const sr = incremental ? null : seriesData?.sr;
     add(levels?.support ?? sr?.support, "rgba(52, 211, 153, 0.7)", "S");
     add(levels?.resistance ?? sr?.resistance, "rgba(251, 113, 133, 0.7)", "R");
     add(levels?.entry, "rgba(0, 212, 255, 0.9)", "Entry", 0);
     add(levels?.stopLoss, "rgba(251, 113, 133, 0.95)", "SL", 0);
     add(levels?.takeProfit, "rgba(52, 211, 153, 0.95)", "TP1", 0);
     add(levels?.takeProfit2, "rgba(16, 185, 129, 0.85)", "TP2", 2);
-  }, [levels, seriesData]);
+  }, [levels, seriesData?.sr, incremental]);
 
   // Focus / jump to pattern time
   useEffect(() => {
