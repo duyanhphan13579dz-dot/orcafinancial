@@ -133,7 +133,7 @@ export function whaleNotionalThreshold(
   return Math.max(tierFloor, fromVolume);
 }
 
-interface DepthResponse {
+export interface BinanceDepthSnapshot {
   lastUpdateId?: number;
   bids: [string, string][];
   asks: [string, string][];
@@ -148,16 +148,16 @@ interface TradeRow {
   quoteQty?: string;
 }
 
-async function fetchDepth(symbol: string, limit = 20): Promise<DepthResponse> {
+async function fetchDepth(symbol: string, limit = 20): Promise<BinanceDepthSnapshot> {
   return getBreaker(SPOT).exec(async () => {
-    const safeLimit = Math.min(100, Math.max(5, limit));
+    const safeLimit = Math.min(1000, Math.max(5, limit));
     const url = `${BASE}/api/v3/depth?symbol=${encodeURIComponent(symbol)}&limit=${safeLimit}`;
     const res = await fetchWithRetry(url, {
       provider: SPOT,
       timeoutMs: TIMEOUT_MS,
       retries: RETRIES,
     });
-    const data = await readJsonSafe<DepthResponse>(res, SPOT, url);
+    const data = await readJsonSafe<BinanceDepthSnapshot>(res, SPOT, url);
     if (!data?.bids?.length && !data?.asks?.length) {
       throw new ProviderError(SPOT, `empty depth for ${symbol}`);
     }
@@ -178,6 +178,15 @@ async function fetchRecentTrades(symbol: string, limit = 40): Promise<TradeRow[]
     if (!rows?.length) throw new ProviderError(SPOT, `no trades for ${symbol}`);
     return rows;
   });
+}
+
+export async function fetchOrderBookSnapshot(
+  baseSymbol: string,
+  limit = 1000,
+): Promise<BinanceDepthSnapshot & { symbol: string; fetchedAt: string }> {
+  const symbol = pairSymbol(baseSymbol);
+  const snapshot = await fetchDepth(symbol, limit);
+  return { ...snapshot, symbol, fetchedAt: new Date().toISOString() };
 }
 
 export async function fetchOrderFlowIntelligence(
