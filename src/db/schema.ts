@@ -429,3 +429,38 @@ export const stockThesisVersions = pgTable(
   },
   (t) => [index("stock_thesis_versions_symbol_idx").on(t.symbol, t.createdAt), index("stock_thesis_versions_session_idx").on(t.sessionId, t.createdAt)],
 );
+
+export const stockForecastPredictions = pgTable(
+  "stock_forecast_predictions",
+  {
+    id: serial("id").primaryKey(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    modelVersion: varchar("model_version", { length: 60 }).notNull(),
+    horizon: varchar("horizon", { length: 10 }).notNull(),
+    direction: varchar("direction", { length: 15 }).notNull(),
+    probabilityBull: doublePrecision("probability_bull"),
+    probabilityNeutral: doublePrecision("probability_neutral"),
+    probabilityBear: doublePrecision("probability_bear"),
+    predictedAt: timestamp("predicted_at", { withTimezone: true }).notNull().defaultNow(),
+    outcomeReturnPct: doublePrecision("outcome_return_pct"),
+    outcomeDirection: varchar("outcome_direction", { length: 15 }),
+    evaluatedAt: timestamp("evaluated_at", { withTimezone: true }),
+    payload: jsonb("payload").notNull().default({}),
+  },
+  (t) => [index("stock_forecast_predictions_symbol_idx").on(t.symbol, t.predictedAt), index("stock_forecast_predictions_model_idx").on(t.modelVersion, t.horizon)],
+);
+
+export const stockReportHistory = pgTable(
+  "stock_report_history",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: varchar("session_id", { length: 64 }).notNull(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    reportVersion: varchar("report_version", { length: 60 }).notNull(),
+    reportType: varchar("report_type", { length: 30 }).notNull().default("analysis"),
+    storageKey: varchar("storage_key", { length: 300 }),
+    generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
+    payload: jsonb("payload").notNull(),
+  },
+  (t) => [index("stock_report_history_symbol_idx").on(t.symbol, t.generatedAt), index("stock_report_history_session_idx").on(t.sessionId, t.generatedAt)],
+);

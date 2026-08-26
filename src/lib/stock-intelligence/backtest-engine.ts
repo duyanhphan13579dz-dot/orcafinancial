@@ -1,37 +1,18 @@
 export type BacktestSignal = "BUY" | "SELL" | "HOLD";
-
 export interface SignalRecord { index: number; time: number; signal: BacktestSignal; entryPrice: number; exitPrice: number | null; returnPct: number | null; correct: boolean | null; modelVersion: string; }
-export interface BacktestResult { symbol: string; modelVersion: string; signalHistory: SignalRecord[]; metrics: { recommendationAccuracy: number; averageReturn: number; winRate: number; maxDrawdown: number; sharpe: number; profitFactor: number; totalSignals: number }; dataConfidence: number; status: "ready" | "insufficient_data"; disclaimer: string; }
-
+export interface BacktestResult { symbol: string; modelVersion: string; signalHistory: SignalRecord[]; metrics: { recommendationAccuracy: number; averageReturn: number; winRate: number; maxDrawdown: number; sharpe: number; profitFactor: number; totalSignals: number }; walkForward: { folds: number; averageAccuracy: number | null; outOfSampleSignals: number; censorGapBars: number }; regimeAccuracy: Array<{ regime: "BULL" | "BEAR" | "SIDEWAYS"; signals: number; accuracy: number | null }>; costs: { feeBps: number; slippageBps: number; netAverageReturn: number }; dataConfidence: number; status: "ready" | "insufficient_data"; disclaimer: string; }
 const avg = (values: number[]) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 const stdev = (values: number[]) => { const mean = avg(values); return values.length > 1 ? Math.sqrt(avg(values.map((value) => (value - mean) ** 2))) : 0; };
-
-export function runMovingAverageBacktest(input: { symbol: string; bars: Array<{ time: number; close: number }>; shortWindow?: number; longWindow?: number; horizon?: number; modelVersion?: string; }): BacktestResult {
-  const shortWindow = input.shortWindow ?? 20;
-  const longWindow = input.longWindow ?? 50;
-  const horizon = input.horizon ?? 10;
-  const modelVersion = input.modelVersion ?? "ORCA Signal v1.0";
-  const bars = input.bars.filter((bar) => Number.isFinite(bar.close) && bar.close > 0);
-  if (bars.length < longWindow + horizon + 5) return { symbol: input.symbol, modelVersion, signalHistory: [], metrics: { recommendationAccuracy: 0, averageReturn: 0, winRate: 0, maxDrawdown: 0, sharpe: 0, profitFactor: 0, totalSignals: 0 }, dataConfidence: 0.2, status: "insufficient_data", disclaimer: "Cần đủ lịch sử giá trước khi đánh giá signal." };
+const emptyMetrics = { recommendationAccuracy: 0, averageReturn: 0, winRate: 0, maxDrawdown: 0, sharpe: 0, profitFactor: 0, totalSignals: 0 };
+export function runMovingAverageBacktest(input: { symbol: string; bars: Array<{ time: number; close: number }>; shortWindow?: number; longWindow?: number; horizon?: number; modelVersion?: string; feeBps?: number; slippageBps?: number; censorGapBars?: number; }): BacktestResult {
+  const shortWindow = input.shortWindow ?? 20; const longWindow = input.longWindow ?? 50; const horizon = input.horizon ?? 10; const modelVersion = input.modelVersion ?? "ORCA Signal v1.1"; const feeBps = Math.max(0, input.feeBps ?? 15); const slippageBps = Math.max(0, input.slippageBps ?? 10); const censorGapBars = Math.max(1, input.censorGapBars ?? 1); const bars = input.bars.filter((bar) => Number.isFinite(bar.close) && bar.close > 0);
+  if (bars.length < longWindow + horizon + censorGapBars + 5) return { symbol: input.symbol, modelVersion, signalHistory: [], metrics: emptyMetrics, walkForward: { folds: 0, averageAccuracy: null, outOfSampleSignals: 0, censorGapBars }, regimeAccuracy: [], costs: { feeBps, slippageBps, netAverageReturn: 0 }, dataConfidence: 0.2, status: "insufficient_data", disclaimer: "Cần đủ lịch sử giá trước khi đánh giá signal." };
   const records: SignalRecord[] = [];
-  for (let i = longWindow; i < bars.length - horizon; i += 1) {
-    const shortMean = avg(bars.slice(i - shortWindow, i).map((bar) => bar.close));
-    const longMean = avg(bars.slice(i - longWindow, i).map((bar) => bar.close));
-    const signal: BacktestSignal = shortMean > longMean * 1.01 ? "BUY" : shortMean < longMean * 0.99 ? "SELL" : "HOLD";
-    if (signal === "HOLD") continue;
-    const entryPrice = bars[i].close;
-    const exitPrice = bars[i + horizon].close;
-    const direction = signal === "BUY" ? 1 : -1;
-    const returnPct = (exitPrice / entryPrice - 1) * direction;
-    records.push({ index: i, time: bars[i].time, signal, entryPrice, exitPrice, returnPct, correct: returnPct > 0, modelVersion });
-  }
-  const returns = records.map((record) => record.returnPct ?? 0);
-  let equity = 1;
-  let peak = 1;
-  let maxDrawdown = 0;
-  for (const value of returns) { equity *= 1 + value; peak = Math.max(peak, equity); maxDrawdown = Math.max(maxDrawdown, peak > 0 ? (peak - equity) / peak : 0); }
-  const gains = returns.filter((value) => value > 0);
-  const losses = returns.filter((value) => value < 0).map(Math.abs);
-  const sharpe = stdev(returns) > 0 ? (avg(returns) / stdev(returns)) * Math.sqrt(252 / Math.max(1, horizon)) : 0;
-  return { symbol: input.symbol, modelVersion, signalHistory: records, metrics: { recommendationAccuracy: Number((records.length ? records.filter((record) => record.correct).length / records.length : 0).toFixed(4)), averageReturn: Number(avg(returns).toFixed(4)), winRate: Number((records.length ? gains.length / records.length : 0).toFixed(4)), maxDrawdown: Number(maxDrawdown.toFixed(4)), sharpe: Number(sharpe.toFixed(4)), profitFactor: Number((losses.length ? gains.reduce((sum, value) => sum + value, 0) / losses.reduce((sum, value) => sum + value, 0) : gains.length ? 99 : 0).toFixed(4)), totalSignals: records.length }, dataConfidence: bars.length >= 252 ? 0.85 : 0.6, status: "ready", disclaimer: "Backtest lịch sử không bảo đảm kết quả tương lai; kết quả phụ thuộc cửa sổ, phí giao dịch, trượt giá và universe dữ liệu." };
+  for (let i = longWindow; i < bars.length - horizon - censorGapBars; i += 1) { const shortMean = avg(bars.slice(i - shortWindow, i).map((bar) => bar.close)); const longMean = avg(bars.slice(i - longWindow, i).map((bar) => bar.close)); const signal: BacktestSignal = shortMean > longMean * 1.01 ? "BUY" : shortMean < longMean * 0.99 ? "SELL" : "HOLD"; if (signal === "HOLD") continue; const entryIndex = i + censorGapBars; const entryPrice = bars[entryIndex].close; const exitPrice = bars[entryIndex + horizon].close; const returnPct = (exitPrice / entryPrice - 1) * (signal === "BUY" ? 1 : -1); records.push({ index: i, time: bars[i].time, signal, entryPrice, exitPrice, returnPct, correct: returnPct > 0, modelVersion }); }
+  const returns = records.map((record) => record.returnPct ?? 0); const costPct = (feeBps + slippageBps) / 10000; const netReturns = returns.map((value) => value - costPct * 2); let equity = 1; let peak = 1; let maxDrawdown = 0; for (const value of netReturns) { equity *= 1 + value; peak = Math.max(peak, equity); maxDrawdown = Math.max(maxDrawdown, peak > 0 ? (peak - equity) / peak : 0); }
+  const gains = netReturns.filter((value) => value > 0); const losses = netReturns.filter((value) => value < 0).map(Math.abs); const sharpe = stdev(netReturns) > 0 ? (avg(netReturns) / stdev(netReturns)) * Math.sqrt(252 / Math.max(1, horizon)) : 0;
+  const regimeFor = (index: number): "BULL" | "BEAR" | "SIDEWAYS" => { const start = Math.max(0, index - 20); const base = bars[start]?.close ?? bars[index]?.close ?? 0; const change = base > 0 ? ((bars[index]?.close ?? base) / base - 1) * 100 : 0; return change > 3 ? "BULL" : change < -3 ? "BEAR" : "SIDEWAYS"; };
+  const regimeAccuracy = (["BULL", "BEAR", "SIDEWAYS"] as const).map((regime) => { const subset = records.filter((record) => regimeFor(record.index) === regime); return { regime, signals: subset.length, accuracy: subset.length ? Number((subset.filter((record) => record.correct).length / subset.length).toFixed(4)) : null }; });
+  const folds = Math.min(5, Math.max(1, Math.floor(records.length / 10))); const foldAccuracies = Array.from({ length: folds }, (_, fold) => records.filter((_, index) => index % folds === fold).map((record) => record.correct ? 1 : 0)); const averageAccuracy = foldAccuracies.length ? avg(foldAccuracies.filter((fold) => fold.length).map((fold) => avg(fold))) : null;
+  return { symbol: input.symbol, modelVersion, signalHistory: records, metrics: { recommendationAccuracy: Number((records.length ? records.filter((record) => record.correct).length / records.length : 0).toFixed(4)), averageReturn: Number(avg(returns).toFixed(4)), winRate: Number((records.length ? gains.length / records.length : 0).toFixed(4)), maxDrawdown: Number(maxDrawdown.toFixed(4)), sharpe: Number(sharpe.toFixed(4)), profitFactor: Number((losses.length ? gains.reduce((sum, value) => sum + value, 0) / losses.reduce((sum, value) => sum + value, 0) : gains.length ? 99 : 0).toFixed(4)), totalSignals: records.length }, walkForward: { folds, averageAccuracy: averageAccuracy == null ? null : Number(averageAccuracy.toFixed(4)), outOfSampleSignals: records.length, censorGapBars }, regimeAccuracy, costs: { feeBps, slippageBps, netAverageReturn: Number(avg(netReturns).toFixed(4)) }, dataConfidence: bars.length >= 252 ? 0.85 : 0.6, status: "ready", disclaimer: "Backtest lịch sử dùng censor gap tối thiểu giữa signal và entry, đã khấu trừ fee/slippage giả định; không bảo đảm kết quả tương lai." };
 }

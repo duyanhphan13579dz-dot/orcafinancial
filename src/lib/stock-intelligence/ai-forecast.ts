@@ -11,6 +11,9 @@ export interface AiForecastResult {
   modelVersion: string;
   status: "ready" | "insufficient_data";
   guardrails: string[];
+  calibration: { calibrated: boolean; historicalSamples: number; method: "quantitative-ensemble-v1"; reason: string };
+  horizonAccuracy: Array<{ horizon: "7D" | "30D" | "90D"; accuracy: number | null; samples: number }>;
+  generatedAt: string;
 }
 
 const clamp = (value: number, low = 0, high = 1) => Math.min(high, Math.max(low, Number.isFinite(value) ? value : low));
@@ -19,7 +22,7 @@ export function buildAiForecast(input: { symbol: string; forecast: ForecastScena
   const guardrails: string[] = [];
   if (input.forecast.status !== "ready" || input.backtest.status !== "ready" || input.backtest.metrics.totalSignals < 10) {
     guardrails.push("Insufficient data: chưa đủ forecast và signal history để phát hành xác suất AI.");
-    return { symbol: input.symbol, horizons: [], predictionConfidence: 0, historicalAccuracy: input.backtest.status === "ready" ? input.backtest.metrics.recommendationAccuracy : null, modelVersion: "ORCA AI Forecast v1.0", status: "insufficient_data", guardrails };
+    return { symbol: input.symbol, horizons: [], predictionConfidence: 0, historicalAccuracy: input.backtest.status === "ready" ? input.backtest.metrics.recommendationAccuracy : null, modelVersion: "ORCA AI Forecast v1.1", status: "insufficient_data", guardrails, calibration: { calibrated: false, historicalSamples: input.backtest.metrics.totalSignals, method: "quantitative-ensemble-v1", reason: "Chưa đủ prediction-vs-actual samples để calibration." }, horizonAccuracy: [], generatedAt: new Date().toISOString() };
   }
   const latestScenario = input.forecast.scenarios.find((scenario) => scenario.name === "base");
   const expected = input.forecast.expectedValue;
@@ -39,5 +42,5 @@ export function buildAiForecast(input: { symbol: string; forecast: ForecastScena
     return { horizon, direction: hDirection, probabilities: { bull: Number(clamp(probs.bull + hSignal * 0.08).toFixed(3)), neutral: Number(clamp(probs.neutral + (1 - decay) * 0.04).toFixed(3)), bear: Number(clamp(probs.bear - hSignal * 0.08).toFixed(3)) }, explanation: [`Tín hiệu EPS forecast: ${(epsSignal * 100).toFixed(1)}%.`, `Historical accuracy của signal: ${(input.backtest.metrics.recommendationAccuracy * 100).toFixed(1)}%.`, expected != null ? `Expected value theo scenario: ${expected.toFixed(2)}.` : "Chưa có expected value."] };
   });
   const predictionConfidence = Number(clamp(0.35 + input.backtest.metrics.recommendationAccuracy * 0.35 + input.forecast.predictionConfidence * 0.3, 0.1, 0.85).toFixed(2));
-  return { symbol: input.symbol, horizons, predictionConfidence, historicalAccuracy: input.backtest.metrics.recommendationAccuracy, modelVersion: "ORCA AI Forecast v1.0", status: "ready", guardrails: ["Tín hiệu là mô hình xác suất có kiểm soát, không phải cam kết giá.", "Historical accuracy và prediction confidence được hiển thị tách biệt."] };
+  return { symbol: input.symbol, horizons, predictionConfidence, historicalAccuracy: input.backtest.metrics.recommendationAccuracy, modelVersion: "ORCA AI Forecast v1.1", status: "ready", guardrails: ["Tín hiệu là mô hình xác suất có kiểm soát, không phải cam kết giá.", "Historical accuracy và prediction confidence được hiển thị tách biệt."], calibration: { calibrated: false, historicalSamples: input.backtest.metrics.totalSignals, method: "quantitative-ensemble-v1", reason: "Accuracy hiện là backtest proxy; cần outcome ledger theo từng horizon để calibration thống kê." }, horizonAccuracy: horizons.map((item) => ({ horizon: item.horizon, accuracy: input.backtest.metrics.recommendationAccuracy, samples: input.backtest.metrics.totalSignals })), generatedAt: new Date().toISOString() };
 }
