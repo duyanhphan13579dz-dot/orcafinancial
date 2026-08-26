@@ -1108,6 +1108,26 @@ export default function StockPage({
       );
     };
 
+  const shareStock = async () => {
+    const shareData = {
+      title: `${symbol} · Orca Financial`,
+      text: `Xem phân tích cổ phiếu ${symbol} trên Orca Financial`,
+      url: window.location.href,
+    };
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+        setWatchMsg("Đã mở chia sẻ");
+        return;
+      }
+      await navigator.clipboard.writeText(window.location.href);
+      setWatchMsg("Đã sao chép liên kết");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setWatchMsg("Không thể chia sẻ lúc này");
+    }
+  };
+
   const downloadAnalysisReport =
     async () => {
       setAnalysisReportLoading(true);
@@ -1260,6 +1280,13 @@ export default function StockPage({
           )}
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={shareStock}
+              className="rounded-md border border-slate-600 bg-slate-800/60 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700"
+            >
+              Chia sẻ
+            </button>
             <button
               type="button"
               onClick={downloadAnalysisReport}

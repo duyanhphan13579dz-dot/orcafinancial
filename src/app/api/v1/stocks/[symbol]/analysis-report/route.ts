@@ -27,7 +27,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
   if (!/^[A-Z0-9]{1,15}$/.test(symbol)) return fail("Invalid symbol", 400);
   try {
     const cached = await cachedStockPayload({
-      key: stockCacheKey("analysis-report-pdf-v2", symbol),
+      key: stockCacheKey("analysis-report-pdf-v5", symbol),
       ttlMs: 5 * 60_000,
       staleTtlMs: 30 * 60_000,
       loader: async () => {

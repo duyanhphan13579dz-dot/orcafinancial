@@ -28,3 +28,25 @@ Các phase còn lại của roadmap (forecast/scenario, backtest, AI và PDF đ�
 ## Acceptance criteria
 
 Stock API có executive summary thống nhất; response có metadata freshness; period engine xác định latest quarter, previous quarter, same quarter prior year, YTD, TTM và latest FY; validation phát hiện missing/duplicate/wrong period/impossible value; cache chống request trùng; Financial Health ghi rõ current period; UI hiển thị verdict, score, confidence, risk, trend, valuation và lý do.
+
+
+## Addendum v1.1 — Stock Intelligence completion
+
+The implementation has progressed from the original foundation specification to a complete Stock Intelligence product layer. All downstream engines consume shared stock-analysis contracts rather than independently rebuilding the same source fields.
+
+| Layer | Final contract / behavior |
+|---|---|
+| Data foundation | Canonical financial periods, source/provenance, currency/unit, timestamps, freshness and confidence metadata are carried through analysis payloads. |
+| Intelligence | ORCA Score, risk, forecast/scenario, news clustering, backtest, guarded forecast, causal cross-module context, moat and thesis are exposed as distinct explainable modules. |
+| Persistence | Portfolio holdings, user preferences, alert rules/events, thesis versions, decision history and report history are represented in the database schema. |
+| Product | Stock detail includes responsive tabs, mobile navigation, watchlist, report download and share/copy-link actions; market overview uses weighted polygon treemap geometry. |
+| Reporting | `stock-analysis-pdf.ts` renders the canonical analysis payload into a Vietnamese 10-section A4 report with technical snapshot chart, localized dynamic narratives, stable spacing and no forced empty trailing pages. |
+| Performance | Shared cache and stale/single-flight protections are used for heavy stock endpoints. The report endpoint uses a versioned cache key (`analysis-report-pdf-v5`) so content/layout changes invalidate old report artifacts. |
+
+## Final invariants
+
+The current reported state must remain distinct from modeled estimates and target values. Any synthetic or benchmark-derived fallback must retain degraded/estimate provenance and must not be labeled audited actual. Historical backtest accuracy must remain separate from forward prediction confidence. Moat and thesis statements must preserve evidence/confidence caveats when company-specific filings, segment data, retention or market-share data are unavailable. The final report conclusion must assess the stock itself and must not be replaced by a system-data disclosure.
+
+## Operational requirements
+
+Production-grade persistence requires `DATABASE_URL`. Shared L2 caching requires the configured Redis connection. Provider-grade reported financials require an enabled filings/data connector; without it, the fallback and confidence disclosures remain mandatory. The report route requires an authenticated session and returns a PDF attachment only after the canonical payload has been assembled successfully.

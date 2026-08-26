@@ -46,3 +46,14 @@ Triển khai theo dependency: (1) actual financial ingestion/period correctness;
 ## Release discipline
 
 Mỗi phase phải có typecheck, ESLint, targeted tests hoặc deterministic sanity checks, `git diff --check`, một commit riêng và push lên `main`. Thay đổi ngoài phạm vi đang tồn tại trong working tree phải không được stage: `src/lib/commodities/fx.ts`, `src/lib/commodities/time.ts` và `pnpm-workspace.yaml`.
+
+
+## Final closeout addendum — 26 August 2026
+
+Các hạng mục roadmap 1–21 đã được triển khai và tích hợp vào trải nghiệm Stock Intelligence. Những phần đã hoàn tất gồm canonical data contract, financial period engine, phân tách actual/estimate/target, validation và freshness metadata, ORCA Score, risk/forecast/news/cross-module engines, moat và investment thesis, backtest và guarded forecast, persistence cho portfolio/preferences/alerts/thesis/decision/report history, shared caching, polygon treemap heatmap, canonical research-report payload và PDF phân tích chuyên nghiệp.
+
+Product Polish trong phạm vi hiện tại cũng đã được chốt: mobile shell/navigation đã có; stock detail có watchlist, tải `BÁO CÁO PHÂN TÍCH` và nút `Chia sẻ`. Nút chia sẻ dùng Web Share API trên thiết bị hỗ trợ và sao chép URL trên trình duyệt không hỗ trợ.
+
+Bản PDF VNM cuối được sinh thành công với bảy trang A4, font nhúng/fallback an toàn, không có trang trắng cuối, section 8 tận dụng khoảng trống trước đây ở trang 5, có technical snapshot chart, cover `INTELLIGENT INVESTMENT`, nội dung tiếng Việt ở cả static labels và dynamic narratives, và dòng kết luận là nhận định cổ phiếu. Kiểm tra text không còn các cụm tiếng Anh mục tiêu như `STOCK INTELLIGENCE`, `Cross-module`, `Investment thesis`, `Financial score`, `Expected value`, `Market regime`, `stop loss`, `current price`, `competitive advantage` và `DATA SYNCING`.
+
+Giới hạn còn lại là giới hạn vận hành/dữ liệu: môi trường production cần `DATABASE_URL`; provider filings/Vietstock/FMP chưa được cấu hình nên fallback synthetic/benchmark phải tiếp tục hiển thị provenance và confidence, không được gọi là audited actual; Redis chỉ hoạt động đầy đủ khi có credentials. Backtest hiện là moving-average evaluation có disclosure, chưa phải execution simulator có phí, slippage, survivorship/corporate-action controls và walk-forward validation.
