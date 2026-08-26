@@ -2,7 +2,7 @@ import type { CrossModuleContext } from "@/lib/stock-intelligence/cross-module-e
 import type { BusinessIntelligence } from "@/lib/stock-intelligence/moat-engine";
 
 export interface ThesisPoint { title: string; detail: string; confidence: number; source: string; }
-export interface InvestmentThesis { symbol: string; stance: "constructive" | "neutral" | "cautious" | "insufficient_data"; score: number | null; whyBuy: ThesisPoint[]; whyNotBuy: ThesisPoint[]; invalidation: ThesisPoint[]; catalysts: ThesisPoint[]; monitoring: string[]; dataConfidence: number; predictionConfidence: number; disclosure: string; }
+export interface InvestmentThesis { symbol: string; stance: "constructive" | "neutral" | "cautious" | "insufficient_data"; score: number | null; whyBuy: ThesisPoint[]; whyNotBuy: ThesisPoint[]; invalidation: ThesisPoint[]; catalysts: ThesisPoint[]; monitoring: string[]; dataConfidence: number; predictionConfidence: number; disclosure: string; version: string; approval: "SYSTEM_DRAFT" | "USER_APPROVED"; evidenceLinks: Array<{ label: string; source: string; confidence: number }>; }
 function clamp(n: number, min = 0, max = 100) { return Math.max(min, Math.min(max, Math.round(n))); }
 function point(title: string, detail: string, confidence: number, source: string): ThesisPoint { return { title, detail, confidence, source }; }
 
@@ -37,5 +37,6 @@ export function buildInvestmentThesis(input: { symbol: string; recommendation?: 
   const dataConfidence = Math.min(input.business.dataConfidence, input.crossModule.dataConfidence);
   const predictionConfidence = input.predictionConfidence ?? 0.35;
   const stance = score == null || dataConfidence < 0.25 ? "insufficient_data" : score >= 68 && (risk == null || risk >= 50) ? "constructive" : score <= 42 || (risk != null && risk < 35) ? "cautious" : "neutral";
-  return { symbol: input.symbol, stance, score, whyBuy: whyBuy.slice(0, 5), whyNotBuy: whyNotBuy.slice(0, 5), invalidation, catalysts: catalysts.slice(0, 5), monitoring, dataConfidence, predictionConfidence, disclosure: "Investment thesis là lớp tổng hợp có giải thích từ data-engine và các engine hiện hữu. Các điểm moat/cross-module có thể là proxy hoặc causal inference khi chưa có actual filing, segment disclosure hoặc causal backtest; không phải khuyến nghị đầu tư cá nhân." };
+  const evidenceLinks = [...whyBuy, ...whyNotBuy, ...invalidation, ...catalysts].slice(0, 12).map((item) => ({ label: item.title, source: item.source, confidence: item.confidence }));
+  return { symbol: input.symbol, stance, score, whyBuy: whyBuy.slice(0, 5), whyNotBuy: whyNotBuy.slice(0, 5), invalidation, catalysts: catalysts.slice(0, 5), monitoring, dataConfidence, predictionConfidence, disclosure: "Investment thesis là lớp tổng hợp có giải thích từ data-engine và các engine hiện hữu. Các điểm moat/cross-module có thể là proxy hoặc causal inference khi chưa có actual filing, segment disclosure hoặc causal backtest; không phải khuyến nghị đầu tư cá nhân.", version: `thesis-${new Date().toISOString().slice(0, 10)}`, approval: "SYSTEM_DRAFT", evidenceLinks };
 }

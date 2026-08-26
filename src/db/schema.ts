@@ -395,3 +395,37 @@ export const agentLogs = pgTable(
     index("agent_logs_conversation_idx").on(t.conversationId),
   ],
 );
+
+export const stockNewsEvents = pgTable(
+  "stock_news_events",
+  {
+    id: serial("id").primaryKey(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    eventKey: varchar("event_key", { length: 220 }).notNull(),
+    category: varchar("category", { length: 30 }).notNull(),
+    impact: varchar("impact", { length: 15 }).notNull(),
+    sentiment: doublePrecision("sentiment").notNull().default(0),
+    sourceQuality: doublePrecision("source_quality").notNull().default(0),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("stock_news_events_key_uq").on(t.symbol, t.eventKey), index("stock_news_events_published_idx").on(t.symbol, t.publishedAt)],
+);
+
+export const stockThesisVersions = pgTable(
+  "stock_thesis_versions",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: varchar("session_id", { length: 64 }).notNull(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    version: varchar("version", { length: 60 }).notNull(),
+    approval: varchar("approval", { length: 20 }).notNull().default("SYSTEM_DRAFT"),
+    stance: varchar("stance", { length: 30 }).notNull(),
+    score: doublePrecision("score"),
+    dataConfidence: doublePrecision("data_confidence").notNull().default(0),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("stock_thesis_versions_symbol_idx").on(t.symbol, t.createdAt), index("stock_thesis_versions_session_idx").on(t.sessionId, t.createdAt)],
+);
