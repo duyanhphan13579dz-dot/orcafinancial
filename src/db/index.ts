@@ -133,7 +133,7 @@ const globalForDb = globalThis as typeof globalThis & {
 
 if (!globalForDb.__orcaDbHealth) {
   globalForDb.__orcaDbHealth = {
-    status: "unknown",
+    status: databaseUrl ? "unknown" : "down",
     consecutiveFailures: 0,
     lastError: null,
     lastCheckAt: null,
@@ -225,14 +225,19 @@ export const db = drizzle(pool);
 function registerShutdownHooks(p: Pool) {
   if (globalForDb.__orcaDbShutdownHooksRegistered) return;
   globalForDb.__orcaDbShutdownHooksRegistered = true;
-  const shutdown = async (signal: string) => {
-    log("info", "shutdown_signal_received", { signal });
-    try {
-      await p.end();
-      log("info", "pool_closed_cleanly");
-    } catch (err) {
-      log("warn", "pool_close_failed", { error: err instanceof Error ? err.message : String(err) });
-    }
+  let shutdownPromise: Promise<void> | null = null;
+  const shutdown = (signal: string) => {
+    if (shutdownPromise) return shutdownPromise;
+    shutdownPromise = (async () => {
+      log("info", "shutdown_signal_received", { signal });
+      try {
+        await p.end();
+        log("info", "pool_closed_cleanly");
+      } catch (err) {
+        log("warn", "pool_close_failed", { error: err instanceof Error ? err.message : String(err) });
+      }
+    })();
+    return shutdownPromise;
   };
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
@@ -259,6 +264,12 @@ export async function pingDb(opts: { attempts?: number; timeoutMs?: number } = {
   error?: string;
   attempts: number;
 }> {
+  if (!databaseUrl) {
+    health.status = "down";
+    health.lastError = "DATABASE_URL_missing";
+    health.lastCheckAt = new Date().toISOString();
+    return { ok: false, latencyMs: 0, error: "DATABASE_URL_missing", attempts: 0 };
+  }
   const attempts = opts.attempts ?? 3;
   const timeoutMs = opts.timeoutMs ?? 8_000;
   const started = Date.now();
@@ -267,13 +278,21 @@ export async function pingDb(opts: { attempts?: number; timeoutMs?: number } = {
   for (let i = 1; i <= attempts; i++) {
     try {
       let client: PoolClient | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const connection = pool.connect();
       try {
-        client = await Promise.race([
-          pool.connect(),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("pool_connect_timeout")), timeoutMs)),
-        ]);
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("pool_connect_timeout")), timeoutMs);
+        });
+        client = await Promise.race([connection, timeout]);
         await client.query("SELECT 1");
+      } catch (err) {
+        // pool.connect() cannot be cancelled. Release a late connection so
+        // repeated DB timeouts do not silently exhaust the pool.
+        if (!client) void connection.then((lateClient) => lateClient.release(), () => undefined);
+        throw err;
       } finally {
+        if (timer) clearTimeout(timer);
         client?.release();
       }
       const latencyMs = Date.now() - started;
@@ -323,6 +342,11 @@ export function getDbHealth(): DbHealthState & {
 }
 
 export async function waitForDatabaseReady(): Promise<boolean> {
+  if (!databaseUrl) {
+    health.startupCompleted = true;
+    health.status = "down";
+    return false;
+  }
   if (health.startupCompleted) return health.status === "up";
   for (let attempt = 1; attempt <= STARTUP_RETRY_MAX; attempt++) {
     health.startupAttempts = attempt;
@@ -353,7 +377,7 @@ export async function waitForDatabaseReady(): Promise<boolean> {
 }
 
 export function startDbSelfPing() {
-  if (globalForDb.__orcaDbSelfPingStarted) return;
+  if (!databaseUrl || globalForDb.__orcaDbSelfPingStarted) return;
   globalForDb.__orcaDbSelfPingStarted = true;
   const tick = () => void pingDb({ attempts: 2, timeoutMs: 8_000 });
   setTimeout(tick, 5_000);

@@ -85,6 +85,7 @@ export class CircuitBreaker {
   private lastSuccessAt = 0;
   private lastAttemptAt = 0;
   private lastDownAt: number | null = null;
+  private halfOpenProbeInFlight = false;
   private cumulativeDowntimeMs = 0;
   private totalCalls = 0;
   private totalSuccesses = 0;
@@ -152,14 +153,23 @@ export class CircuitBreaker {
     this.lastError = null;
     this.lastErrorClass = null;
     this.lastDownAt = null;
+    this.halfOpenProbeInFlight = false;
   }
 
   async exec<T>(fn: () => Promise<T>): Promise<T> {
     this.totalCalls += 1;
     this.lastAttemptAt = Date.now();
-    if (this.state === "open") {
+    const state = this.state;
+    if (state === "open") {
       this.totalFailures += 1;
       throw new ProviderError(this.name, "circuit open (cooling down)", { state: "open" });
+    }
+    if (state === "half-open") {
+      if (this.halfOpenProbeInFlight) {
+        this.totalFailures += 1;
+        throw new ProviderError(this.name, "circuit half-open probe in flight", { state: "half-open" });
+      }
+      this.halfOpenProbeInFlight = true;
     }
     try {
       const result = await fn();
@@ -167,6 +177,7 @@ export class CircuitBreaker {
       this.failures = 0;
       if (wasOpen) this.cumulativeDowntimeMs += Date.now() - this.openedAt;
       this.openedAt = 0;
+      this.halfOpenProbeInFlight = false;
       this.lastSuccessAt = Date.now();
       this.totalSuccesses += 1;
       return result;
@@ -175,7 +186,11 @@ export class CircuitBreaker {
       this.totalFailures += 1;
       this.lastError = err instanceof Error ? err.message : String(err);
       this.lastErrorClass = err instanceof Error ? err.name : "Unknown";
-      if (this.failures >= this.failureThreshold && this.openedAt === 0) {
+      this.halfOpenProbeInFlight = false;
+      if (state === "half-open") {
+        this.openedAt = Date.now();
+        this.lastDownAt = this.openedAt;
+      } else if (this.failures >= this.failureThreshold && this.openedAt === 0) {
         this.openedAt = Date.now();
         this.lastDownAt = this.openedAt;
         logger.warn("circuit_opened", {
@@ -377,13 +392,15 @@ export async function fetchWithRetry(url: string, init: FetchOpts = {}): Promise
     ...rest
   } = init;
   const log = forProvider(provider);
+  const safeTimeoutMs = Math.max(250, Math.min(30_000, timeoutMs));
+  const safeRetries = Math.max(0, Math.min(5, retries));
 
   let lastErr: unknown;
   let lastStatus: number | undefined;
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  for (let attempt = 0; attempt <= safeRetries; attempt++) {
     const started = Date.now();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), safeTimeoutMs);
     try {
       const res = await fetch(url, {
         ...rest,
@@ -427,7 +444,7 @@ export async function fetchWithRetry(url: string, init: FetchOpts = {}): Promise
         retryable: cls.retryable,
         error: cls.message.slice(0, 300),
       });
-      if (!cls.retryable || attempt === retries) break;
+      if (!cls.retryable || attempt === safeRetries) break;
       const base = CONNECTOR_CONFIG.retryBaseMs * Math.pow(2, attempt);
       const jitter = base * 0.2 * (Math.random() * 2 - 1);
       await new Promise((r) => setTimeout(r, Math.round(base + jitter)));
@@ -438,7 +455,7 @@ export async function fetchWithRetry(url: string, init: FetchOpts = {}): Promise
   log.error("fetch_all_retries_exhausted", {
     url,
     method: rest.method ?? "GET",
-    attempts: retries + 1,
+    attempts: safeRetries + 1,
     lastStatus,
     error: finalErr.message.slice(0, 300),
   });
@@ -540,13 +557,15 @@ export async function cached<T>(key: string, ttlMs: number, loader: () => Promis
 }
 
 const staleShadow = new Map<string, unknown>();
+const refreshBackoffUntil = new Map<string, number>();
 const STALE_SHADOW_MAX = 500;
+const CACHE_REFRESH_BACKOFF_MS = envInt("CACHE_REFRESH_BACKOFF_MS", 15_000);
 
 export async function cachedWithStaleFallback<T>(
   key: string,
   ttlMs: number,
   loader: () => Promise<T>,
-  options: { shouldCache?: (value: T) => boolean } = {},
+  options: { shouldCache?: (value: T) => boolean; fallback?: T } = {},
 ): Promise<{ value: T; stale: boolean }> {
   const hit = await sharedCacheGet<T>(key);
   if (hit !== undefined) {
@@ -558,25 +577,37 @@ export async function cachedWithStaleFallback<T>(
     const existing = inflightLoaders.get(key);
     if (existing) return existing as Promise<T>;
     const promise = (async () => {
-      const value = await loader();
-      if (options.shouldCache?.(value) ?? true) {
-        await sharedCacheSet(key, value, ttlMs);
-        if (staleShadow.size >= STALE_SHADOW_MAX) staleShadow.delete(staleShadow.keys().next().value as string);
-        staleShadow.set(key, value);
+      try {
+        const value = await loader();
+        if (options.shouldCache?.(value) ?? true) {
+          await sharedCacheSet(key, value, ttlMs);
+          if (staleShadow.size >= STALE_SHADOW_MAX) {
+            staleShadow.delete(staleShadow.keys().next().value as string);
+          }
+          staleShadow.set(key, value);
+        }
+        refreshBackoffUntil.delete(key);
+        return value;
+      } catch (err) {
+        refreshBackoffUntil.set(key, Date.now() + CACHE_REFRESH_BACKOFF_MS);
+        throw err;
       }
-      return value;
     })().finally(() => inflightLoaders.delete(key));
     inflightLoaders.set(key, promise);
     return promise;
   };
 
   const shadow = staleShadow.get(key);
+  const backoffActive = (refreshBackoffUntil.get(key) ?? 0) > Date.now();
   if (shadow !== undefined) {
     // Serve stale immediately; only the background refresh pays upstream latency.
-    void startRefresh().catch((err) => logger.warn("cache_swr_refresh_failed", { key, error: err instanceof Error ? err.message : String(err) }));
+    if (!backoffActive) {
+      void startRefresh().catch((err) => logger.warn("cache_swr_refresh_failed", { key, error: err instanceof Error ? err.message : String(err) }));
+    }
     return { value: shadow as T, stale: true };
   }
 
+  if (backoffActive && options.fallback !== undefined) return { value: options.fallback, stale: true };
   return { value: await startRefresh(), stale: false };
 }
 

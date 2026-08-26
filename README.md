@@ -425,12 +425,13 @@ ORCA coi upstream failure là trạng thái sản phẩm cần quan sát, không
 
 - Exponential backoff có jitter cho HTTP connector.
 - Timeout riêng cho từng request.
-- Circuit breaker theo provider với các trạng thái `closed`, `open`, `half-open`.
+- Circuit breaker theo provider với các trạng thái `closed`, `open`, `half-open`; half-open chỉ cho phép một probe để tránh thundering herd.
 - Fallback chain theo loại dữ liệu.
 - Data validation trước khi insert hoặc trả về frontend.
 - `safeDbQuery` retry cho transient database errors.
 - Shared cache, inflight dedupe và stale-while-revalidate để chống request storm và giữ snapshot cũ khi refresh lỗi.
 - Hard deadline cho Market Overview: trả partial/stale fallback trong khoảng mục tiêu thay vì chờ provider/DB vô hạn.
+- Database fail-fast khi thiếu cấu hình, bảo vệ late `pool.connect()` khỏi connection leak và chống gọi `pool.end()` lặp khi shutdown.
 - Fast-fail quote path riêng cho overview; chart/detail vẫn giữ timeout đầy đủ.
 - Concurrency-limited `mapPool` cho quote/search/news workers.
 - Background scheduler là opt-in qua `RUN_BACKGROUND_SCHEDULERS=1`, tránh mỗi web/serverless instance tự chạy duplicate workers.
@@ -464,9 +465,9 @@ Trong production/serverless, không nên chạy scheduler trên mọi web instan
 |---|---:|---|
 | `CIRCUIT_BREAKER_THRESHOLD` | `5` | Số lỗi liên tiếp trước khi mở circuit |
 | `CIRCUIT_BREAKER_TIMEOUT` | `60000` | Cooldown circuit, ms |
-| `CONNECTOR_RETRY_ATTEMPTS` | `2` | Số retry mỗi HTTP call |
+| `CONNECTOR_RETRY_ATTEMPTS` | `2` | Số retry mỗi HTTP call; lớp fetch áp trần an toàn 5 lần |
 | `CONNECTOR_RETRY_BASE_MS` | `700` | Base delay backoff |
-| `CONNECTOR_FETCH_TIMEOUT_MS` | `8000` | HTTP timeout |
+| `CONNECTOR_FETCH_TIMEOUT_MS` | `8000` | HTTP timeout; lớp fetch áp trần 250 ms–30 giây |
 | `CONNECTOR_STALE_AFTER_MS` | `900000` | Thời gian coi connector là stale/down |
 | `CONNECTOR_DEGRADED_AFTER_MS` | `300000` | Thời gian chuyển degraded |
 | `CONNECTOR_QUOTE_CONCURRENCY` | `5` | Số quote fetch song song |
@@ -584,6 +585,7 @@ MARKET_HIST_D_TTL_MS=120000
 MARKET_HIST_INTRA_TTL_MS=30000
 MARKET_OVERVIEW_AUX_TIMEOUT_MS=450
 MARKET_OVERVIEW_TOTAL_TIMEOUT_MS=2500
+CACHE_REFRESH_BACKOFF_MS=15000
 ```
 
 ### Connector

@@ -409,7 +409,7 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
       quality: { generatedAt, ageSeconds: 0, partial: missingSymbols.length > 0, missingSymbols, stale: [...indexQuotes, ...quotes].some((q) => q.source.includes("-stale-snapshot")), sources, confidence: quotes.length > 0 ? Math.min(...quotes.map((q) => q.confidence)) : 0 },
       generatedAt,
     };
-  }, { shouldCache: (snapshot) => snapshot.quotes.length > 0 || snapshot.indices.length > 0 });
+  }, { shouldCache: (snapshot) => snapshot.quotes.length > 0 || snapshot.indices.length > 0, fallback: emptyOverview() });
   const result = await withDeadline(refresh, OVERVIEW_TOTAL_TIMEOUT_MS, { value: emptyOverview(), stale: true }, "overview-total");
   const generatedAtMs = Date.parse(result.value.generatedAt);
   const ageSeconds = Number.isFinite(generatedAtMs) ? Math.max(0, Math.floor((Date.now() - generatedAtMs) / 1000)) : 0;
