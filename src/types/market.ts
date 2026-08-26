@@ -83,6 +83,30 @@ export interface CryptoSnapshot {
   source: string;
 }
 
+export type OvernightMarketKind = "index" | "future" | "commodity" | "fx" | "rates";
+export type OvernightMarketStatus = "live" | "delayed" | "stale" | "unavailable";
+
+export interface OvernightMarketItem {
+  symbol: string;
+  label: string;
+  kind: OvernightMarketKind;
+  value: number | null;
+  changePct: number | null;
+  unit: string;
+  source: string;
+  status: OvernightMarketStatus;
+  updatedAt: string | null;
+}
+
+export interface OvernightMarketSnapshot {
+  items: OvernightMarketItem[];
+  stale: boolean;
+  partial: boolean;
+  missingSymbols: string[];
+  generatedAt: string;
+  sources: string[];
+}
+
 export interface MarketDataQuality {
   generatedAt: string;
   ageSeconds: number;
@@ -107,6 +131,7 @@ export interface MarketSnapshot {
   topVolume: MarketQuote[];
   quotes: MarketQuote[];
   crypto: CryptoSnapshot[];
+  overnight: OvernightMarketSnapshot;
   news: MarketNewsItem[];
   quality: MarketDataQuality;
   generatedAt: string;

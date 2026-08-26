@@ -184,7 +184,8 @@ MarketSnapshot
 ├── breadth
 ├── marketBreadth
 ├── largeCapBreadth
-├── sectors
+├── sectors                 # dữ liệu ngành Việt Nam
+├── overnight               # chỉ số/futures/hàng hóa/FX qua đêm
 ├── pulse
 ├── liquidity
 ├── foreignFlow
@@ -201,6 +202,14 @@ MarketSnapshot
 ### Market Header và Pulse
 
 VN-Index được đánh dấu `primary`. Các index cards có quote, change percentage, volume, source và OHLC range. Crypto được đưa vào cùng vùng header để người dùng nhìn thấy bức tranh multi-asset nhưng vẫn giữ visual weight chính cho VN-Index.
+
+### Sector Board và Overnight Markets
+
+`SectorBoard` đã được tách thành component dùng chung tại `src/components/market/SectorBoard.tsx`. `SectorBoardModule` tại `src/components/market/SectorBoardModule.tsx` cung cấp workspace độc lập ở `/sector-board`, hiển thị toàn bộ nhóm ngành, sector strength, số mã tăng/giảm, volume và drill-down sang phân tích cổ phiếu. Dashboard tổng quan chỉ giữ liên kết đến workspace này, không còn tải toàn bộ board inline.
+
+Vùng hiển thị được giải phóng trên overview hiện dành cho `OvernightMarkets` tại `src/components/market/OvernightMarkets.tsx`. Module này trình bày các nhóm `Global indices`, `Commodities`, `FX` và `Rates & risk`, gồm S&P 500, Nasdaq 100, Dow Jones, Nikkei 225, Hang Seng, VIX, Gold/Brent/WTI/Copper futures, USD Index, EUR/USD, USD/JPY và US 10Y. Dữ liệu lấy qua Yahoo chart thật, hiển thị timestamp và trạng thái `DELAYED`, `STALE` hoặc `N/A`; không coi giá đóng cửa hoặc giá delayed là realtime.
+
+Hai module vẫn nằm trong một `MarketSnapshot` tổng hợp nhưng có **loader, cache TTL và deadline riêng**. Overnight loader chạy song song với breadth/news, có timeout mặc định 1,2 giây, circuit breaker và stale fallback; lỗi Yahoo hoặc một mã riêng lẻ chỉ làm item đó `unavailable/partial`, không làm mất quote và sector data trong overview.
 
 Market Pulse là quantitative engine. Nó kết hợp index change, breadth ratio, sector average và liquidity availability để tạo:
 
@@ -222,6 +231,8 @@ Foreign flow hiện có contract trong snapshot nhưng có thể trả `unknown`
 | Quote service cache | 20 giây | Giảm lặp gọi quote |
 | Daily history cache | 120 giây | Phục vụ chart ngày |
 | Intraday history cache | 30 giây | Phục vụ chart trong phiên |
+| Overnight market cache | 45 giây | Giảm lặp gọi Yahoo cho chỉ số/futures/FX/rates |
+| Overnight hard deadline | 1,2 giây | Cô lập nguồn quốc tế chậm khỏi overview |
 | DB fresh snapshot | 45 giây | Ưu tiên dữ liệu gần đây trước khi gọi provider |
 | RSS provider cache | 5 phút | Giảm áp lực lên RSS feeds |
 
@@ -230,6 +241,7 @@ Foreign flow hiện có contract trong snapshot nhưng có thể trả `unknown`
 | Dữ liệu | Primary | Fallback |
 |---|---|---|
 | Equity quote/history/index | VNDirect dchart | Yahoo Finance |
+| International indices/futures/FX/rates | Yahoo Finance | Snapshot stale/unavailable theo từng mã |
 | Crypto price | CoinGecko | Binance Vision |
 | News | VnExpress, CafeF, Vietstock | Feed nào còn sống sẽ được dùng; nếu toàn bộ lỗi thì đánh dấu stale |
 | LLM | Theo `LLM_PROVIDER_ORDER` | Provider tiếp theo trong routing order |
@@ -241,6 +253,8 @@ Foreign flow hiện có contract trong snapshot nhưng có thể trả `unknown`
 | Module | Files chính | Trách nhiệm |
 |---|---|---|
 | Market | `src/lib/market.ts` | Overview, search, quote, history, news sync/list, sentiment tổng hợp |
+| Sector Board | `src/components/market/SectorBoard.tsx`, `SectorBoardModule.tsx` | Workspace ngành độc lập tại `/sector-board`, strength, breadth và drill-down |
+| Overnight Markets | `src/components/market/OvernightMarkets.tsx`, `getOvernightMarketSnapshot()` | Chỉ số quốc tế, futures, hàng hóa, FX, US 10Y và degraded states |
 | Stock analysis | `src/lib/analysis.ts`, `fundamental.ts`, `technical-patterns.ts` | Technical, fundamental, valuation, pattern và recommendation |
 | Financial health | `src/lib/financial-health-detail.ts`, `src/lib/industry-benchmarks.ts` | Scoring theo nhóm chỉ số, breakdown và industry comparison |
 | Company intelligence | `company-profile.ts`, `company-service.ts`, `value-chain.ts` | Profile, SWOT, value chain và company context |
@@ -532,6 +546,8 @@ Sau đó mở `http://localhost:3000`. Người dùng chưa đăng nhập sẽ t
 | `npm run db:push` | Push schema hiện tại vào database |
 | `npm run typecheck` | TypeScript check không emit |
 | `npm run lint` | ESLint toàn repository |
+| `npm test` | Chạy unit/resilience tests bằng Vitest |
+| `npm run test:watch` | Chạy Vitest ở chế độ watch |
 
 ## Chạy bằng Docker
 
@@ -585,6 +601,8 @@ MARKET_HIST_D_TTL_MS=120000
 MARKET_HIST_INTRA_TTL_MS=30000
 MARKET_OVERVIEW_AUX_TIMEOUT_MS=450
 MARKET_OVERVIEW_TOTAL_TIMEOUT_MS=2500
+OVERNIGHT_MARKET_TTL_MS=45000
+OVERNIGHT_MARKET_TIMEOUT_MS=1200
 CACHE_REFRESH_BACKOFF_MS=15000
 ```
 
@@ -636,9 +654,14 @@ Trước mỗi commit nên chạy:
 
 ```bash
 npm run typecheck
+npm test
 npm run lint
 git diff --check
 ```
+
+Repository sử dụng **Vitest** cho unit và resilience tests. Bộ test trong `tests/` không yêu cầu database, Redis hoặc upstream thật; các boundary được mock để kiểm thử timeout, abort, circuit breaker, stale cache, single-flight, DB fail-fast, Redis L1 fallback và cô lập module phụ.
+
+Các kịch bản bắt buộc của Market Overview gồm provider timeout không chặn provider khỏe; crypto/news degraded không làm mất quote; circuit mở sau lỗi liên tiếp và chỉ cho một half-open probe; cache stale trả ngay trong khi refresh nền lỗi; Redis thiếu vẫn dùng L1; database thiếu cấu hình fail-fast.
 
 Khi kiểm tra riêng dashboard/data contract, có thể chạy:
 

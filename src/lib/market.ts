@@ -23,7 +23,7 @@ import {
 import { scoreSentimentHybrid } from "@/lib/llm";
 import { logger } from "@/lib/logger";
 import { analyzeSentiment } from "@/lib/sentiment";
-import { SECTOR_DEFINITIONS, type MarketPulse, type MarketSnapshot, type MarketStatus, type SectorSnapshot } from "@/types/market";
+import { SECTOR_DEFINITIONS, type MarketPulse, type MarketSnapshot, type MarketStatus, type OvernightMarketItem, type OvernightMarketSnapshot, type SectorSnapshot } from "@/types/market";
 
 export const FEATURED_SYMBOLS = [
   "VNM", "VIC", "VHM", "HPG", "FPT", "MWG", "VCB", "TCB", "BID", "CTG",
@@ -46,8 +46,27 @@ const HIST_D_TTL_MS = Number(process.env.MARKET_HIST_D_TTL_MS) || 120_000;
 const HIST_INTRA_TTL_MS = Number(process.env.MARKET_HIST_INTRA_TTL_MS) || 30_000;
 const OVERVIEW_AUX_TIMEOUT_MS = Number(process.env.MARKET_OVERVIEW_AUX_TIMEOUT_MS) || 450;
 const OVERVIEW_TOTAL_TIMEOUT_MS = Number(process.env.MARKET_OVERVIEW_TOTAL_TIMEOUT_MS) || 2_500;
+const OVERNIGHT_TTL_MS = Number(process.env.OVERNIGHT_MARKET_TTL_MS) || 45_000;
+const OVERNIGHT_TIMEOUT_MS = Number(process.env.OVERNIGHT_MARKET_TIMEOUT_MS) || 1_200;
 
-async function withDeadline<T>(promise: Promise<T>, ms: number, fallback: T, label: string): Promise<T> {
+const OVERNIGHT_DEFINITIONS: ReadonlyArray<Omit<OvernightMarketItem, "value" | "changePct" | "source" | "status" | "updatedAt">> = [
+  { symbol: "^GSPC", label: "S&P 500", kind: "index", unit: "pts" },
+  { symbol: "^NDX", label: "Nasdaq 100", kind: "index", unit: "pts" },
+  { symbol: "^DJI", label: "Dow Jones", kind: "index", unit: "pts" },
+  { symbol: "^N225", label: "Nikkei 225", kind: "index", unit: "pts" },
+  { symbol: "^HSI", label: "Hang Seng", kind: "index", unit: "pts" },
+  { symbol: "^VIX", label: "VIX", kind: "index", unit: "pts" },
+  { symbol: "GC=F", label: "Gold futures", kind: "commodity", unit: "USD" },
+  { symbol: "BZ=F", label: "Brent futures", kind: "commodity", unit: "USD" },
+  { symbol: "CL=F", label: "WTI futures", kind: "commodity", unit: "USD" },
+  { symbol: "HG=F", label: "Copper futures", kind: "commodity", unit: "USD" },
+  { symbol: "DX-Y.NYB", label: "USD Index", kind: "fx", unit: "pts" },
+  { symbol: "EURUSD=X", label: "EUR/USD", kind: "fx", unit: "rate" },
+  { symbol: "JPY=X", label: "USD/JPY", kind: "fx", unit: "rate" },
+  { symbol: "^TNX", label: "US 10Y", kind: "rates", unit: "%" },
+];
+
+export async function withDeadline<T>(promise: Promise<T>, ms: number, fallback: T, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([promise, new Promise<T>((resolve) => { timer = setTimeout(() => { logger.warn("overview_deadline_fallback", { label, timeoutMs: ms }); resolve(fallback); }, ms); })]);
@@ -332,6 +351,88 @@ function buildPulse(indexes: Quote[], breadth: MarketSnapshot["breadth"], sector
   };
 }
 
+function emptyOvernightSnapshot(): OvernightMarketSnapshot {
+  const generatedAt = new Date().toISOString();
+  return {
+    items: OVERNIGHT_DEFINITIONS.map((definition) => ({
+      ...definition,
+      value: null,
+      changePct: null,
+      source: "unavailable",
+      status: "unavailable" as const,
+      updatedAt: null,
+    })),
+    stale: true,
+    partial: true,
+    missingSymbols: OVERNIGHT_DEFINITIONS.map((definition) => definition.symbol),
+    generatedAt,
+    sources: [],
+  };
+}
+
+async function loadOvernightMarketSnapshot(): Promise<OvernightMarketSnapshot> {
+  const to = Math.floor(Date.now() / 1000);
+  const from = to - 5 * 86_400;
+  const results = await mapPool([...OVERNIGHT_DEFINITIONS], 6, async (definition) => {
+    try {
+      const bars = await yahooHistory(definition.symbol, from, to, "D", { timeoutMs: 1_000, retries: 0 });
+      const last = bars[bars.length - 1];
+      const previous = bars.length > 1 ? bars[bars.length - 2] : null;
+      const changePct = previous && previous.close > 0 ? ((last.close - previous.close) / previous.close) * 100 : null;
+      return {
+        ...definition,
+        value: last.close,
+        changePct,
+        unit: definition.unit,
+        source: "yahoo-finance",
+        status: "delayed" as const,
+        updatedAt: new Date(last.time * 1000).toISOString(),
+      } satisfies OvernightMarketItem;
+    } catch (err) {
+      logger.warn("overnight_market_item_failed", { symbol: definition.symbol, error: err instanceof Error ? err.message : String(err) });
+      return {
+        ...definition,
+        value: null,
+        changePct: null,
+        source: "unavailable",
+        status: "unavailable" as const,
+        updatedAt: null,
+      } satisfies OvernightMarketItem;
+    }
+  });
+  const items: OvernightMarketItem[] = results.map((result, index) => result.status === "fulfilled" ? result.value as OvernightMarketItem : {
+    ...OVERNIGHT_DEFINITIONS[index],
+    value: null,
+    changePct: null,
+    source: "unavailable",
+    status: "unavailable",
+    updatedAt: null,
+  });
+  const available = items.filter((item) => item.value != null);
+  return {
+    items,
+    stale: false,
+    partial: available.length !== items.length,
+    missingSymbols: items.filter((item) => item.value == null).map((item) => item.symbol),
+    generatedAt: new Date().toISOString(),
+    sources: [...new Set(available.map((item) => item.source))],
+  };
+}
+
+export async function getOvernightMarketSnapshot(): Promise<OvernightMarketSnapshot> {
+  const refresh = cachedWithStaleFallback<OvernightMarketSnapshot>(
+    "market:overnight:v1",
+    OVERNIGHT_TTL_MS,
+    loadOvernightMarketSnapshot,
+    { shouldCache: (snapshot) => snapshot.items.some((item) => item.value != null), fallback: emptyOvernightSnapshot() },
+  );
+  const result = await withDeadline(refresh, OVERNIGHT_TIMEOUT_MS, { value: emptyOvernightSnapshot(), stale: true }, "overnight-markets");
+  return {
+    ...result.value,
+    stale: result.value.stale || result.stale,
+  };
+}
+
 function emptyOverview(): MarketSnapshot {
   const generatedAt = new Date().toISOString();
   const breadth = { advancing: 0, advancers: 0, unchanged: 0, declining: 0, decliners: 0, sample: 0, ratio: 0, scope: "featured" as const };
@@ -339,7 +440,7 @@ function emptyOverview(): MarketSnapshot {
     indices: [], breadth, marketBreadth: breadth, largeCapBreadth: breadth, sectors: [],
     pulse: { trend: "flat", trendScore: 0, breadth: "flat", breadthScore: 0, liquidity: "flat", liquidityScore: 0, foreignFlow: "unknown", risk: "medium", regime: "NEUTRAL", regimeLabel: "DATA SYNCING", summary: "Đang đồng bộ dữ liệu thị trường." },
     liquidity: { totalVolume: 0, averageVolume: 0, status: "flat" }, foreignFlow: { status: "unknown", value: null },
-    topGainers: [], topLosers: [], topVolume: [], quotes: [], crypto: [], news: [],
+    topGainers: [], topLosers: [], topVolume: [], quotes: [], crypto: [], overnight: emptyOvernightSnapshot(), news: [],
     quality: { generatedAt, ageSeconds: 0, partial: true, missingSymbols: [...INDICES.map((i) => i.code), ...FEATURED_SYMBOLS], stale: true, sources: [], confidence: 0 }, generatedAt,
   };
 }
@@ -368,9 +469,10 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
       return q ? { ...idx, ...q, primary: idx.code === "VNINDEX" } : null;
     }).filter((x): x is NonNullable<typeof x> => x !== null);
     const breadth = buildBreadth(quotes, "featured");
-    const [marketUniverse, newsResult] = await Promise.all([
+    const [marketUniverse, newsResult, overnight] = await Promise.all([
       withDeadline(loadMarketSnapshots(), OVERVIEW_AUX_TIMEOUT_MS, [], "market-breadth"),
       withDeadline(getNews({ page: 1, limit: 8, withTotal: false }), OVERVIEW_AUX_TIMEOUT_MS, { items: [], total: 0, page: 1, limit: 8 }, "news"),
+      getOvernightMarketSnapshot(),
     ]);
     const marketBreadth = buildBreadth(marketUniverse.length > quotes.length ? marketUniverse : quotes, marketUniverse.length > quotes.length ? "market" : "featured");
     const largeCapBreadth = buildBreadth(quotes, "featured");
@@ -390,7 +492,7 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
     const generatedAt = new Date().toISOString();
     const sources = [...new Set([...indices, ...quotes].map((q) => q.source.replace(/-snapshot$/, "")))];
     const missingSymbols = [...indexCodes, ...FEATURED_SYMBOLS].filter((symbol) => !new Set([...indexQuotes, ...quotes].map((q) => q.symbol)).has(symbol));
-    void logJob("market_overview", "ok", `indices=${indices.length} quotes=${quotes.length} sectors=${sectors.length}`, Date.now() - started);
+    void logJob("market_overview", "ok", `indices=${indices.length} quotes=${quotes.length} sectors=${sectors.length} overnight=${overnight.items.filter((item) => item.value != null).length}`, Date.now() - started);
     return {
       indices,
       breadth,
@@ -405,6 +507,7 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
       topVolume,
       quotes,
       crypto: cryptoResult,
+      overnight,
       news: newsItems,
       quality: { generatedAt, ageSeconds: 0, partial: missingSymbols.length > 0, missingSymbols, stale: [...indexQuotes, ...quotes].some((q) => q.source.includes("-stale-snapshot")), sources, confidence: quotes.length > 0 ? Math.min(...quotes.map((q) => q.confidence)) : 0 },
       generatedAt,

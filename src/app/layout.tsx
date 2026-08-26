@@ -48,6 +48,7 @@ export const viewport: Viewport = {
 const NAV = [
   { href: "/", label: "Tổng quan" },
   { href: "/heatmap", label: "Heatmap" },
+  { href: "/sector-board", label: "Ngành" },
   { href: "/commodities", label: "Hàng hóa" },
   { href: "/crypto", label: "Crypto" },
   { href: "/forex", label: "Forex" },
@@ -136,7 +137,6 @@ export default function RootLayout({
                   <Link
                     key={n.href}
                     href={n.href}
-                    prefetch={n.href === "/"}
                     className="relative shrink-0 whitespace-nowrap px-2.5 py-2 hover:text-[#00d4ff] transition-colors after:content-[''] after:absolute after:left-2.5 after:right-2.5 after:bottom-0 after:h-0.5 after:bg-[#00d4ff] after:scale-x-0 hover:after:scale-x-100 after:transition-transform after:origin-left"
                   >
                     {n.label}
