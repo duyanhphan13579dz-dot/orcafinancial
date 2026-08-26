@@ -149,14 +149,10 @@ export default function CryptoDetail() {
       .then((res) => {
         if (cancelled) return;
         setBundle(res.data);
-        // Market candles are intentionally not taken from the server bundle.
-        // The chart WebSocket below owns both history and realtime updates.
-        setBars([]);
-        barsRef.current = [];
-        historyBeforeRef.current = null;
-        setHistoryHasMore(true);
-        setChartSource("Binance WebSocket");
-        // Signal computation is performed locally from WS history once it is ready.
+        // The chart WebSocket owns history and realtime updates. Do not reset
+        // bars here: this bundle request runs in parallel and may resolve after
+        // the WebSocket has already hydrated the chart.
+        // Signal computation is performed locally from WS history once ready.
       })
       .catch(async (err) => {
         if (cancelled) return;
@@ -167,11 +163,8 @@ export default function CryptoDetail() {
           );
           if (cancelled) return;
           const fallbackBars = o.data.bars ?? [];
-          barsRef.current = fallbackBars;
-          setBars(fallbackBars);
-          historyBeforeRef.current = fallbackBars[0]?.time ?? null;
-          setHistoryHasMore(o.meta?.hasMore === true || fallbackBars.length >= 200);
-          setChartSource(String(o.meta?.source ?? "binance"));
+          // This is metadata fallback only. The chart WebSocket owns bars and
+          // its own fallback path handles OHLCV when WS history fails.
           setBundle({
             coin: {
               symbol,
@@ -196,14 +189,12 @@ export default function CryptoDetail() {
         } catch {
           setError(err instanceof Error ? err.message : String(err));
         }
-        setLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol]);
+  }, [symbol, timeframe]);
 
   // Single batched intel poll (futures + orderflow + whale)
   useEffect(() => {
