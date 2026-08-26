@@ -23,6 +23,7 @@ import {
   type TradeSetupData,
 } from "@/components/forex-trade-setup";
 import { MemoForexIntelligenceCard } from "@/components/forex-intelligence-card";
+import ForexScalpingPanel from "@/components/forex-scalping-panel";
 
 const ChartSkeleton = () => (
   <div className="h-[360px] w-full animate-pulse rounded-lg bg-slate-800/40 sm:h-[440px] lg:h-[520px]" />
@@ -468,6 +469,8 @@ export default function ForexDetail() {
           setup={a.tradeSetup as TradeSetupData}
         />
       )}
+
+      <ForexScalpingPanel symbol={symbol} />
 
       {/* Secondary intel — collapsible on mobile */}
       {(mtf || fx || macro || analyst) && (
