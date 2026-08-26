@@ -144,17 +144,18 @@ function polygonPoints(rect: Rect, index: number) {
   const y = rect.y * 6.4;
   const w = rect.w * 10;
   const h = rect.h * 6.4;
-  const inset = Math.min(5, Math.max(1.2, Math.min(w, h) * 0.16));
-  const skew = (index % 3 - 1) * Math.min(2.4, w * 0.06);
+  const gap = Math.min(1.8, Math.max(0.7, Math.min(w, h) * 0.025));
+  const corner = Math.min(10, Math.max(2.2, Math.min(w, h) * 0.14));
+  const jitter = (index % 5 - 2) * Math.min(1.4, Math.min(w, h) * 0.025);
   return [
-    `${x + inset},${y}`,
-    `${x + w - inset + skew},${y + inset * 0.35}`,
-    `${x + w},${y + h * 0.42}`,
-    `${x + w - inset * 0.35},${y + h - inset}`,
-    `${x + w * 0.58},${y + h}`,
-    `${x + inset * 0.35},${y + h - inset * 0.25}`,
-    `${x},${y + h * 0.55}`,
-    `${x + inset * 0.4},${y + inset}`,
+    `${x + corner},${y + gap}`,
+    `${x + w * 0.58 + jitter},${y + gap * 0.7}`,
+    `${x + w - corner},${y + gap + jitter}`,
+    `${x + w - gap},${y + h * 0.48}`,
+    `${x + w - corner * 0.45},${y + h - gap}`,
+    `${x + w * 0.42 - jitter},${y + h - gap * 0.7}`,
+    `${x + corner},${y + h - gap}`,
+    `${x + gap},${y + h * 0.52 + jitter}`,
   ].join(" ");
 }
 
@@ -174,7 +175,7 @@ function PolygonHeatmap({
   const rects = useMemo(() => treemap(items, metric, 0, 0, 100, 100), [items, metric]);
   return (
     <div className="panel overflow-hidden p-1 sm:p-2">
-      <svg viewBox="0 0 1000 640" preserveAspectRatio="none" className="h-[min(70vh,650px)] min-h-[360px] w-full rounded-xl bg-[#071f35]" role="img" aria-label="Heatmap đa giác cổ phiếu">
+      <svg viewBox="0 0 1000 640" preserveAspectRatio="none" className="h-[min(70vh,650px)] min-h-[360px] w-full rounded-xl bg-[#0b2135]" role="img" aria-label="Heatmap đa giác cổ phiếu">
         <defs>
           <filter id="polygon-shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#020617" floodOpacity="0.45" /></filter>
         </defs>
@@ -183,7 +184,7 @@ function PolygonHeatmap({
           const big = rect.w > 15 && rect.h > 16;
           return (
             <g key={rect.item.symbol} role="button" tabIndex={0} aria-label={`${rect.item.symbol} ${fmtPct(rect.item.changePercent)}`} onClick={() => onSelect(rect.item)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(rect.item); }} className="cursor-pointer transition-opacity hover:opacity-85">
-              <polygon points={polygonPoints(rect, index)} fill={colorFor(rect.item)} stroke="#071728" strokeWidth={Math.max(1.2, Math.min(3.5, Math.min(rect.w, rect.h) * 0.08))} vectorEffect="non-scaling-stroke" filter={big ? "url(#polygon-shadow)" : undefined} />
+              <polygon points={polygonPoints(rect, index)} fill={colorFor(rect.item)} stroke="#cbdde7" strokeOpacity="0.78" strokeWidth="1.05" vectorEffect="non-scaling-stroke" />
               {big && <text x={(rect.x + rect.w / 2) * 10} y={(rect.y + rect.h / 2) * 6.4 - (showChange ? 5 : 0)} textAnchor="middle" dominantBaseline="middle" fill={textColor(rect.item)} fontSize={Math.min(26, Math.max(10, Math.min(rect.w, rect.h) * 0.55))} fontWeight="800">{rect.item.symbol}</text>}
               {big && showChange && <text x={(rect.x + rect.w / 2) * 10} y={(rect.y + rect.h / 2) * 6.4 + 13} textAnchor="middle" dominantBaseline="middle" fill={textColor(rect.item)} fontSize={Math.min(18, Math.max(8, Math.min(rect.w, rect.h) * 0.36))} fontWeight="700">{marketStatus === "PRE_MARKET" ? "—" : fmtPct(rect.item.changePercent)}</text>}
               {!big && rect.w > 3.2 && rect.h > 4 && <text x={(rect.x + rect.w / 2) * 10} y={(rect.y + rect.h / 2) * 6.4} textAnchor="middle" dominantBaseline="middle" fill={textColor(rect.item)} fontSize={Math.max(6, Math.min(13, Math.min(rect.w, rect.h) * 0.45))} fontWeight="800">{rect.item.symbol}</text>}
