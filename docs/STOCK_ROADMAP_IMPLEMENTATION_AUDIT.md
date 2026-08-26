@@ -57,3 +57,10 @@ Product Polish trong phạm vi hiện tại cũng đã được chốt: mobile s
 Bản PDF VNM cuối được sinh thành công với bảy trang A4, font nhúng/fallback an toàn, không có trang trắng cuối, section 8 tận dụng khoảng trống trước đây ở trang 5, có technical snapshot chart, cover `INTELLIGENT INVESTMENT`, nội dung tiếng Việt ở cả static labels và dynamic narratives, và dòng kết luận là nhận định cổ phiếu. Kiểm tra text không còn các cụm tiếng Anh mục tiêu như `STOCK INTELLIGENCE`, `Cross-module`, `Investment thesis`, `Financial score`, `Expected value`, `Market regime`, `stop loss`, `current price`, `competitive advantage` và `DATA SYNCING`.
 
 Giới hạn còn lại là giới hạn vận hành/dữ liệu: môi trường production cần `DATABASE_URL`; provider filings/Vietstock/FMP chưa được cấu hình nên fallback synthetic/benchmark phải tiếp tục hiển thị provenance và confidence, không được gọi là audited actual; Redis chỉ hoạt động đầy đủ khi có credentials. Backtest hiện là moving-average evaluation có disclosure, chưa phải execution simulator có phí, slippage, survivorship/corporate-action controls và walk-forward validation.
+
+
+## Report-quality review addendum — 27 August 2026
+
+The latest VNM quality review has been converted into implementation changes rather than remaining as recommendations. The report now applies unit-consistent market-cap wording, per-period estimate labeling, valuation-confidence gating, normalized scenario arithmetic with displayed weighted contributions, forecast assumption bridge, health-score methodology, DuPont decomposition, evidence coverage for moat dimensions, cleaned causal chains and localized investment-thesis points. The technical state `Nắm giữ` is now presented separately from a low-confidence valuation conclusion.
+
+The final sample PDF generated after this revision is a valid eight-page A4 document. The confidence-gated executive summary states that valuation is not sufficiently reliable for a conclusion at the observed 45% data confidence; it does not promote the 38.77/other model fair value into a definitive target. The text scan found no targeted raw English fragments, and all extracted pages contain substantive content.

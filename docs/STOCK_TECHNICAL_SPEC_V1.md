@@ -50,3 +50,21 @@ The current reported state must remain distinct from modeled estimates and targe
 ## Operational requirements
 
 Production-grade persistence requires `DATABASE_URL`. Shared L2 caching requires the configured Redis connection. Provider-grade reported financials require an enabled filings/data connector; without it, the fallback and confidence disclosures remain mandatory. The report route requires an authenticated session and returns a PDF attachment only after the canonical payload has been assembled successfully.
+
+
+## Review-driven report-quality invariants — 27 August 2026
+
+The report layer now enforces the following additional invariants:
+
+| Concern | Required behavior |
+|---|---|
+| Data confidence | `dataConfidence`, `predictionConfidence` and `valuationConfidence` are separate fields. A report with valuation confidence below 60% must not state a conclusive fair value or target price. |
+| Data classification | Synthetic/degraded financial periods are labeled `Ước tính` beside the period table; the report must not imply audited actuals. |
+| Unit normalization | Market-cap narrative and metadata use the same normalized billion-VND representation. |
+| Scenario arithmetic | Scenario probabilities are normalized, weighted contributions are retained per case, and expected value is recomputed from the displayed probability/value pairs. |
+| Score explainability | Health score weights and the aggregate formula are rendered in the report, with the underlying group scores and narratives. |
+| ROE quality | Available margin, asset-turnover and equity-leverage components are rendered as a DuPont decomposition rather than presenting ROE alone. |
+| Moat evidence | Missing moat dimensions have `score: null`, `coverage: "unknown"` and zero evidence confidence; they are rendered as `Chưa xác định`, never as a neutral 50/100 score. |
+| Narrative hygiene | Causal chains and thesis points are normalized to Vietnamese before PDF rendering; raw engine terminology must not leak into the final report. |
+
+The analysis-report cache key is versioned as `analysis-report-pdf-v9` for this revision, ensuring the quality changes are not masked by earlier cached PDF artifacts.

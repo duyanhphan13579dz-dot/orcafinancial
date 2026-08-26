@@ -39,6 +39,7 @@ export interface ScenarioCase {
   forecast: ForecastPoint[];
   targetMultiple: number;
   fairValue: number | null;
+  weightedContribution: number | null;
   rationale: string;
 }
 
@@ -49,12 +50,14 @@ export interface ForecastScenarioResult {
   scenarios: ScenarioCase[];
   expectedValue: number | null;
   targetPrice: number | null;
+  valuationConfidence: number;
   dataConfidence: number;
   predictionConfidence: number;
   status: "ready" | "insufficient_data";
   warnings: string[];
   modelVersion: string;
   driverBridge: { revenue: string; margin: string; eps: string; cashflow: string };
+  assumptionBridge: string[];
   sensitivity: Array<{ variable: "revenueGrowth" | "ebitdaMargin" | "targetMultiple"; down: number; base: number; up: number }>;
 }
 
@@ -92,7 +95,7 @@ export function buildForecastScenarios(input: { symbol: string; historical: Hist
   const history = [...input.historical].filter((point) => [point.revenue, point.ebitda, point.netIncome, point.eps].every(Number.isFinite)).sort((a, b) => `${a.fiscalYear}-${a.period}`.localeCompare(`${b.fiscalYear}-${b.period}`));
   const warnings: string[] = [];
   if (history.length < 2) {
-    return { historical: history, assumptions: { revenueGrowth: 0, ebitdaMargin: 0, netMargin: 0, taxRate: 0.2, capexRate: 0, wacc: 0.12, terminalGrowth: 0.03, epsGrowth: 0 }, forecast: [], scenarios: [], expectedValue: null, targetPrice: null, dataConfidence: 0.2, predictionConfidence: 0, status: "insufficient_data", warnings: ["Cần tối thiểu hai kỳ financial hợp lệ để xây forecast."], modelVersion: "ORCA Forecast v1.1", driverBridge: { revenue: "Chưa đủ dữ liệu.", margin: "Chưa đủ dữ liệu.", eps: "Chưa đủ dữ liệu.", cashflow: "Chưa đủ dữ liệu." }, sensitivity: [] };
+    return { historical: history, assumptions: { revenueGrowth: 0, ebitdaMargin: 0, netMargin: 0, taxRate: 0.2, capexRate: 0, wacc: 0.12, terminalGrowth: 0.03, epsGrowth: 0 }, forecast: [], scenarios: [], expectedValue: null, targetPrice: null, valuationConfidence: 0, dataConfidence: 0.2, predictionConfidence: 0, status: "insufficient_data", warnings: ["Cần tối thiểu hai kỳ tài chính hợp lệ để xây dự phóng."], modelVersion: "ORCA Forecast v1.1", driverBridge: { revenue: "Chưa đủ dữ liệu.", margin: "Chưa đủ dữ liệu.", eps: "Chưa đủ dữ liệu.", cashflow: "Chưa đủ dữ liệu." }, assumptionBridge: [], sensitivity: [] };
   }
   if (history.some((point) => point.provenance.kind !== ("actual" as PeriodKind))) warnings.push("Historical input không hoàn toàn là actual; prediction confidence đã bị giảm.");
   const revenueGrowth = clamp(avg(history.slice(1).map((point, index) => safeGrowth(point.revenue, history[index].revenue)), 0), -0.3, 0.5);
@@ -107,15 +110,18 @@ export function buildForecastScenarios(input: { symbol: string; historical: Hist
     { name: "base", probability: 0.55, growth: 0, margin: 0, multiple: 14, rationale: "Duy trì xu hướng lịch sử gần nhất." },
     { name: "bear", probability: 0.20, growth: -0.06, margin: -0.03, multiple: 10, rationale: "Tăng trưởng chậm lại và biên lợi nhuận chịu áp lực." },
   ];
+  const probabilitySum = variants.reduce((sum, variant) => sum + variant.probability, 0);
   const scenarios = variants.map((variant) => {
+    const probability = probabilitySum > 0 ? variant.probability / probabilitySum : 0;
     const scenarioAssumptions = { ...assumptions, revenueGrowth: clamp(assumptions.revenueGrowth + variant.growth, -0.5, 0.8), ebitdaMargin: clamp(assumptions.ebitdaMargin + variant.margin, -0.3, 0.8), netMargin: clamp(assumptions.netMargin + variant.margin, -0.4, 0.6), epsGrowth: clamp(assumptions.epsGrowth + variant.growth, -0.7, 1) };
     const scenarioForecast = buildForecast(history, scenarioAssumptions, years);
-    const result: ScenarioCase = { name: variant.name, probability: variant.probability, assumptions: scenarioAssumptions, forecast: scenarioForecast, targetMultiple: variant.multiple, fairValue: null, rationale: variant.rationale };
+    const result: ScenarioCase = { name: variant.name, probability, assumptions: scenarioAssumptions, forecast: scenarioForecast, targetMultiple: variant.multiple, fairValue: null, weightedContribution: null, rationale: variant.rationale };
     result.fairValue = fairValueFromScenario(result, input.currentPrice);
     return result;
   });
   const values = scenarios.filter((scenario) => scenario.fairValue != null);
   const expectedValue = values.length ? Number(values.reduce((sum, scenario) => sum + (scenario.fairValue as number) * scenario.probability, 0).toFixed(2)) : null;
+  scenarios.forEach((scenario) => { scenario.weightedContribution = scenario.fairValue == null ? null : Number((scenario.fairValue * scenario.probability).toFixed(2)); });
   const predictionConfidence = Number(clamp(0.45 + Math.min(0.25, history.length * 0.03) - (history.some((point) => point.provenance.kind !== "actual") ? 0.12 : 0), 0.1, 0.85).toFixed(2));
   const latest = history[history.length - 1];
   const prior = history[history.length - 2];
@@ -125,5 +131,13 @@ export function buildForecastScenarios(input: { symbol: string; historical: Hist
     { variable: "ebitdaMargin" as const, down: Number((expectedValue == null ? 0 : expectedValue * 0.9).toFixed(2)), base: expectedValue ?? 0, up: Number((expectedValue == null ? 0 : expectedValue * 1.1).toFixed(2)) },
     { variable: "targetMultiple" as const, down: Number((expectedValue == null ? 0 : expectedValue * 0.82).toFixed(2)), base: expectedValue ?? 0, up: Number((expectedValue == null ? 0 : expectedValue * 1.18).toFixed(2)) },
   ];
-  return { historical: history, assumptions, forecast, scenarios, expectedValue, targetPrice: expectedValue, dataConfidence: Number(avg(history.map((point) => point.provenance.confidence), 0.45).toFixed(2)), predictionConfidence, status: "ready", warnings, modelVersion: "ORCA Forecast v1.1", driverBridge: { revenue: `Tăng trưởng doanh thu nền ${(assumptions.revenueGrowth * 100).toFixed(1)}%/năm từ chuỗi lịch sử.`, margin: `Biên EBITDA nền ${(assumptions.ebitdaMargin * 100).toFixed(1)}%; thay đổi gần nhất ${marginDelta.toFixed(2)} điểm %.`, eps: `EPS tăng trưởng theo giả định ${(assumptions.epsGrowth * 100).toFixed(1)}%/năm.`, cashflow: "FCF được xem là cần kiểm chứng với CFO/capex actual trước khi sử dụng trong định giá." }, sensitivity };
+  const dataConfidence = Number(avg(history.map((point) => point.provenance.confidence), 0.45).toFixed(2));
+  const valuationConfidence = Number(Math.min(dataConfidence, predictionConfidence, expectedValue == null ? 0 : 0.85).toFixed(2));
+  const assumptionBridge = [
+    `Doanh thu: tăng trưởng nền ${(assumptions.revenueGrowth * 100).toFixed(1)}%/năm, chưa phân rã volume/giá/mix do thiếu dữ liệu vận hành.`,
+    `Biên EBITDA: ${(assumptions.ebitdaMargin * 100).toFixed(1)}%; điều chỉnh theo kịch bản lần lượt ${variants.map((variant) => `${variant.name} ${variant.margin >= 0 ? "+" : ""}${(variant.margin * 100).toFixed(1)} điểm %`).join(", ")}.`,
+    `EPS: tăng trưởng nền ${(assumptions.epsGrowth * 100).toFixed(1)}%/năm; hệ số mục tiêu ${variants.map((variant) => `${variant.name} ${variant.multiple} lần`).join(", ")}.`,
+    "Thuế, chi đầu tư, vốn lưu động và lãi vay là giả định mô hình; cần thay bằng số liệu công bố khi có nguồn actual.",
+  ];
+  return { historical: history, assumptions, forecast, scenarios, expectedValue, targetPrice: expectedValue, valuationConfidence, dataConfidence, predictionConfidence, status: "ready", warnings, modelVersion: "ORCA Forecast v1.2", driverBridge: { revenue: `Tăng trưởng doanh thu nền ${(assumptions.revenueGrowth * 100).toFixed(1)}%/năm từ chuỗi lịch sử.`, margin: `Biên EBITDA nền ${(assumptions.ebitdaMargin * 100).toFixed(1)}%; thay đổi gần nhất ${marginDelta.toFixed(2)} điểm %.`, eps: `EPS tăng trưởng theo giả định ${(assumptions.epsGrowth * 100).toFixed(1)}%/năm.`, cashflow: "FCF được xem là cần kiểm chứng với CFO/capex actual trước khi sử dụng trong định giá." }, assumptionBridge, sensitivity };
 }

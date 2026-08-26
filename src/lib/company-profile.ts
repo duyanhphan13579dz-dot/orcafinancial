@@ -73,7 +73,7 @@ export function generateCompanyProfile(
 
   let description = `${name} (mã ${symbol}) là doanh nghiệp niêm yết trên sàn ${exchange}, hoạt động chính trong ngành ${bm.industry}, thuộc lĩnh vực ${bm.sector}. `;
   description += bm.description + " ";
-  description += `Vốn hóa thị trường ước tính khoảng ${marketCapB.toFixed(0)} nghìn tỷ VNĐ, khối lượng giao dịch trung bình 20 phiên khoảng ${(avgVol / 1_000_000).toFixed(1)} triệu cổ phiếu/phiên. `;
+  description += `Vốn hóa thị trường ước tính khoảng ${marketCapB.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} tỷ VNĐ, khối lượng giao dịch trung bình 20 phiên khoảng ${(avgVol / 1_000_000).toFixed(1)} triệu cổ phiếu/phiên. `;
   if (return1y !== null) {
     description += `Trong 1 năm qua, giá cổ phiếu ${return1y >= 0 ? "tăng" : "giảm"} ${Math.abs(return1y).toFixed(1)}%. `;
   }

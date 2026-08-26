@@ -56,3 +56,12 @@ Product Polish is complete for the current roadmap scope. The stock header retai
 ## Production requirements and limitations
 
 A production deployment must provide `DATABASE_URL` for Drizzle/PostgreSQL persistence and should provide Redis credentials for shared L2 caching. A provider-grade filings/data connector such as Vietstock/FMP or an equivalent source is still required if the deployment must present audited reported financial statements; otherwise the application must retain its source, confidence and degraded/synthetic disclosure. The built-in backtest remains a transparent moving-average evaluation rather than a live execution simulator.
+
+
+## Review-driven report quality revision — 27 August 2026
+
+Following the VNM report quality review, the report pipeline was strengthened in the areas that directly affect decision reliability. The company-profile narrative now uses the correct billion-VND unit. Financial periods in the PDF are marked as estimates when the upstream source is synthetic/degraded. Valuation output is gated by `valuationConfidence`, so a low-confidence report states that fair value is insufficient for conclusion instead of presenting a strong target-price claim.
+
+The forecast engine now normalizes scenario probabilities, records each scenario's weighted contribution, exposes valuation confidence and publishes an assumption bridge covering revenue growth, margin, EPS/multiple and cash-flow caveats. The PDF also exposes health-score weighting/methodology and a DuPont decomposition from available indicators. Moat factors no longer default unknown dimensions to 50/100; they carry `score`, `coverage` and confidence, and the report renders unknown dimensions as `Chưa xác định`. Causal-chain and investment-thesis narratives are cleaned and localized before rendering.
+
+The reviewed VNM sample generated as a valid eight-page A4 PDF with no empty page and an empty targeted-English scan. The report now explicitly distinguishes model estimates from audited actuals and separates a technical `Nắm giữ` state from any low-confidence valuation conclusion.
