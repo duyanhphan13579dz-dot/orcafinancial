@@ -8,7 +8,7 @@ import { useAuth } from "@/lib/auth/context";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { refreshUser } = useAuth();
+  const { setAuthenticatedUser } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -33,12 +33,20 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      await api("/auth/register", {
+      const response = await api<{ user: { id: string; email: string; name: string | null; avatarUrl?: string | null; provider?: string } }>("/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password, name }),
       });
-      await refreshUser();
+      const authenticatedUser = response.data?.user;
+      if (!authenticatedUser) throw new Error("Phản hồi đăng ký không hợp lệ");
+      setAuthenticatedUser({
+        id: authenticatedUser.id,
+        email: authenticatedUser.email,
+        name: authenticatedUser.name,
+        avatarUrl: authenticatedUser.avatarUrl ?? null,
+        provider: authenticatedUser.provider ?? "local",
+      });
       router.push("/");
       router.refresh();
     } catch (err) {

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { checkRateLimit, fail, ok } from "@/lib/api";
 
 import { db, safeDbQuery } from "@/db";
 import { ensureAuthTables } from "@/db/ensure-auth-tables";
@@ -28,9 +28,12 @@ export const dynamic = "force-dynamic";
 
 /**
  * POST /api/v1/auth/login
- * Rate limit intentionally removed — auth must remain usable after DB blips.
+ * Rate limiting is kept in-memory and independent from database availability.
  */
 export async function POST(req: NextRequest) {
+  const limited = checkRateLimit(req, 10);
+  if (limited) return limited;
+
   try {
     await ensureAuthTables();
 
@@ -47,11 +50,19 @@ export async function POST(req: NextRequest) {
       "auth_login_select_user",
       () =>
         db
-          .select()
+          .select({
+            id: users.id,
+            email: users.email,
+            name: users.name,
+            avatarUrl: users.avatarUrl,
+            provider: users.provider,
+            passwordHash: users.passwordHash,
+            twoFactorEnabled: users.twoFactorEnabled,
+          })
           .from(users)
           .where(eq(users.email, normalizedEmail))
           .limit(1),
-      { attempts: 3, baseMs: 800 },
+      { attempts: 2, baseMs: 200 },
     );
 
     if (userResult.length === 0) {
@@ -111,10 +122,12 @@ export async function POST(req: NextRequest) {
           userId: user.id,
           expiresAt,
         }),
-      { attempts: 3, baseMs: 800 },
+      { attempts: 2, baseMs: 200 },
     );
 
-    await upsertSession({
+    // The refresh token is the authentication source of truth. The device
+    // session index is secondary and must not add another network round trip.
+    void upsertSession({
       userId: user.id,
       token: refreshToken,
       userAgent: req.headers.get("user-agent"),
@@ -158,6 +171,9 @@ export async function POST(req: NextRequest) {
         "Không kết nối được cơ sở dữ liệu. Kiểm tra DATABASE_URL (Supabase pooler :6543 + pgbouncer=true) trên Vercel rồi redeploy.",
         503,
       );
+    }
+    if (/duplicate key|unique constraint|23505/i.test(msg)) {
+      return fail("Phiên đăng nhập đã tồn tại. Vui lòng thử lại.", 409);
     }
     return fail("Đăng nhập thất bại. Vui lòng thử lại.", 500);
   }

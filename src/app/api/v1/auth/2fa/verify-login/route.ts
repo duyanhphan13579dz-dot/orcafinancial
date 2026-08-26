@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { and, eq, gt } from "drizzle-orm";
 
-import { db } from "@/db";
+import { db, safeDbQuery } from "@/db";
 import {
   refreshTokens,
   users,
@@ -186,15 +186,21 @@ export async function POST(
     const expiresAt =
       getRefreshTokenExpiresAt();
 
-    await db
-      .insert(refreshTokens)
-      .values({
-        token: refreshToken,
-        userId: user.id,
-        expiresAt,
-      });
+    await safeDbQuery(
+      "auth_2fa_insert_refresh",
+      () => db
+        .insert(refreshTokens)
+        .values({
+          token: refreshToken,
+          userId: user.id,
+          expiresAt,
+        }),
+      { attempts: 2, baseMs: 200 },
+    );
 
-    await upsertSession({
+    // The refresh-token row authenticates the browser; session history is
+    // secondary and should not increase sign-in latency.
+    void upsertSession({
       userId: user.id,
       token: refreshToken,
       userAgent:

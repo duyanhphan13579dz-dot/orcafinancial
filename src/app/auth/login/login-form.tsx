@@ -20,7 +20,7 @@ export default function LoginForm() {
   const searchParams = useSearchParams();
   const nextPath = safeNextPath(searchParams.get("next"));
 
-  const { refreshUser, isLoggedIn, loading: authLoading } = useAuth();
+  const { setAuthenticatedUser, isLoggedIn, loading: authLoading } = useAuth();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -66,7 +66,9 @@ export default function LoginForm() {
         return;
       }
 
-      await refreshUser();
+      const authenticatedUser = json.data?.user;
+      if (!authenticatedUser) throw new Error("Phản hồi đăng nhập không hợp lệ");
+      setAuthenticatedUser(authenticatedUser);
       router.push(nextPath);
       router.refresh();
     } catch (err) {

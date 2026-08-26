@@ -96,12 +96,36 @@ export async function ensureAuthTables(): Promise<void> {
   ensurePromise = (async () => {
     let client;
     try {
-      client = await Promise.race([
-        pool.connect(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("ensure_auth_pool_connect_timeout")), 12_000),
-        ),
-      ]);
+      const connection = pool.connect();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        timer = setTimeout(() => undefined, 12_000);
+        client = await Promise.race([
+          connection,
+          new Promise<never>((_, reject) =>
+            timer = setTimeout(() => reject(new Error("ensure_auth_pool_connect_timeout")), 12_000),
+          ),
+        ]);
+      } catch (err) {
+        // pool.connect() cannot be cancelled. Release a late connection so a
+        // failed cold start does not gradually exhaust the pool.
+        void connection.then((lateClient) => lateClient.release(), () => undefined);
+        throw err;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+
+      // Normal deployments already ran migrations at build time. Avoid paying
+      // for extension creation and the full DDL on every serverless cold start.
+      const tableCheck = await client.query<{ missing: number }>(`
+        SELECT count(*)::int AS missing
+        FROM unnest(ARRAY['users', 'refresh_tokens', 'user_preferences', 'user_sessions', 'audit_logs']) AS required(name)
+        WHERE to_regclass('public.' || required.name) IS NULL
+      `);
+      if (Number(tableCheck.rows[0]?.missing ?? 0) === 0) {
+        ensured = true;
+        return;
+      }
 
       // Supabase already has gen_random_uuid(); extension may fail for non-superuser.
       try {

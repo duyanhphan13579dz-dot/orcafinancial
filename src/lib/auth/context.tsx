@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { api } from "@/lib/client";
 
 interface User {
@@ -16,6 +16,7 @@ interface AuthContextType {
   loading: boolean;
   isLoggedIn: boolean;
   refreshUser: () => Promise<void>;
+  setAuthenticatedUser: (user: User) => void;
   logout: () => Promise<void>;
 }
 
@@ -24,10 +25,13 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const authRequestId = useRef(0);
 
   const refreshUser = useCallback(async () => {
+    const requestId = ++authRequestId.current;
     try {
-      const res = await fetch("/api/v1/auth/me");
+      const res = await fetch("/api/v1/auth/me", { credentials: "include" });
+      if (requestId !== authRequestId.current) return;
       if (res.ok) {
         const json = await res.json();
         setUser(json.data?.user || null);
@@ -35,10 +39,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
       }
     } catch {
-      setUser(null);
+      if (requestId === authRequestId.current) setUser(null);
     } finally {
-      setLoading(false);
+      if (requestId === authRequestId.current) setLoading(false);
     }
+  }, []);
+
+  const setAuthenticatedUser = useCallback((nextUser: User) => {
+    authRequestId.current += 1;
+    setUser(nextUser);
+    setLoading(false);
   }, []);
 
   const logout = useCallback(async () => {
@@ -61,6 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         isLoggedIn: !!user,
         refreshUser,
+        setAuthenticatedUser,
         logout,
       }}
     >

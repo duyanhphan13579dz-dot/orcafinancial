@@ -38,7 +38,21 @@ export async function getAuthedUser(req: NextRequest): Promise<AuthedUser | null
     const payload = await verifyAccessToken(authHeader.slice(7));
     if (payload?.userId) {
       const rows = await safeDbQuery("guard_user_by_id", () =>
-        db.select().from(users).where(eq(users.id, payload.userId)).limit(1),
+        db
+          .select({
+            id: users.id,
+            email: users.email,
+            name: users.name,
+            avatarUrl: users.avatarUrl,
+            phoneNumber: users.phoneNumber,
+            provider: users.provider,
+            emailVerified: users.emailVerified,
+            twoFactorEnabled: users.twoFactorEnabled,
+            createdAt: users.createdAt,
+          })
+          .from(users)
+          .where(eq(users.id, payload.userId))
+          .limit(1),
       ).catch(() => []);
       if (rows.length) return toAuthedUser(rows[0]);
     }
@@ -49,7 +63,19 @@ export async function getAuthedUser(req: NextRequest): Promise<AuthedUser | null
   if (cookieToken) {
     const rows = await safeDbQuery("guard_user_by_refresh", () =>
       db
-        .select({ user: users })
+        .select({
+          user: {
+            id: users.id,
+            email: users.email,
+            name: users.name,
+            avatarUrl: users.avatarUrl,
+            phoneNumber: users.phoneNumber,
+            provider: users.provider,
+            emailVerified: users.emailVerified,
+            twoFactorEnabled: users.twoFactorEnabled,
+            createdAt: users.createdAt,
+          },
+        })
         .from(refreshTokens)
         .innerJoin(users, eq(users.id, refreshTokens.userId))
         .where(and(eq(refreshTokens.token, cookieToken), gt(refreshTokens.expiresAt, new Date())))
@@ -61,7 +87,20 @@ export async function getAuthedUser(req: NextRequest): Promise<AuthedUser | null
   return null;
 }
 
-function toAuthedUser(u: typeof users.$inferSelect): AuthedUser {
+type AuthUserRow = Pick<
+  typeof users.$inferSelect,
+  | "id"
+  | "email"
+  | "name"
+  | "avatarUrl"
+  | "phoneNumber"
+  | "provider"
+  | "emailVerified"
+  | "twoFactorEnabled"
+  | "createdAt"
+>;
+
+function toAuthedUser(u: AuthUserRow): AuthedUser {
   return {
     id: u.id,
     email: u.email,
