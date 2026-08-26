@@ -31,6 +31,7 @@ import {
 import {
   ProtectedPage,
 } from "@/components/ProtectedPage";
+import { StockExecutiveSummary } from "@/components/stock-executive-summary";
 
 /* ============================================================
  * CODE-SPLIT: heavy per-tab components
@@ -613,6 +614,12 @@ export default function StockPage({
   const { data: analysis } =
     usePoll<Analysis>(
       `/stocks/${symbol}/analysis`,
+      60000,
+    );
+
+  const { data: executiveSummary } =
+    usePoll<any>(
+      `/stocks/${symbol}/executive-summary`,
       60000,
     );
 
@@ -1232,6 +1239,7 @@ export default function StockPage({
           </div>
         )}
 
+        <StockExecutiveSummary data={executiveSummary} />
         {/* ======================================================
          * TABS
          * ====================================================== */}

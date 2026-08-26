@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
+import { buildFinancialPeriodSet } from "@/lib/stock-intelligence/canonical";
 import { getStatements } from "@/lib/company-service";
 import type { StatementType } from "@/lib/financial-statements";
 
@@ -26,7 +27,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
       result,
       {
         source: "sector-synthetic-v1 (calibrated to real price/volume + VN sector benchmarks)",
-        confidence: 0.72,
+        kind: "estimate",
+        confidence: 0.45,
+        financialPeriod: result.periods.length > 0 ? buildFinancialPeriodSet(result.periods.map((quarter) => quarter.period)) : null,
         disclaimer:
           "Báo cáo tài chính được mô hình hóa từ dữ liệu giá/khối lượng thực và benchmark ngành Việt Nam. Thay thế cho dữ liệu kiểm toán khi connector báo cáo chính thức chưa có.",
       },

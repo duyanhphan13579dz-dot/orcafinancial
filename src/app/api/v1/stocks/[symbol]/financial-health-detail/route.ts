@@ -2,6 +2,8 @@ import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { ensureQuarterlyFinancials } from "@/lib/company-service";
 import { evaluateHealthDetail } from "@/lib/financial-health-detail";
+import { buildFinancialPeriodSet } from "@/lib/stock-intelligence/canonical";
+import { validateFinancialQuarters } from "@/lib/stock-intelligence/validation";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +17,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
   try {
     const qs = await ensureQuarterlyFinancials(symbol, 2);
     const detail = evaluateHealthDetail(symbol, qs);
-    return ok(detail, { source: "financial-health-detail-service", quartersUsed: qs.length }, { cacheSeconds: 300 });
+    const validation = validateFinancialQuarters(qs);
+    const financialPeriod = buildFinancialPeriodSet(qs.map((quarter) => quarter.period));
+    return ok(detail, { source: "sector-synthetic-v1", kind: "estimate", currentStatePeriod: financialPeriod?.latestQuarter.label.replace(/A$/, "E") ?? null, quartersUsed: qs.length, validation }, { cacheSeconds: 300 });
   } catch (err) {
     return handleError(err, `financial-health-detail:${symbol}`);
   }
