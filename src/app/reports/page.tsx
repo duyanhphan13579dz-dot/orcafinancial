@@ -162,7 +162,7 @@ export default function ReportsPage() {
   }, []);
 
   const now = new Date();
-  const clock = useMemo(() => vnParts(now), [now]);
+  const clock = vnParts(now);
 
   const refresh = async () => {
     try {
