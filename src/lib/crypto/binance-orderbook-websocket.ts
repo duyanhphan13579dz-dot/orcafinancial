@@ -2,6 +2,7 @@
 
 import { api } from "@/lib/client";
 import { isDepthEventContiguous } from "./binance-orderbook-sequence";
+import { requestBinanceWebSocketApi } from "./binance-websocket-api";
 
 export type LiveOrderBookStatus =
   | "connecting"
@@ -433,12 +434,23 @@ export function createBinanceOrderBookWebSocket(options: BinanceOrderBookOptions
     buffered = [];
     emit(resync ? "resyncing" : "syncing", reason);
     try {
-      const response = await api<Snapshot>(
-        `/crypto/${encodeURIComponent(displaySymbol)}/orderbook?limit=${depthLimit}`,
-        { timeoutMs: SNAPSHOT_TIMEOUT_MS, skipCache: true },
-      );
+      let snapshot: Snapshot;
+      try {
+        snapshot = await requestBinanceWebSocketApi<Snapshot>(
+          "depth",
+          { symbol: streamSymbol.toUpperCase(), limit: depthLimit },
+          SNAPSHOT_TIMEOUT_MS,
+        );
+      } catch {
+        // Internal route is a degraded fallback; primary snapshot is direct WS API.
+        const response = await api<Snapshot>(
+          `/crypto/${encodeURIComponent(displaySymbol)}/orderbook?limit=${depthLimit}`,
+          { timeoutMs: SNAPSHOT_TIMEOUT_MS, skipCache: true },
+        );
+        snapshot = response.data;
+      }
       if (destroyed) return;
-      applySnapshot(response.data);
+      applySnapshot(snapshot);
       reconnectAttempt = 0;
     } catch (error) {
       if (!destroyed) {

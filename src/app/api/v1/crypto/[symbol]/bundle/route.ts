@@ -19,8 +19,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 /**
- * Combined first-paint endpoint: coin + live price + OHLCV + analysis + sentiment.
- * GET /api/v1/crypto/[symbol]/bundle?timeframe=1h&limit=200
+ * Combined first-paint endpoint. Default mode may include OHLCV; `ws=1`
+ * returns metadata only because chart market data comes from Binance WebSocket.
+ * GET /api/v1/crypto/[symbol]/bundle?timeframe=1h&limit=200&ws=1
  */
 export async function GET(
   req: NextRequest,
@@ -36,17 +37,18 @@ export async function GET(
     Math.max(20, Number(req.nextUrl.searchParams.get("limit") ?? 200)),
   );
   const light = req.nextUrl.searchParams.get("light") === "1";
+  const wsOnly = req.nextUrl.searchParams.get("ws") === "1";
   try {
     const normalized = symbol.toUpperCase();
     const ttlMs = light ? 15_000 : 10_000;
     const cached = await sharedCacheGetOrSet(
-      `crypto:v1:bundle:${normalized}:${tf}:${limit}:${light ? "light" : "full"}`,
+      `crypto:v1:bundle:${normalized}:${tf}:${limit}:${light ? "light" : "full"}:${wsOnly ? "ws" : "rest"}`,
       ttlMs,
       () =>
         withTimeout(
-          getCryptoDetailBundle(normalized, tf, limit, { light }),
+          getCryptoDetailBundle(normalized, tf, limit, { light, wsOnly }),
           light ? FAST_BUDGET_MS : FULL_BUDGET_MS,
-          light ? "crypto_bundle_light" : "crypto_bundle_full",
+          wsOnly ? "crypto_bundle_ws" : light ? "crypto_bundle_light" : "crypto_bundle_full",
         ),
       { staleTtlMs: light ? 60_000 : 120_000 },
     );

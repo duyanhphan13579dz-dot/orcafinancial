@@ -17,9 +17,10 @@ export async function GET(
 
   const { symbol } = await c.params;
   const base = symbol.toUpperCase().replace(/USDT$/i, "");
+  const includeOrderFlow = req.nextUrl.searchParams.get("orderflow") !== "0";
 
   try {
-    const data = await getCryptoIntelSnapshot(base);
+    const data = await getCryptoIntelSnapshot(base, { includeOrderFlow });
     const response = ok(data, {
       timezone: "Asia/Ho_Chi_Minh",
       source: data.cacheHit ? "memory-cache" : "binance-live",

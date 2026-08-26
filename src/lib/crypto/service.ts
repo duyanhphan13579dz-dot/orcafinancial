@@ -755,13 +755,28 @@ export async function getCryptoDetailBundle(
   symbol: string,
   timeframe = "1h",
   limit = 200,
-  options: { light?: boolean } = {},
+  options: { light?: boolean; wsOnly?: boolean } = {},
 ) {
   const sym = normalizeSymbol(symbol);
   if (isStablecoin(sym)) {
     throw new Error(
       `${sym} là stablecoin (đồng định giá ~$1), không có cặp ${sym}/USDT trên Binance để vẽ chart. Chọn BTC, ETH, SOL hoặc coin khác.`,
     );
+  }
+
+  if (options.wsOnly) {
+    const detail = await getCryptoCoin(sym).catch(() => null);
+    if (!detail) throw new Error(`Không tìm thấy metadata crypto cho ${sym}`);
+    return {
+      coin: detail.coin,
+      price: detail.price ?? null,
+      bars: [],
+      timeframe,
+      source: "binance-websocket",
+      analysis: null,
+      futures: null,
+      wsOnly: true,
+    };
   }
 
   const detailPromise = (async () => {

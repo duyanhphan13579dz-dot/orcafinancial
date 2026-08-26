@@ -17,11 +17,15 @@ import { MemoCryptoSentimentPanel } from "@/components/crypto-sentiment-panel";
 import CryptoScalpingPanel from "@/components/crypto-scalping-panel";
 import CryptoLiveOrderBookPanel from "@/components/crypto-live-orderbook-panel";
 import { api, changeColor, fmtNum, fmtPct } from "@/lib/client";
+import { analyzeCrypto } from "@/lib/crypto/analysis";
+import type { Ohlcv } from "@/lib/connectors/core";
 import { isDocumentVisible, whenVisible } from "@/lib/client-visibility";
 import {
-  createBinanceWebSocket,
-  type BinanceKline,
-} from "@/lib/crypto/binance-websocket";
+  createBinanceChartWebSocket,
+  type BinanceChartBar,
+  type BinanceChartStatus,
+  type BinanceLiveTicker,
+} from "@/lib/crypto/binance-chart-websocket";
 import { computeLeverageLevels } from "@/lib/crypto/leverage-levels";
 import type {
   FuturesIntelligence,
@@ -115,11 +119,9 @@ export default function CryptoDetail() {
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [wsStatus, setWsStatus] = useState<
-    "connecting" | "connected" | "reconnecting" | "disconnected" | "error"
-  >("connecting");
-  const [wsPrice, setWsPrice] = useState<number | null>(null);
-  const [wsKline, setWsKline] = useState<BinanceKline | null>(null);
+  const [wsStatus, setWsStatus] = useState<BinanceChartStatus>("connecting");
+  const [wsTicker, setWsTicker] = useState<BinanceLiveTicker | null>(null);
+  const [wsKline, setWsKline] = useState<BinanceChartBar | null>(null);
   const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
   const [historyHasMore, setHistoryHasMore] = useState(true);
   const [orderFlow, setOrderFlow] = useState<OrderFlowIntelligence | null>(null);
@@ -127,9 +129,10 @@ export default function CryptoDetail() {
   const [intelFutures, setIntelFutures] = useState<FuturesIntelligence | null>(null);
   const [leverage, setLeverage] = useState(10);
 
-  const initialDone = useRef(false);
   const historyBeforeRef = useRef<number | null>(null);
   const historyLoadingRef = useRef(false);
+  const barsRef = useRef<Bar[]>([]);
+  const chartConnectionRef = useRef<ReturnType<typeof createBinanceChartWebSocket> | null>(null);
 
   useEffect(() => {
     if (!symbol) return;
@@ -140,34 +143,20 @@ export default function CryptoDetail() {
     });
 
     void api<Bundle>(
-      `/crypto/${encodeURIComponent(symbol)}/bundle?timeframe=${encodeURIComponent(timeframe)}&limit=120&light=1`,
+      `/crypto/${encodeURIComponent(symbol)}/bundle?timeframe=${encodeURIComponent(timeframe)}&limit=120&light=1&ws=1`,
       { timeoutMs: 3_900 },
     )
       .then((res) => {
         if (cancelled) return;
         setBundle(res.data);
-        const initialBars = res.data.bars ?? [];
-        setBars(initialBars);
-        historyBeforeRef.current = initialBars[0]?.time ?? null;
-        setHistoryHasMore(initialBars.length >= 120);
-        setChartSource(res.data.source ?? "");
-        setLoading(false);
-        initialDone.current = true;
-        // Keep the first paint focused on coin/price/OHLCV. Analysis is the
-        // expensive path and is hydrated after the chart is visible.
-        void api<Analysis>(
-          `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&fast=1`,
-            { timeoutMs: 3_900 },
-          )
-          .then((analysisRes) => {
-            if (cancelled) return;
-            setBundle((prev) =>
-              prev
-                ? { ...prev, analysis: analysisRes.data, timeframe }
-                : prev,
-            );
-          })
-          .catch(() => undefined);
+        // Market candles are intentionally not taken from the server bundle.
+        // The chart WebSocket below owns both history and realtime updates.
+        setBars([]);
+        barsRef.current = [];
+        historyBeforeRef.current = null;
+        setHistoryHasMore(true);
+        setChartSource("Binance WebSocket");
+        // Signal computation is performed locally from WS history once it is ready.
       })
       .catch(async (err) => {
         if (cancelled) return;
@@ -178,6 +167,7 @@ export default function CryptoDetail() {
           );
           if (cancelled) return;
           const fallbackBars = o.data.bars ?? [];
+          barsRef.current = fallbackBars;
           setBars(fallbackBars);
           historyBeforeRef.current = fallbackBars[0]?.time ?? null;
           setHistoryHasMore(o.meta?.hasMore === true || fallbackBars.length >= 200);
@@ -203,24 +193,10 @@ export default function CryptoDetail() {
             futures: null,
           });
           setError(null);
-          void api<Analysis>(
-            `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&fast=1`,
-            { timeoutMs: 3_900 },
-          )
-            .then((analysisRes) => {
-              if (cancelled) return;
-              setBundle((prev) =>
-                prev
-                  ? { ...prev, analysis: analysisRes.data, timeframe }
-                  : prev,
-              );
-            })
-            .catch(() => undefined);
         } catch {
           setError(err instanceof Error ? err.message : String(err));
         }
         setLoading(false);
-        initialDone.current = true;
       });
 
     return () => {
@@ -236,11 +212,12 @@ export default function CryptoDetail() {
     const load = () => {
       if (!isDocumentVisible()) return;
       void api<IntelPayload>(
-        `/crypto/${encodeURIComponent(symbol)}/intel`,
+        `/crypto/${encodeURIComponent(symbol)}/intel?orderflow=0`,
         { timeoutMs: 3_600 },
       ).then((r) => {
           if (cancelled) return;
           const d = r.data;
+          // Module B order flow is sourced from its direct Binance WebSocket panel.
           if (d.orderFlow) setOrderFlow(d.orderFlow);
           if (d.whale) setWhaleLiq(d.whale);
           if (d.futures) {
@@ -264,99 +241,156 @@ export default function CryptoDetail() {
     };
   }, [symbol]);
 
-  const loadTimeframe = useCallback(
-    async (tf: string) => {
-      if (!symbol) return;
-      setChartLoading(true);
-      setWsKline(null);
-      setHistoryHasMore(true);
-      historyBeforeRef.current = null;
-      setError(null);
-      try {
-        const o = await api<{ bars: Bar[] }>(
-          `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(tf)}&limit=200`,
-          { timeoutMs: 3_900 },
-        );
-        const nextBars = o.data.bars ?? [];
-        setBars(nextBars);
-        historyBeforeRef.current = nextBars[0]?.time ?? null;
-        setHistoryHasMore(o.meta?.hasMore === true || nextBars.length >= 200);
-        setChartSource(String(o.meta?.source ?? "binance"));
-        void api<Analysis>(
-          `/crypto/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(tf)}&fast=1`,
-          { timeoutMs: 3_900 },
-        )
-          .then((a) => {
-            setBundle((prev) =>
-              prev ? { ...prev, analysis: a.data, timeframe: tf } : prev,
-            );
-          })
-          .catch(() => undefined);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setChartLoading(false);
-      }
-    },
-    [symbol],
-  );
-
   const loadMoreHistory = useCallback(async () => {
     if (historyLoadingRef.current || !historyHasMore || historyBeforeRef.current == null) return;
+    const connection = chartConnectionRef.current;
+    if (!connection) return;
     historyLoadingRef.current = true;
     setHistoryLoadingMore(true);
     const before = historyBeforeRef.current;
     try {
-      const page = await api<{ bars: Bar[] }>(
-        `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(timeframe)}&limit=200&before=${before}`,
-        { timeoutMs: 3_900 },
-      );
-      const older = page.data.bars ?? [];
+      const history = await connection.loadHistory(200, before * 1000 - 1);
+      const older = history.bars as Bar[];
       if (!older.length) {
         setHistoryHasMore(false);
         return;
       }
-      setBars((current) => mergeBars(older, current));
+      const merged = mergeBars(older, barsRef.current);
+      barsRef.current = merged;
+      setBars(merged);
       historyBeforeRef.current = older[0]?.time ?? before;
-      setHistoryHasMore(page.meta?.hasMore === true || older.length >= 200);
+      setHistoryHasMore(history.hasMore);
     } catch {
-      // Keep the current chart visible and allow retry on the next edge trigger.
+      try {
+        const fallback = await api<{ bars: Bar[] }>(
+          `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(timeframe)}&limit=200&before=${before}`,
+          { timeoutMs: 3_900 },
+        );
+        const older = fallback.data.bars ?? [];
+        const merged = mergeBars(older, barsRef.current);
+        barsRef.current = merged;
+        setBars(merged);
+        historyBeforeRef.current = older[0]?.time ?? before;
+        setHistoryHasMore(fallback.meta?.hasMore === true || older.length >= 200);
+      } catch {
+        // Keep the live chart visible and allow retry on the next edge trigger.
+      }
     } finally {
       historyLoadingRef.current = false;
       setHistoryLoadingMore(false);
     }
   }, [symbol, timeframe, historyHasMore]);
 
+  const applyLocalAnalysis = useCallback((nextBars: Array<Bar & { isClosed?: boolean }>) => {
+    const closedBars = nextBars.filter((bar) => bar.isClosed !== false);
+    if (closedBars.length < 30) return;
+    try {
+      const result = analyzeCrypto(closedBars as Ohlcv[], 0);
+      setBundle((prev) => prev ? {
+        ...prev,
+        timeframe,
+        analysis: {
+          ...result,
+          sentiment: prev.analysis?.sentiment ?? 0,
+          disclaimer: "Tín hiệu tính local từ nến Binance WebSocket đã đóng; không phải lời khuyên đầu tư.",
+        },
+      } : prev);
+    } catch {
+      // Keep the previous signal until enough valid closed bars are available.
+    }
+  }, [timeframe]);
+
   const onSelectTf = (tf: string) => {
     if (tf === timeframe) return;
     setTimeframe(tf);
-    if (initialDone.current) void loadTimeframe(tf);
+    setChartLoading(true);
+    setLoading(true);
+    setBars([]);
+    barsRef.current = [];
+    setWsKline(null);
+    setHistoryHasMore(true);
+    historyBeforeRef.current = null;
+    setError(null);
   };
 
   useEffect(() => {
     if (!symbol) return;
-    const binanceSymbol = bundle?.coin?.binanceSymbol || `${symbol}USDT`;
+    let active = true;
+    const binanceSymbol = `${symbol}USDT`;
     queueMicrotask(() => {
-      setWsPrice(null);
+      setWsTicker(null);
       setWsKline(null);
       setWsStatus("connecting");
     });
-    const connection = createBinanceWebSocket({
+    const connection = createBinanceChartWebSocket({
       symbol: binanceSymbol,
       timeframe,
-      onTicker: (ticker) => setWsPrice(ticker.price),
-      onKline: (kline) => setWsKline(kline),
+      onHistory: () => undefined,
+      onTicker: (ticker) => setWsTicker(ticker),
+      onKline: (kline) => {
+        setWsKline(kline);
+        if (kline.isClosed) {
+          const nextBars = mergeBars(barsRef.current, [kline as Bar]);
+          barsRef.current = nextBars;
+          setBars(nextBars);
+          applyLocalAnalysis(nextBars);
+        }
+      },
       onStatus: (status) => setWsStatus(status),
     });
-    return () => connection.disconnect();
-  }, [symbol, timeframe, bundle?.coin?.binanceSymbol]);
+    chartConnectionRef.current = connection;
+    void connection.loadHistory(120)
+      .then((history) => {
+        if (!active) return;
+        const nextBars = history.bars as Bar[];
+        barsRef.current = nextBars;
+        setBars(nextBars);
+        historyBeforeRef.current = nextBars[0]?.time ?? null;
+        setHistoryHasMore(history.hasMore);
+        setChartSource("Binance WebSocket API");
+        setLoading(false);
+        setChartLoading(false);
+        setError(null);
+        applyLocalAnalysis(nextBars);
+      })
+      .catch(async (err) => {
+        if (!active) return;
+        // REST is a degraded history fallback only; live updates stay on WS.
+        try {
+          const fallback = await api<{ bars: Bar[] }>(
+            `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(timeframe)}&limit=200`,
+            { timeoutMs: 3_900 },
+          );
+          if (!active) return;
+          const fallbackBars = fallback.data.bars ?? [];
+          setBars(fallbackBars);
+          historyBeforeRef.current = fallbackBars[0]?.time ?? null;
+          setHistoryHasMore(fallback.meta?.hasMore === true || fallbackBars.length >= 200);
+          setChartSource(String(fallback.meta?.source ?? "REST degraded fallback"));
+          setError(null);
+          applyLocalAnalysis(fallbackBars);
+        } catch {
+          if (active) setError(err instanceof Error ? err.message : String(err));
+        } finally {
+          if (!active) return;
+          setLoading(false);
+          setChartLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+      if (chartConnectionRef.current === connection) chartConnectionRef.current = null;
+      connection.disconnect();
+    };
+  }, [symbol, timeframe, applyLocalAnalysis]);
 
   const price = useMemo(() => {
     const rest = bundle?.price;
-    if (wsPrice == null) return rest;
+    const livePrice = wsTicker?.price ?? null;
+    if (livePrice == null && !rest) return null;
     return {
       ...(rest ?? {
-        price: wsPrice,
+        price: livePrice ?? 0,
         priceVnd: null,
         volume24h: null,
         marketCap: null,
@@ -364,16 +398,18 @@ export default function CryptoDetail() {
         source: "Binance WebSocket",
         timestamp: new Date().toISOString(),
       }),
-      price: wsPrice,
-      source: "Binance WebSocket",
+      price: livePrice ?? rest?.price ?? 0,
+      volume24h: wsTicker?.volume24h ?? rest?.volume24h ?? null,
+      change24h: wsTicker?.change24h ?? rest?.change24h ?? null,
+      source: livePrice != null ? "Binance WebSocket" : rest?.source ?? "Binance WebSocket",
       timestamp: new Date().toISOString(),
     };
-  }, [bundle?.price, wsPrice]);
+  }, [bundle?.price, wsTicker]);
 
   const chartBars = useMemo(() => {
     if (bars.length === 0 || !wsKline) return bars;
     const realtimeBar: Bar = {
-      time: Math.floor(wsKline.startTime / 1000),
+      time: wsKline.time,
       open: wsKline.open,
       high: wsKline.high,
       low: wsKline.low,
@@ -405,11 +441,11 @@ export default function CryptoDetail() {
   const sourceLabel = price?.source ?? chartSource ?? "Binance";
 
   const live =
-    wsStatus === "connected"
+    wsStatus === "connected" || wsStatus === "live"
       ? { text: "LIVE", cls: "bg-emerald-400 live-dot" }
-      : wsStatus === "reconnecting"
-        ? { text: "RECONNECT", cls: "bg-amber-400" }
-        : { text: "REST", cls: "bg-slate-500" };
+      : wsStatus === "reconnecting" || wsStatus === "loading-history"
+        ? { text: wsStatus === "loading-history" ? "SYNC" : "RECONNECT", cls: "bg-amber-400" }
+        : { text: "FALLBACK", cls: "bg-slate-500" };
 
   const recCls =
     analysis?.recommendation === "LONG"

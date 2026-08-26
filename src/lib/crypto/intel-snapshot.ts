@@ -38,7 +38,7 @@ function normalize(symbol: string) {
   return symbol.trim().toUpperCase().replace(/USDT$/i, "");
 }
 
-async function build(symbol: string): Promise<CryptoIntelSnapshot> {
+async function build(symbol: string, includeOrderFlow: boolean): Promise<CryptoIntelSnapshot> {
   const layersOk: string[] = [];
   let change24h: number | null = null;
   let volume24h: number | null = null;
@@ -57,7 +57,9 @@ async function build(symbol: string): Promise<CryptoIntelSnapshot> {
 
   const [futR, ofR, whaleR] = await Promise.allSettled([
     getCryptoFutures(symbol, change24h),
-    fetchOrderFlowIntelligence(symbol, { volume24hUsd: volume24h }),
+    includeOrderFlow
+      ? fetchOrderFlowIntelligence(symbol, { volume24hUsd: volume24h })
+      : Promise.resolve(null),
     fetchWhaleLiquidationIntelligence(symbol, {
       volume24hUsd: volume24h,
       change24h,
@@ -92,8 +94,9 @@ async function build(symbol: string): Promise<CryptoIntelSnapshot> {
 
 export async function getCryptoIntelSnapshot(
   symbol: string,
+  options: { includeOrderFlow?: boolean } = {},
 ): Promise<CryptoIntelSnapshot> {
-  const key = normalize(symbol);
+  const key = `${normalize(symbol)}:${options.includeOrderFlow === false ? "no-orderflow" : "orderflow"}`;
   const now = Date.now();
   const hit = cache.get(key);
   if (hit && hit.expiresAt > now) {
@@ -103,7 +106,7 @@ export async function getCryptoIntelSnapshot(
   const existing = inflight.get(key);
   if (existing) return existing;
 
-  const promise = build(key)
+  const promise = build(key.split(":")[0], options.includeOrderFlow !== false)
     .then((value) => {
       cache.set(key, { value, expiresAt: Date.now() + TTL_MS });
       // bound map size

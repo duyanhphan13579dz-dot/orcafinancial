@@ -97,7 +97,6 @@ const PREFETCH_BATCH_DELAY = 300;
  * User mở detail vẫn có thể request dữ liệu đầy đủ.
  */
 const PREFETCH_TIMEFRAME = "1h";
-const PREFETCH_CANDLE_LIMIT = 120;
 
 /*
  * Delay trước khi bắt đầu background prefetch.
@@ -355,49 +354,20 @@ export default function CryptoPage() {
 
       try {
         /*
-         * Profile + OHLCV chạy song song.
+         * Chỉ warm metadata. Historical candles thuộc về Binance WebSocket
+         * client của detail page và không nên tạo REST traffic nền.
          */
-        const [
-          profileResult,
-          ohlcvResult,
-        ] = await Promise.allSettled([
-          fetch(
-            `/api/v1/crypto/${encodeURIComponent(
-              normalized,
-            )}`,
-            {
-              method: "GET",
-              cache: "force-cache",
-              credentials: "same-origin",
-            },
-          ),
+        const profileResult = await fetch(
+          `/api/v1/crypto/${encodeURIComponent(normalized)}`,
+          {
+            method: "GET",
+            cache: "force-cache",
+            credentials: "same-origin",
+          },
+        );
 
-          fetch(
-            `/api/v1/crypto/${encodeURIComponent(
-              normalized,
-            )}/ohlcv?timeframe=${PREFETCH_TIMEFRAME}&limit=${PREFETCH_CANDLE_LIMIT}`,
-            {
-              method: "GET",
-              cache: "force-cache",
-              credentials: "same-origin",
-            },
-          ),
-        ]);
-
-        const profileOk =
-          profileResult.status ===
-            "fulfilled" &&
-          profileResult.value.ok;
-
-        const ohlcvOk =
-          ohlcvResult.status ===
-            "fulfilled" &&
-          ohlcvResult.value.ok;
-
-        if (profileOk && ohlcvOk) {
-          prefetchedRef.current.add(
-            key,
-          );
+        if (profileResult.ok) {
+          prefetchedRef.current.add(key);
         }
       } catch {
         /*
