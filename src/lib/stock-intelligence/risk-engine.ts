@@ -31,6 +31,9 @@ export interface RiskAssessment {
   dataConfidence: number;
   predictionConfidence: number;
   modelVersion: string;
+  stressTests: Array<{ name: "market_down_10" | "volatility_spike" | "liquidity_drop"; impactPct: number; riskLevel: RiskLevel; narrative: string }>;
+  marketStats: { annualizedVolatilityPct: number | null; maxDrawdownPct: number | null; downsideVolatilityPct: number | null; expectedShortfallPct: number | null };
+  positionSizing: { maxLossPct: number; suggestedWeightPct: number | null; assumptions: string[] };
 }
 
 const clamp = (value: number, low = 0, high = 100) => Math.min(high, Math.max(low, Number.isFinite(value) ? value : low));
@@ -47,6 +50,12 @@ export function buildRiskAssessment(input: { symbol: string; price: number | nul
   const mean = returns.length ? returns.reduce((sum, value) => sum + value, 0) / returns.length : 0;
   const volatility = returns.length ? Math.sqrt(returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / returns.length) * Math.sqrt(252) * 100 : null;
   const volatilityRisk = volatility == null ? 60 : clamp(volatility * 2.4);
+  let peak = closes[0] ?? 0;
+  let maxDrawdown = 0;
+  for (const close of closes) { peak = Math.max(peak, close); if (peak > 0) maxDrawdown = Math.min(maxDrawdown, close / peak - 1); }
+  const downside = returns.filter((value) => value < 0);
+  const downsideVolatility = downside.length ? Math.sqrt(downside.reduce((sum, value) => sum + value ** 2, 0) / downside.length) * Math.sqrt(252) * 100 : null;
+  const expectedShortfall = downside.length ? Math.abs((([...downside].sort((a, b) => a - b).slice(0, Math.max(1, Math.ceil(downside.length * 0.2))).reduce((sum, value) => sum + value, 0)) / Math.max(1, Math.ceil(downside.length * 0.2))) * 100) : null;
   const volume = input.volumes?.filter((value) => Number.isFinite(value) && value >= 0) ?? [];
   const avgVolume = volume.length ? volume.reduce((sum, value) => sum + value, 0) / volume.length : 0;
   const recentVolume = volume.slice(-20).reduce((sum, value) => sum + value, 0) / Math.max(1, Math.min(20, volume.length));
@@ -68,5 +77,13 @@ export function buildRiskAssessment(input: { symbol: string; price: number | nul
     tradePlan = { entryLow: Number(entryLow.toFixed(2)), entryHigh: Number(entryHigh.toFixed(2)), stopLoss: Number(stopLoss.toFixed(2)), takeProfit1: Number(takeProfit1.toFixed(2)), takeProfit2: Number(takeProfit2.toFixed(2)), riskReward1: Number(((takeProfit1 - price) / risk).toFixed(2)), riskReward2: Number(((takeProfit2 - price) / risk).toFixed(2)), invalidation: `Đóng cửa dưới ${stopLoss.toFixed(2)} hoặc thesis cơ bản bị phá vỡ.` };
   }
   const mainRisk = Object.entries(breakdown).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "volatility";
-  return { symbol: input.symbol, overall, level, breakdown, mainRisk, scenarios: [{ name: "bear", shock: -0.1, fairValueImpact: -0.15, narrative: "EPS giảm 10% có thể làm fair value giảm khoảng 15%." }, { name: "base", shock: 0, fairValueImpact: 0, narrative: "Không có cú sốc bổ sung trong kịch bản cơ sở." }, { name: "bull", shock: 0.1, fairValueImpact: 0.12, narrative: "EPS tăng 10% có thể hỗ trợ fair value tăng khoảng 12%." }], tradePlan, dataConfidence: closes.length >= 120 ? 0.8 : closes.length >= 30 ? 0.6 : 0.25, predictionConfidence: tradePlan ? 0.55 : 0.25, modelVersion: "ORCA Risk v1.0" };
+  const stressTests = [
+    { name: "market_down_10" as const, impactPct: -10, riskLevel: overall >= 60 ? "HIGH" as const : "MEDIUM" as const, narrative: "Giả định thị trường chung giảm 10%; cần rà soát beta và vùng invalidation." },
+    { name: "volatility_spike" as const, impactPct: Number(-(volatility ?? 20) * 0.25).toFixed(2) as unknown as number, riskLevel: volatilityRisk >= 68 ? "HIGH" as const : "MEDIUM" as const, narrative: "Biến động tăng 25% làm khoảng stop-loss và quy mô vị thế phải thu hẹp." },
+    { name: "liquidity_drop" as const, impactPct: -5, riskLevel: liquidityRisk >= 68 ? "HIGH" as const : "MEDIUM" as const, narrative: "Thanh khoản suy giảm 30% làm tăng execution risk và slippage." },
+  ];
+  const stopDistancePct = tradePlan && price ? (price - tradePlan.stopLoss) / price * 100 : null;
+  const suggestedWeightPct = stopDistancePct && stopDistancePct > 0 ? Number(Math.min(10, 1 / stopDistancePct * 100).toFixed(2)) : null;
+  const positionSizing = { maxLossPct: 1, suggestedWeightPct, assumptions: ["Risk budget mặc định 1% NAV cho mỗi vị thế.", "Chưa bao gồm phí, thuế và slippage thực tế.", "Không phải khuyến nghị cá nhân hóa."] };
+  return { symbol: input.symbol, overall, level, breakdown, mainRisk, stressTests, marketStats: { annualizedVolatilityPct: volatility === null ? null : Number(volatility.toFixed(2)), maxDrawdownPct: Number((maxDrawdown * 100).toFixed(2)), downsideVolatilityPct: downsideVolatility === null ? null : Number(downsideVolatility.toFixed(2)), expectedShortfallPct: expectedShortfall === null ? null : Number(expectedShortfall.toFixed(2)) }, positionSizing, scenarios: [{ name: "bear", shock: -0.1, fairValueImpact: -0.15, narrative: "EPS giảm 10% có thể làm fair value giảm khoảng 15%." }, { name: "base", shock: 0, fairValueImpact: 0, narrative: "Không có cú sốc bổ sung trong kịch bản cơ sở." }, { name: "bull", shock: 0.1, fairValueImpact: 0.12, narrative: "EPS tăng 10% có thể hỗ trợ fair value tăng khoảng 12%." }], tradePlan, dataConfidence: closes.length >= 120 ? 0.8 : closes.length >= 30 ? 0.6 : 0.25, predictionConfidence: tradePlan ? 0.55 : 0.25, modelVersion: "ORCA Risk v1.1" };
 }

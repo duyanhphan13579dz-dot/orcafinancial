@@ -201,6 +201,23 @@ export const companyValueChains = pgTable(
   (t) => [uniqueIndex("company_value_chains_symbol_uq").on(t.symbol)],
 );
 
+export const stockDecisionHistory = pgTable(
+  "stock_decision_history",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: varchar("session_id", { length: 64 }).notNull(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    verdict: varchar("verdict", { length: 20 }).notNull(),
+    score: doublePrecision("score").notNull(),
+    risk: varchar("risk", { length: 20 }).notNull(),
+    trend: varchar("trend", { length: 20 }).notNull(),
+    modelVersion: varchar("model_version", { length: 40 }).notNull(),
+    predictionConfidence: doublePrecision("prediction_confidence").notNull().default(0),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("stock_decision_history_symbol_idx").on(t.symbol, t.createdAt), index("stock_decision_history_session_idx").on(t.sessionId, t.createdAt)],
+);
 export const connectorAlerts = pgTable(
   "connector_alerts",
   {

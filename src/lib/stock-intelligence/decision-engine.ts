@@ -17,6 +17,9 @@ export interface OrcaDecision {
   why: string[];
   whyNot: string[];
   modelVersion: string;
+  calibration: { method: "rule-based-v1"; historicalSamples: number; calibrated: boolean; reason: string };
+  evidenceCoverage: number;
+  portfolioAction: "ADD" | "HOLD" | "TRIM" | "AVOID" | "NO_POSITION_CONTEXT";
 }
 
 const clamp = (n: number) => Math.max(0, Math.min(100, Number.isFinite(n) ? n : 50));
@@ -29,6 +32,8 @@ export function buildOrcaDecision(input: {
   fundamental: FundamentalReport | null;
   health: HealthDetail | null;
   sentimentScore?: number | null;
+  marketContextScore?: number | null;
+  portfolio?: { currentWeightPct?: number | null; maxWeightPct?: number | null; unrealizedReturnPct?: number | null };
 }): OrcaDecision {
   const technical = input.technical;
   const fundamental = input.fundamental;
@@ -41,13 +46,14 @@ export function buildOrcaDecision(input: {
   const valuationScore = price && mid ? clamp(50 + ((mid / price) - 1) * 180) : 50;
   const riskScore = technical?.volatilityPct != null ? clamp(100 - technical.volatilityPct * 2) : 50;
   const sentimentScore = input.sentimentScore == null ? 50 : clamp(50 + input.sentimentScore * 50);
+  const marketContextScore = input.marketContextScore == null ? 50 : clamp(input.marketContextScore);
   const dimensions: ScoreDimension[] = [
     { key: "technical", label: "Technical", score: Math.round(technicalScore), weight: 0.25, rationale: technical?.reasons?.[0] ?? "Chưa đủ dữ liệu kỹ thuật." },
     { key: "fundamental", label: "Fundamental", score: Math.round(fundamentalScore), weight: 0.25, rationale: health?.summary ?? "Chưa đủ dữ liệu cơ bản." },
     { key: "valuation", label: "Valuation", score: Math.round(valuationScore), weight: 0.15, rationale: mid && price ? `Fair value trung tâm ${mid.toFixed(2)} so với giá hiện tại ${price.toFixed(2)}.` : "Chưa đủ dữ liệu định giá." },
     { key: "risk", label: "Risk", score: Math.round(riskScore), weight: 0.15, rationale: technical?.volatilityPct != null ? `Biến động năm hóa ${technical.volatilityPct.toFixed(1)}%.` : "Chưa đủ dữ liệu rủi ro." },
     { key: "sentiment", label: "Sentiment", score: Math.round(sentimentScore), weight: 0.10, rationale: input.sentimentScore == null ? "Chưa đủ dữ liệu tin tức." : "Điểm sentiment lấy từ news intelligence hiện có." },
-    { key: "marketContext", label: "Market Context", score: 50, weight: 0.10, rationale: "Market context chưa được cung cấp cho symbol này." },
+    { key: "marketContext", label: "Market Context", score: Math.round(marketContextScore), weight: 0.10, rationale: input.marketContextScore == null ? "Market context chưa được cung cấp cho symbol này." : "Điểm market context được truyền từ cross-module intelligence." },
   ];
   const score = Math.round(dimensions.reduce((sum, d) => sum + d.score * d.weight, 0));
   const trend = technicalScore >= 62 ? "BULLISH" : technicalScore <= 38 ? "BEARISH" : "NEUTRAL";
@@ -58,5 +64,8 @@ export function buildOrcaDecision(input: {
   const short = toRecommendation(clamp(score + (technicalScore - 50) * 0.35));
   const medium = toRecommendation(clamp(score + (technicalScore - 50) * 0.15));
   const long = toRecommendation(clamp(score + (fundamentalScore - 50) * 0.25));
-  return { symbol: input.symbol, verdict: toRecommendation(score), score, predictionConfidence: Number(Math.min(0.95, 0.55 + Math.abs(score - 50) / 250 + dimensions.filter((d) => d.score !== 50).length * 0.03).toFixed(2)), risk, trend, valuation, horizons: { shortTerm: short, mediumTerm: medium, longTerm: long }, dimensions, why, whyNot, modelVersion: "ORCA Decision v1.0" };
+  const portfolio = input.portfolio;
+  const portfolioAction = portfolio == null ? "NO_POSITION_CONTEXT" : score >= 68 && (portfolio.currentWeightPct ?? 0) < (portfolio.maxWeightPct ?? 10) ? "ADD" : score <= 38 ? "TRIM" : score <= 50 ? "AVOID" : "HOLD";
+  const evidenceCoverage = Number((dimensions.filter((d) => d.score !== 50).length / dimensions.length).toFixed(2));
+  return { symbol: input.symbol, verdict: toRecommendation(score), score, predictionConfidence: Number(Math.min(0.95, 0.55 + Math.abs(score - 50) / 250 + evidenceCoverage * 0.08).toFixed(2)), risk, trend, valuation, horizons: { shortTerm: short, mediumTerm: medium, longTerm: long }, dimensions, why, whyNot, modelVersion: "ORCA Decision v1.1", calibration: { method: "rule-based-v1", historicalSamples: 0, calibrated: false, reason: "Chưa có prediction-vs-actual history đủ dài để calibration thống kê." }, evidenceCoverage, portfolioAction };
 }
