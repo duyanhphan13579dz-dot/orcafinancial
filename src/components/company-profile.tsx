@@ -79,8 +79,10 @@ export function CompanyProfile({ symbol }: { symbol: string }) {
 
   useEffect(() => {
     if (!loaded && !loading) {
-      setLoaded(true);
-      void load();
+      queueMicrotask(() => {
+        setLoaded(true);
+        void load();
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);

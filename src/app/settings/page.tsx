@@ -34,7 +34,7 @@ function SettingsInner() {
   // Sync tab with ?tab= query param so links/back-button work.
   useEffect(() => {
     const q = params.get("tab") as TabId | null;
-    if (q && TABS.some((t) => t.id === q)) setTab(q);
+    if (q && TABS.some((t) => t.id === q)) queueMicrotask(() => setTab(q));
   }, [params]);
 
   const changeTab = (id: TabId) => {

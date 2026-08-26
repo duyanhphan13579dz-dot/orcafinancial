@@ -42,7 +42,7 @@ export function MobileHeader() {
 
   // Close on route change
   useEffect(() => {
-    setOpen(false);
+    queueMicrotask(() => setOpen(false));
   }, [pathname]);
 
   return (

@@ -1019,11 +1019,13 @@ export default function StockPage({
     historyLoadingMoreRef.current =
       false;
 
-    setHistoryBars([]);
-    setHistoryLoading(true);
-    setHistoryLoadingMore(false);
-    setHistoryHasMore(true);
-    setHistoryError(null);
+    queueMicrotask(() => {
+      setHistoryBars([]);
+      setHistoryLoading(true);
+      setHistoryLoadingMore(false);
+      setHistoryHasMore(true);
+    });
+    queueMicrotask(() => setHistoryError(null));
   }, [symbol, tf]);
 
   /* ==========================================================
@@ -1031,9 +1033,7 @@ export default function StockPage({
    * ========================================================== */
 
   useEffect(() => {
-    void loadHistory(
-      "initial",
-    );
+    queueMicrotask(() => void loadHistory("initial"));
   }, [
     loadHistory,
   ]);

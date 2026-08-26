@@ -161,7 +161,7 @@ export default function ReportsPage() {
     return () => clearInterval(id);
   }, []);
 
-  const now = useMemo(() => new Date(), [tick]);
+  const now = new Date();
   const clock = useMemo(() => vnParts(now), [now]);
 
   const refresh = async () => {

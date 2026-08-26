@@ -51,7 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void refreshUser();
+    queueMicrotask(() => void refreshUser());
   }, [refreshUser]);
 
   return (

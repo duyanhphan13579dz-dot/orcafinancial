@@ -125,7 +125,7 @@ export function SecurityPanel() {
     };
 
   useEffect(() => {
-    void loadSecurityData();
+    queueMicrotask(() => void loadSecurityData());
   }, []);
 
   const changePassword =

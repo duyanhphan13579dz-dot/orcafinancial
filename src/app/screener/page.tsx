@@ -47,14 +47,13 @@ export default function ScreenerPage() {
   // Reset slider when method changes
   useEffect(() => {
     const m = METHODS.find((x) => x.id === method);
-    if (m) setMinScore(m.defaultMin);
+    if (m) queueMicrotask(() => setMinScore(m.defaultMin));
   }, [method]);
 
   // Re-run when either method or score changes (debounced)
   useEffect(() => {
     const t = setTimeout(() => void runScreen(method, minScore), 250);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [method, minScore]);
 
   const currentMethod = METHODS.find((m) => m.id === method)!;

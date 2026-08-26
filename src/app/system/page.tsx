@@ -99,7 +99,7 @@ export default function SystemPage() {
   };
 
   useEffect(() => {
-    void load();
+    queueMicrotask(() => void load());
     const t = setInterval(() => void load(), 5000);
     return () => clearInterval(t);
   }, []);

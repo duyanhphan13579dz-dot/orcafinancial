@@ -186,6 +186,7 @@ export default function CryptoPage() {
    */
   const [realtimeVersion, setRealtimeVersion] =
     useState(0);
+  const [realtimeSnapshot, setRealtimeSnapshot] = useState<Record<string, RealtimePatch>>({});
 
   const realtimeCommitTimerRef =
     useRef<ReturnType<typeof setTimeout> | null>(
@@ -239,6 +240,7 @@ export default function CryptoPage() {
 
       realtimeDirtyRef.current = false;
 
+      setRealtimeSnapshot({ ...realtimeRef.current });
       setRealtimeVersion((version) => version + 1);
     }, REALTIME_RENDER_INTERVAL);
   }, []);
@@ -519,8 +521,7 @@ export default function CryptoPage() {
      */
     void realtimeVersion;
 
-    const realtime =
-      realtimeRef.current;
+    const realtime = realtimeSnapshot;
 
     return (
       feed.data?.prices ?? []
@@ -557,6 +558,7 @@ export default function CryptoPage() {
   }, [
     feed.data,
     realtimeVersion,
+    realtimeSnapshot,
   ]);
 
   /* ---------------------------------------------------------------------- */
@@ -800,7 +802,7 @@ export default function CryptoPage() {
                * Không tạo state riêng cho từng row.
                */
               const live =
-                realtimeRef.current[
+                realtimeSnapshot[
                   normalized
                 ];
 

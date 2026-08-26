@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useState,
 } from "react";
@@ -46,6 +47,22 @@ export function AccountPanel() {
 
   const [googleUnlinking, setGoogleUnlinking] =
     useState(false);
+
+  const refreshProfile = useCallback(async () => {
+    try {
+      const response = await fetch("/api/v1/users/me", { cache: "no-store" });
+      const json = await response.json();
+      const u = json.data?.user;
+      if (u) {
+        setProfile(u);
+        setName(u.name ?? "");
+        setPhone(u.phoneNumber ?? "");
+        setAvatar(u.avatarUrl ?? "");
+      }
+    } catch {
+      // Keep existing UI state.
+    }
+  }, []);
 
   useEffect(() => {
     fetch("/api/v1/users/me")
@@ -97,7 +114,7 @@ export function AccountPanel() {
         "/settings?tab=account",
       );
 
-      void refreshProfile();
+      queueMicrotask(() => void refreshProfile());
     }
 
     if (error) {
@@ -114,41 +131,7 @@ export function AccountPanel() {
         "/settings?tab=account",
       );
     }
-  }, []);
-
-  const refreshProfile =
-    async () => {
-      try {
-        const response =
-          await fetch(
-            "/api/v1/users/me",
-            {
-              cache: "no-store",
-            },
-          );
-
-        const json =
-          await response.json();
-
-        const u =
-          json.data?.user;
-
-        if (u) {
-          setProfile(u);
-          setName(
-            u.name ?? "",
-          );
-          setPhone(
-            u.phoneNumber ?? "",
-          );
-          setAvatar(
-            u.avatarUrl ?? "",
-          );
-        }
-      } catch {
-        // Keep existing UI state.
-      }
-    };
+  }, [refreshProfile, push]);
 
   const save = async () => {
     setSaving(true);

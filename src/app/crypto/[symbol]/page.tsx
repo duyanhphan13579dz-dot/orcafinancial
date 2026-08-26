@@ -132,8 +132,10 @@ export default function CryptoDetail() {
   useEffect(() => {
     if (!symbol) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+    queueMicrotask(() => {
+      setLoading(true);
+      setError(null);
+    });
 
     void api<Bundle>(
       `/crypto/${encodeURIComponent(symbol)}/bundle?timeframe=${encodeURIComponent(timeframe)}&limit=120&light=1`,
@@ -324,9 +326,11 @@ export default function CryptoDetail() {
   useEffect(() => {
     if (!symbol) return;
     const binanceSymbol = bundle?.coin?.binanceSymbol || `${symbol}USDT`;
-    setWsPrice(null);
-    setWsKline(null);
-    setWsStatus("connecting");
+    queueMicrotask(() => {
+      setWsPrice(null);
+      setWsKline(null);
+      setWsStatus("connecting");
+    });
     const connection = createBinanceWebSocket({
       symbol: binanceSymbol,
       timeframe,

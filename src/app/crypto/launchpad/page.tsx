@@ -107,7 +107,7 @@ export default function LaunchpadPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    queueMicrotask(() => setLoading(true));
     void api<LaunchpadIntelligence>("/crypto/launchpad")
       .then((r) => {
         if (!cancelled) {

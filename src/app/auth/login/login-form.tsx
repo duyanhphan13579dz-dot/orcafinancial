@@ -27,6 +27,11 @@ export default function LoginForm() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const oauthMessage = (() => {
+    const raw = searchParams.get("error");
+    if (!raw) return "";
+    try { return decodeURIComponent(raw); } catch { return raw; }
+  })();
 
   useEffect(() => {
     if (!authLoading && isLoggedIn) {
@@ -34,16 +39,7 @@ export default function LoginForm() {
     }
   }, [authLoading, isLoggedIn, router, nextPath]);
 
-  useEffect(() => {
-    const oauthError = searchParams.get("error");
-    if (oauthError) {
-      try {
-        setError(decodeURIComponent(oauthError));
-      } catch {
-        setError(oauthError);
-      }
-    }
-  }, [searchParams]);
+
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -109,9 +105,9 @@ export default function LoginForm() {
           )}
         </div>
 
-        {error && (
+        {(error || oauthMessage) && (
           <div className="mb-4 p-3 rounded bg-rose-950/30 border border-rose-700 text-sm text-rose-300">
-            {error}
+            {error || oauthMessage}
           </div>
         )}
 

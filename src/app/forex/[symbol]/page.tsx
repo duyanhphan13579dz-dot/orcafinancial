@@ -102,13 +102,15 @@ export default function ForexDetail() {
   // Progressive: light bundle first paint → analysis in background
   useEffect(() => {
     const initialTf = defaultTimeframe(symbol);
-    setTf(initialTf);
+    queueMicrotask(() => {
+      setTf(initialTf);
+      setBundleLoading(true);
+      setBundleError(null);
+      setBars([]);
+      setBundle(null);
+    });
     initialDone.current = false;
     let cancelled = false;
-    setBundleLoading(true);
-    setBundleError(null);
-    setBars([]);
-    setBundle(null);
 
     void api<any>(
       `/forex/${symbol}/bundle?timeframe=${initialTf}&limit=${BAR_LIMIT}&light=1`,

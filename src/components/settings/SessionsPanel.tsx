@@ -34,7 +34,7 @@ export function SessionsPanel() {
   }, []);
 
   useEffect(() => {
-    void load();
+    queueMicrotask(() => void load());
   }, [load]);
 
   const revoke = async (id: string) => {
