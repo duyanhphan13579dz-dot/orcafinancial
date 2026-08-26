@@ -114,7 +114,7 @@ export default function ForexDetail() {
 
     void api<any>(
       `/forex/${symbol}/bundle?timeframe=${initialTf}&limit=${BAR_LIMIT}&light=1`,
-      { timeoutMs: 4_200 },
+      { timeoutMs: 3_900 },
     )
       .then((env) => {
         if (cancelled) return;
@@ -151,7 +151,7 @@ export default function ForexDetail() {
       try {
         const o = await api<{ bars: Bar[] }>(
           `/forex/${symbol}/ohlcv?timeframe=${next}&limit=${BAR_LIMIT}`,
-          { timeoutMs: 4_200 },
+          { timeoutMs: 3_900 },
         );
         const nextBars = o.data.bars ?? [];
         setBars(nextBars);
