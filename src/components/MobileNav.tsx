@@ -114,6 +114,7 @@ export function MobileHeader() {
                   <Link
                     key={n.href}
                     href={n.href}
+                    prefetch={n.href === "/"}
                     onClick={() => setOpen(false)}
                     className={`flex items-center gap-3 px-4 py-3.5 rounded-lg mb-1 min-h-[48px] active:scale-[0.98] transition-all ${
                       active
@@ -158,6 +159,7 @@ export function MobileBottomNav() {
             <Link
               key={n.href}
               href={n.href}
+              prefetch={n.href === "/"}
               className={`flex flex-col items-center justify-center flex-1 min-w-0 py-2 px-0.5 min-h-[48px] active:scale-95 transition-transform ${
                 active ? "text-[#00d4ff]" : "text-slate-400"
               }`}
