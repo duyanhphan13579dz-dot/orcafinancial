@@ -1,6 +1,6 @@
-import type { StatementType } from "@/lib/stock-intelligence/canonical";
+import type { PeriodKind, StatementType } from "@/lib/stock-intelligence/canonical";
 import type { FinancialQuarter } from "@/lib/financial-statements";
-import { actualProvenance, estimateProvenance, parseFinancialPeriod, type CanonicalStatement, type DataProvenance } from "@/lib/stock-intelligence/canonical";
+import { actualProvenance, estimateProvenance, targetProvenance, parseFinancialPeriod, type CanonicalStatement, type DataProvenance } from "@/lib/stock-intelligence/canonical";
 
 export type FinancialSourceKind = "fmp" | "vietstock" | "filing" | "synthetic";
 
@@ -11,6 +11,9 @@ export interface RawFinancialRecord {
   data: Record<string, unknown>;
   source: string;
   retrievedAt?: string;
+  filingDate?: string;
+  unit?: string;
+  kind?: PeriodKind;
 }
 
 export interface FinancialSourceResult {
@@ -20,6 +23,7 @@ export interface FinancialSourceResult {
   actual: boolean;
   confidence: number;
   warnings: string[];
+  quality: { actualCount: number; estimateCount: number; targetCount: number; latestPeriod: string | null; sourceTier: "filing" | "professional" | "fallback" };
 }
 
 export interface FinancialSourceAdapter {
@@ -39,7 +43,9 @@ function asNumber(value: unknown): number | null {
 }
 
 function mapFmpPeriod(row: Record<string, unknown>): string | null {
+  const rawPeriod = typeof row.period === "string" ? row.period.trim().toUpperCase() : null;
   const date = typeof row.date === "string" ? row.date : typeof row.filingDate === "string" ? row.filingDate : null;
+  if (rawPeriod && /^(Q[1-4]|H1|9M|FY)\/?\d{4}$/i.test(rawPeriod)) return rawPeriod;
   if (!date) return null;
   const match = /^(\d{4})-(\d{2})-/.exec(date);
   if (!match) return null;
@@ -72,7 +78,7 @@ export class FmpFinancialAdapter implements FinancialSourceAdapter {
       const period = mapFmpPeriod(row);
       if (!period) return [];
       const data = Object.fromEntries(Object.entries(row).filter(([key]) => !["date", "filingDate", "acceptedDate", "calendarYear", "period", "symbol", "reportedCurrency"].includes(key)));
-      return [{ period, fiscalYear: asNumber(row.calendarYear) ?? undefined, reportedCurrency: typeof row.reportedCurrency === "string" ? row.reportedCurrency : undefined, data, source: "fmp", retrievedAt: new Date().toISOString() }];
+      return [{ period, fiscalYear: asNumber(row.calendarYear) ?? undefined, reportedCurrency: typeof row.reportedCurrency === "string" ? row.reportedCurrency : undefined, data, source: "fmp", retrievedAt: new Date().toISOString(), filingDate: typeof row.filingDate === "string" ? row.filingDate : undefined, unit: "reported" }];
     });
   }
 }
@@ -114,11 +120,16 @@ export async function loadCanonicalStatements(symbol: string, type: StatementTyp
   const statements = records.flatMap((record): CanonicalStatement[] => {
     const period = parseFinancialPeriod(record.period);
     if (!period) return [];
-    const provenance: DataProvenance = actual
-      ? actualProvenance(record.source, period.label, 0.85, record.retrievedAt, { currency: record.reportedCurrency, unit: "reported" })
-      : estimateProvenance(record.source, period.label, 0.45, { currency: record.reportedCurrency, unit: "modeled" });
-    if (!actual) provenance.status = "degraded";
+    const kind = record.kind ?? (actual ? "actual" : "estimate");
+    const provenance: DataProvenance = kind === "actual"
+      ? actualProvenance(record.source, period.label, actual ? 0.85 : 0.45, record.retrievedAt, { currency: record.reportedCurrency, unit: record.unit ?? "reported" })
+      : kind === "target"
+        ? targetProvenance(record.source, period.label, 0.4, { currency: record.reportedCurrency, unit: record.unit ?? "target" })
+        : estimateProvenance(record.source, period.label, 0.45, { currency: record.reportedCurrency, unit: record.unit ?? "modeled" });
+    if (!actual || kind !== "actual") provenance.status = "degraded";
     return [{ symbol, type, period, data: record.data, provenance }];
   });
-  return { symbol, statements, source, actual, confidence: actual ? 0.85 : 0.45, warnings };
+  const sourceTier: FinancialSourceResult["quality"]["sourceTier"] = actual ? (source === "filing" ? "filing" : "professional") : "fallback";
+  const quality = { actualCount: statements.filter((statement) => statement.provenance.kind === "actual").length, estimateCount: statements.filter((statement) => statement.provenance.kind === "estimate").length, targetCount: statements.filter((statement) => statement.provenance.kind === "target").length, latestPeriod: statements.map((statement) => statement.period.periodEnd).sort().at(-1) ?? null, sourceTier };
+  return { symbol, statements, source, actual, confidence: actual ? 0.85 : 0.45, warnings, quality };
 }

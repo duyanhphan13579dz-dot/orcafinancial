@@ -1,6 +1,6 @@
 import type { FinancialQuarter } from "@/lib/financial-statements";
 
-export type ValidationCode = "missing_value" | "duplicate_period" | "wrong_period" | "impossible_value" | "balance_mismatch" | "provider_conflict";
+export type ValidationCode = "missing_value" | "duplicate_period" | "wrong_period" | "impossible_value" | "balance_mismatch" | "provider_conflict" | "kind_conflict" | "future_actual";
 
 export interface ValidationIssue {
   code: ValidationCode;
@@ -18,9 +18,17 @@ export interface ValidationResult {
 export function validateFinancialQuarters(quarters: FinancialQuarter[]): ValidationResult {
   const issues: ValidationIssue[] = [];
   const seen = new Set<string>();
+  const periodKinds = new Map<string, Set<string>>();
   for (const quarter of quarters) {
     if (seen.has(quarter.period)) issues.push({ code: "duplicate_period", field: "period", message: `Trùng kỳ báo cáo ${quarter.period}.`, severity: "error" });
     seen.add(quarter.period);
+    const basePeriod = quarter.period.replace(/[AET]$/, "");
+    const kind = quarter.period.endsWith("E") ? "estimate" : quarter.period.endsWith("T") ? "target" : "actual";
+    const kinds = periodKinds.get(basePeriod) ?? new Set<string>();
+    kinds.add(kind);
+    periodKinds.set(basePeriod, kinds);
+    const year = Number(/(\d{4})/.exec(quarter.period)?.[1] ?? 0);
+    if (kind === "actual" && year > new Date().getFullYear()) issues.push({ code: "future_actual", field: "period", message: `Kỳ actual ${quarter.period} nằm trong tương lai.`, severity: "error" });
     const numericGroups = [
       ["income", quarter.income],
       ["balance", quarter.balance],
@@ -35,6 +43,9 @@ export function validateFinancialQuarters(quarters: FinancialQuarter[]): Validat
     const balanceGap = Math.abs(quarter.balance.totalAssets - quarter.balance.totalLiabilitiesEquity);
     const tolerance = Math.max(1, quarter.balance.totalAssets * 0.005);
     if (balanceGap > tolerance) issues.push({ code: "balance_mismatch", field: "balance", message: `Bảng cân đối lệch ${balanceGap.toFixed(2)} (ngưỡng ${tolerance.toFixed(2)}).`, severity: "warning" });
+  }
+  for (const [period, kinds] of periodKinds) {
+    if (kinds.size > 1) issues.push({ code: "kind_conflict", field: period, message: `Một kỳ có nhiều loại dữ liệu: ${[...kinds].join(", ")}.`, severity: "warning" });
   }
   return { valid: !issues.some((issue) => issue.severity === "error"), issues, checkedAt: new Date().toISOString() };
 }

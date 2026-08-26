@@ -212,14 +212,12 @@ export function usePoll<T>(
   );
 
   useEffect(() => {
-    if (!path || !enabled) {
-      // Reset loading when a consumer disables polling or clears its path.
-      setLoading(false);
-      return;
-    }
+    if (!path || !enabled) return;
 
     const hit = readCache(path, hardTtl);
     if (hit) {
+      // Cache hydration is an intentional synchronization from the external cache store.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setData(hit.data as T);
       setMeta(hit.meta);
       setLoading(false);
@@ -229,6 +227,7 @@ export function usePoll<T>(
         void load({ background: true });
       }
     } else {
+      // Reset state before loading a new external resource.
       setData(null);
       setMeta(null);
       setLoading(true);
@@ -249,7 +248,7 @@ export function usePoll<T>(
     data,
     meta,
     error,
-    loading,
+    loading: Boolean(path && enabled && loading),
     isValidating,
     refresh: () => load({ background: !!data }),
   };

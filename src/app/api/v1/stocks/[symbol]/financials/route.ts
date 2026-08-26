@@ -1,8 +1,10 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { buildFinancialPeriodSet } from "@/lib/stock-intelligence/canonical";
-import { getStatements } from "@/lib/company-service";
+import { validatePeriods } from "@/lib/stock-intelligence/validation";
+import { ensureQuarterlyFinancials, getStatements } from "@/lib/company-service";
 import type { StatementType } from "@/lib/financial-statements";
+import { loadCanonicalStatements, SyntheticFinancialAdapter } from "@/lib/stock-intelligence/financial-source";
 
 export const dynamic = "force-dynamic";
 
@@ -22,16 +24,23 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
     : "income";
 
   try {
-    const result = await getStatements(symbol, type, period, limit);
+    const [result, quarters] = await Promise.all([getStatements(symbol, type, period, limit), ensureQuarterlyFinancials(symbol, period === "yearly" ? Math.min(limit * 4, 4) : limit)]);
+    const canonical = await loadCanonicalStatements(symbol, type, limit, new SyntheticFinancialAdapter(quarters));
+    const periodLabels = canonical.statements.map((statement) => statement.period.label);
+    const latestKind = canonical.statements[0]?.provenance.kind ?? "estimate";
+    const validation = validatePeriods(periodLabels);
     return ok(
-      result,
+      { ...result, canonicalStatements: canonical.statements, canonicalQuality: canonical.quality, sourceResult: { source: canonical.source, actual: canonical.actual, confidence: canonical.confidence, warnings: canonical.warnings } },
       {
-        source: "sector-synthetic-v1 (calibrated to real price/volume + VN sector benchmarks)",
-        kind: "estimate",
-        confidence: 0.45,
-        financialPeriod: result.periods.length > 0 ? buildFinancialPeriodSet(result.periods.map((quarter) => quarter.period)) : null,
-        disclaimer:
-          "Báo cáo tài chính được mô hình hóa từ dữ liệu giá/khối lượng thực và benchmark ngành Việt Nam. Thay thế cho dữ liệu kiểm toán khi connector báo cáo chính thức chưa có.",
+        source: canonical.source,
+        kind: latestKind,
+        confidence: canonical.confidence,
+        financialPeriod: periodLabels.length > 0 ? buildFinancialPeriodSet(periodLabels) : null,
+        actualCount: canonical.quality.actualCount,
+        estimateCount: canonical.quality.estimateCount,
+        targetCount: canonical.quality.targetCount,
+        validation,
+        disclosure: canonical.actual ? "Statements được lấy từ financial provider và gắn provenance actual; cần kiểm tra currency/unit theo filing." : "Chưa có provider financial actual khả dụng; các periods legacy và canonical fallback được gắn estimate/degraded, không phải audited actual.",
       },
       { cacheSeconds: 300 },
     );
