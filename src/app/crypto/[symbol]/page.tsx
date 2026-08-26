@@ -339,7 +339,8 @@ export default function CryptoDetail() {
       onStatus: (status) => setWsStatus(status),
     });
     chartConnectionRef.current = connection;
-    void connection.loadHistory(120)
+    // Keep enough closed history for EMA200 and long-window momentum.
+    void connection.loadHistory(300)
       .then((history) => {
         if (!active) return;
         const nextBars = history.bars as Bar[];
@@ -439,6 +440,9 @@ export default function CryptoDetail() {
   }, [analysis, leverage, price?.price]);
 
   const sourceLabel = price?.source ?? chartSource ?? "Binance";
+  const scoreDiff = typeof analysis?.indicators?.scoreDiff === "number"
+    ? analysis.indicators.scoreDiff
+    : null;
 
   const live =
     wsStatus === "connected" || wsStatus === "live"
@@ -571,6 +575,9 @@ export default function CryptoDetail() {
               <div className="mt-1 text-3xl font-black">{analysis?.recommendation ?? "—"}</div>
               <div className="mt-0.5 text-sm opacity-80">
                 {analysis ? `${Math.round(analysis.confidence * 100)}% confidence` : "—"}
+              </div>
+              <div className="mt-1 text-[10px] opacity-60">
+                {scoreDiff != null ? `Score Δ ${scoreDiff.toFixed(2)} · ` : ""}Local từ nến Binance WS đã đóng
               </div>
             </div>
             <div className="rounded-lg bg-black/20 px-2.5 py-1 text-right">
