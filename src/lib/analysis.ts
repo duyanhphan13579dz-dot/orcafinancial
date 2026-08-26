@@ -192,7 +192,8 @@ export function analyze(symbol: string, bars: Ohlcv[]): AnalysisResult {
     volatilityPct: volatility,
     maxDrawdownPct: maxDd * 100,
     recommendation,
-    score: Number(normalized.toFixed(3)),
+    // Recommendation uses normalized [-1, 1]; public score is always 0..100.
+    score: Math.round(Math.max(0, Math.min(100, (normalized + 1) * 50))),
     confidence: Number(confidence.toFixed(2)),
     reasons,
     multiTimeframe: { short: regime(20), medium: regime(60), long: regime(120) },
