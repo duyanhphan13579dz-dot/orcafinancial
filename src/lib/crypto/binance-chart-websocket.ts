@@ -30,6 +30,7 @@ export type BinanceChartStatus =
   | "live"
   | "reconnecting"
   | "error"
+  | "stale"
   | "disconnected";
 
 export interface BinanceChartHistory {
@@ -68,8 +69,10 @@ interface StreamMessage {
 
 const STREAM_BASE = "wss://stream.binance.com:9443/stream?streams=";
 const WS_API_URL = "wss://ws-api.binance.com:443/ws-api/v3";
-const HISTORY_TIMEOUT_MS = 5_000;
+const HISTORY_TIMEOUT_MS = 7_000;
 const MAX_RECONNECT_DELAY_MS = 8_000;
+const STREAM_STALE_MS = 15_000;
+const STREAM_WATCHDOG_INTERVAL_MS = 5_000;
 const MAX_HISTORY_LIMIT = 1_000;
 const ALLOWED_TIMEFRAMES = new Set([
   "1s", "1m", "3m", "5m", "15m", "30m",
@@ -142,6 +145,10 @@ export function createBinanceChartWebSocket(options: BinanceChartWebSocketOption
   let apiReady = false;
   let reconnectAttempt = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let streamWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+  let lastStreamMessageAt = 0;
+  let apiReconnectAttempt = 0;
+  let apiReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let historyRequestId = 0;
 
   const status = (value: BinanceChartStatus, error: string | null = null) => {
@@ -170,11 +177,14 @@ export function createBinanceChartWebSocket(options: BinanceChartWebSocketOption
     }
     streamSocket.onopen = () => {
       reconnectAttempt = 0;
+      lastStreamMessageAt = Date.now();
       status("connected");
     };
     streamSocket.onmessage = (event) => {
-      const message = unwrap(JSON.parse(String(event.data)));
-      if (!message) return;
+      try {
+        lastStreamMessageAt = Date.now();
+        const message = unwrap(JSON.parse(String(event.data)));
+        if (!message) return;
       if (message.e === "24hrTicker") {
         const price = positiveNumber(message.c);
         if (price == null) return;
@@ -187,10 +197,13 @@ export function createBinanceChartWebSocket(options: BinanceChartWebSocketOption
         });
         return;
       }
-      const bar = parseStreamBar(message);
-      if (bar) {
-        options.onKline(bar);
-        status("live");
+        const bar = parseStreamBar(message);
+        if (bar) {
+          options.onKline(bar);
+          status("live");
+        }
+      } catch (error) {
+        status("error", error instanceof Error ? error.message : "Invalid Binance market stream payload");
       }
     };
     streamSocket.onerror = () => status("error", "Binance market stream error");
@@ -218,8 +231,18 @@ export function createBinanceChartWebSocket(options: BinanceChartWebSocketOption
     }
   };
 
+  const scheduleApiReconnect = () => {
+    if (destroyed || apiReconnectTimer || !historyQueue.length) return;
+    apiReconnectAttempt += 1;
+    const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * 2 ** Math.min(apiReconnectAttempt - 1, 4));
+    apiReconnectTimer = setTimeout(() => {
+      apiReconnectTimer = null;
+      connectApi();
+    }, delay);
+  };
+
   const connectApi = () => {
-    if (destroyed) return;
+    if (destroyed || apiSocket) return;
     try {
       apiSocket = new WebSocket(WS_API_URL);
     } catch (error) {
@@ -227,6 +250,7 @@ export function createBinanceChartWebSocket(options: BinanceChartWebSocketOption
       return;
     }
     apiSocket.onopen = () => {
+      apiReconnectAttempt = 0;
       apiReady = true;
       flushHistoryQueue();
     };
@@ -254,7 +278,10 @@ export function createBinanceChartWebSocket(options: BinanceChartWebSocketOption
     apiSocket.onclose = () => {
       apiReady = false;
       apiSocket = null;
-      if (!destroyed) status("reconnecting", "history socket disconnected; stream remains available");
+      if (!destroyed) {
+        status("reconnecting", "history socket disconnected; stream remains available");
+        scheduleApiReconnect();
+      }
     };
   };
 
@@ -282,7 +309,11 @@ export function createBinanceChartWebSocket(options: BinanceChartWebSocketOption
   const disconnect = () => {
     destroyed = true;
     if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (apiReconnectTimer) clearTimeout(apiReconnectTimer);
+    if (streamWatchdogTimer) clearInterval(streamWatchdogTimer);
     reconnectTimer = null;
+    apiReconnectTimer = null;
+    streamWatchdogTimer = null;
     rejectPending("Binance chart connection closed");
     historyQueue.length = 0;
     for (const socket of [streamSocket, apiSocket]) {
@@ -298,6 +329,14 @@ export function createBinanceChartWebSocket(options: BinanceChartWebSocketOption
     status("disconnected");
     options.onStatus?.("disconnected");
   };
+
+  streamWatchdogTimer = setInterval(() => {
+    if (destroyed || !streamSocket || streamSocket.readyState !== WebSocket.OPEN) return;
+    if (lastStreamMessageAt > 0 && Date.now() - lastStreamMessageAt > STREAM_STALE_MS) {
+      status("stale", "Binance market stream is stale; reconnecting");
+      try { streamSocket.close(); } catch { /* ignore */ }
+    }
+  }, STREAM_WATCHDOG_INTERVAL_MS);
 
   connectStream();
   connectApi();

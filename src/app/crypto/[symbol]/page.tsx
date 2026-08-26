@@ -445,7 +445,9 @@ export default function CryptoDetail() {
       ? { text: "LIVE", cls: "bg-emerald-400 live-dot" }
       : wsStatus === "reconnecting" || wsStatus === "loading-history"
         ? { text: wsStatus === "loading-history" ? "SYNC" : "RECONNECT", cls: "bg-amber-400" }
-        : { text: "FALLBACK", cls: "bg-slate-500" };
+        : wsStatus === "stale"
+          ? { text: "STALE", cls: "bg-rose-400" }
+          : { text: "FALLBACK", cls: "bg-slate-500" };
 
   const recCls =
     analysis?.recommendation === "LONG"
