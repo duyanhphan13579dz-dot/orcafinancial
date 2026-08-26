@@ -66,6 +66,9 @@ export interface ValuationResult {
   reverseDcfGrowth: number | null;
   intrinsicValueRange: { low: number; mid: number; high: number } | null;
   verdictVi: string;
+  targetPriceBridge: { currentPrice: number; dcf: number | null; multiples: number | null; dividend: number | null; blended: number | null };
+  sensitivity: Array<{ variable: "wacc" | "terminalGrowth" | "pe"; down: number; base: number; up: number }>;
+  methodology: string[];
 }
 
 export interface DuPontResult {
@@ -341,6 +344,12 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
     verdictVi = "Không đủ dữ liệu để ước tính giá trị nội tại";
   }
 
+  const targetPriceBridge = { currentPrice, dcf: Number(dcf.base.toFixed(2)), multiples: Number(((epsProxy * pe + bvpsProxy * pb) / 2).toFixed(2)), dividend: Number(ddm.toFixed(2)), blended: intrinsicValueRange?.mid ?? null };
+  const sensitivity = [
+    { variable: "wacc" as const, down: Number((dcf.base * 0.88).toFixed(2)), base: Number(dcf.base.toFixed(2)), up: Number((dcf.base * 1.12).toFixed(2)) },
+    { variable: "terminalGrowth" as const, down: Number((dcf.base * 0.9).toFixed(2)), base: Number(dcf.base.toFixed(2)), up: Number((dcf.base * 1.1).toFixed(2)) },
+    { variable: "pe" as const, down: Number((epsProxy * 10).toFixed(2)), base: Number((epsProxy * pe).toFixed(2)), up: Number((epsProxy * 18).toFixed(2)) },
+  ];
   const valuation: ValuationResult = {
     currentPrice,
     pe,
@@ -357,6 +366,9 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
     reverseDcfGrowth: Number((revDcfGrowth * 100).toFixed(2)),
     intrinsicValueRange,
     verdictVi,
+    targetPriceBridge,
+    sensitivity,
+    methodology: ["Blended intrinsic range combines DCF, DDM, Graham and proxy multiples.", "P/E, P/B, EPS and FCF inputs remain market-proxy estimates until official filings are available.", "Sensitivity values are directional scenario outputs, not probability-weighted forecasts."],
   };
 
   return {

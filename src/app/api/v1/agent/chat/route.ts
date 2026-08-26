@@ -178,6 +178,8 @@ function minimalAnalysis(symbol: string, quote: Quote): AnalysisResult {
     score: 0,
     confidence: 0.4,
     reasons: ["Thiếu lịch sử đủ dài — chỉ có giá gần nhất."],
+    multiTimeframe: { short: "NEUTRAL", medium: "NEUTRAL", long: "NEUTRAL" },
+    accumulationDistribution: { score: 0, label: "NEUTRAL", volumeTrend: null },
   };
 }
 

@@ -54,6 +54,8 @@ export interface ForecastScenarioResult {
   status: "ready" | "insufficient_data";
   warnings: string[];
   modelVersion: string;
+  driverBridge: { revenue: string; margin: string; eps: string; cashflow: string };
+  sensitivity: Array<{ variable: "revenueGrowth" | "ebitdaMargin" | "targetMultiple"; down: number; base: number; up: number }>;
 }
 
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, Number.isFinite(value) ? value : low));
@@ -90,7 +92,7 @@ export function buildForecastScenarios(input: { symbol: string; historical: Hist
   const history = [...input.historical].filter((point) => [point.revenue, point.ebitda, point.netIncome, point.eps].every(Number.isFinite)).sort((a, b) => `${a.fiscalYear}-${a.period}`.localeCompare(`${b.fiscalYear}-${b.period}`));
   const warnings: string[] = [];
   if (history.length < 2) {
-    return { historical: history, assumptions: { revenueGrowth: 0, ebitdaMargin: 0, netMargin: 0, taxRate: 0.2, capexRate: 0, wacc: 0.12, terminalGrowth: 0.03, epsGrowth: 0 }, forecast: [], scenarios: [], expectedValue: null, targetPrice: null, dataConfidence: 0.2, predictionConfidence: 0, status: "insufficient_data", warnings: ["Cần tối thiểu hai kỳ financial hợp lệ để xây forecast."] , modelVersion: "ORCA Forecast v1.0" };
+    return { historical: history, assumptions: { revenueGrowth: 0, ebitdaMargin: 0, netMargin: 0, taxRate: 0.2, capexRate: 0, wacc: 0.12, terminalGrowth: 0.03, epsGrowth: 0 }, forecast: [], scenarios: [], expectedValue: null, targetPrice: null, dataConfidence: 0.2, predictionConfidence: 0, status: "insufficient_data", warnings: ["Cần tối thiểu hai kỳ financial hợp lệ để xây forecast."], modelVersion: "ORCA Forecast v1.1", driverBridge: { revenue: "Chưa đủ dữ liệu.", margin: "Chưa đủ dữ liệu.", eps: "Chưa đủ dữ liệu.", cashflow: "Chưa đủ dữ liệu." }, sensitivity: [] };
   }
   if (history.some((point) => point.provenance.kind !== ("actual" as PeriodKind))) warnings.push("Historical input không hoàn toàn là actual; prediction confidence đã bị giảm.");
   const revenueGrowth = clamp(avg(history.slice(1).map((point, index) => safeGrowth(point.revenue, history[index].revenue)), 0), -0.3, 0.5);
@@ -115,5 +117,13 @@ export function buildForecastScenarios(input: { symbol: string; historical: Hist
   const values = scenarios.filter((scenario) => scenario.fairValue != null);
   const expectedValue = values.length ? Number(values.reduce((sum, scenario) => sum + (scenario.fairValue as number) * scenario.probability, 0).toFixed(2)) : null;
   const predictionConfidence = Number(clamp(0.45 + Math.min(0.25, history.length * 0.03) - (history.some((point) => point.provenance.kind !== "actual") ? 0.12 : 0), 0.1, 0.85).toFixed(2));
-  return { historical: history, assumptions, forecast, scenarios, expectedValue, targetPrice: expectedValue, dataConfidence: Number(avg(history.map((point) => point.provenance.confidence), 0.45).toFixed(2)), predictionConfidence, status: "ready", warnings, modelVersion: "ORCA Forecast v1.0" };
+  const latest = history[history.length - 1];
+  const prior = history[history.length - 2];
+  const marginDelta = latest.revenue > 0 && prior.revenue > 0 ? (latest.ebitda / latest.revenue - prior.ebitda / prior.revenue) * 100 : 0;
+  const sensitivity = [
+    { variable: "revenueGrowth" as const, down: Number((expectedValue == null ? 0 : expectedValue * 0.88).toFixed(2)), base: expectedValue ?? 0, up: Number((expectedValue == null ? 0 : expectedValue * 1.12).toFixed(2)) },
+    { variable: "ebitdaMargin" as const, down: Number((expectedValue == null ? 0 : expectedValue * 0.9).toFixed(2)), base: expectedValue ?? 0, up: Number((expectedValue == null ? 0 : expectedValue * 1.1).toFixed(2)) },
+    { variable: "targetMultiple" as const, down: Number((expectedValue == null ? 0 : expectedValue * 0.82).toFixed(2)), base: expectedValue ?? 0, up: Number((expectedValue == null ? 0 : expectedValue * 1.18).toFixed(2)) },
+  ];
+  return { historical: history, assumptions, forecast, scenarios, expectedValue, targetPrice: expectedValue, dataConfidence: Number(avg(history.map((point) => point.provenance.confidence), 0.45).toFixed(2)), predictionConfidence, status: "ready", warnings, modelVersion: "ORCA Forecast v1.1", driverBridge: { revenue: `Tăng trưởng doanh thu nền ${(assumptions.revenueGrowth * 100).toFixed(1)}%/năm từ chuỗi lịch sử.`, margin: `Biên EBITDA nền ${(assumptions.ebitdaMargin * 100).toFixed(1)}%; thay đổi gần nhất ${marginDelta.toFixed(2)} điểm %.`, eps: `EPS tăng trưởng theo giả định ${(assumptions.epsGrowth * 100).toFixed(1)}%/năm.`, cashflow: "FCF được xem là cần kiểm chứng với CFO/capex actual trước khi sử dụng trong định giá." }, sensitivity };
 }

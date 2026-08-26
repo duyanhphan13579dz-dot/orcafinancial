@@ -79,6 +79,8 @@ export interface AnalysisResult {
   score: number;
   confidence: number;
   reasons: string[];
+  multiTimeframe: { short: "BULLISH" | "NEUTRAL" | "BEARISH"; medium: "BULLISH" | "NEUTRAL" | "BEARISH"; long: "BULLISH" | "NEUTRAL" | "BEARISH" };
+  accumulationDistribution: { score: number; label: "ACCUMULATION" | "DISTRIBUTION" | "NEUTRAL"; volumeTrend: number | null };
 }
 
 export function analyze(symbol: string, bars: Ohlcv[]): AnalysisResult {
@@ -164,6 +166,16 @@ export function analyze(symbol: string, bars: Ohlcv[]): AnalysisResult {
   else if (normalized < -0.2) recommendation = "Sell";
 
   const confidence = Math.min(0.95, 0.5 + Math.abs(normalized) * 0.4 + Math.min(signals, 5) * 0.02);
+  const regime = (windowSize: number): "BULLISH" | "NEUTRAL" | "BEARISH" => {
+    if (closes.length < windowSize) return "NEUTRAL";
+    const window = closes.slice(-windowSize);
+    const start = window[0];
+    const change = start > 0 ? (window[window.length - 1] / start - 1) * 100 : 0;
+    return change > 5 ? "BULLISH" : change < -5 ? "BEARISH" : "NEUTRAL";
+  };
+  const moneyFlow = bars.slice(-20).reduce((sum, bar) => sum + (bar.high > bar.low ? ((bar.close - bar.low) - (bar.high - bar.close)) / (bar.high - bar.low) * bar.volume : 0), 0);
+  const volumeTrend = bars.length >= 40 ? (bars.slice(-20).reduce((sum, bar) => sum + bar.volume, 0) / 20) / Math.max(1, bars.slice(-40, -20).reduce((sum, bar) => sum + bar.volume, 0) / 20) - 1 : null;
+  const adScore = Math.max(-100, Math.min(100, volumeTrend == null ? 0 : moneyFlow / Math.max(1, bars.slice(-20).reduce((sum, bar) => sum + bar.volume, 0)) * 100));
 
   return {
     symbol,
@@ -183,5 +195,7 @@ export function analyze(symbol: string, bars: Ohlcv[]): AnalysisResult {
     score: Number(normalized.toFixed(3)),
     confidence: Number(confidence.toFixed(2)),
     reasons,
+    multiTimeframe: { short: regime(20), medium: regime(60), long: regime(120) },
+    accumulationDistribution: { score: Number(adScore.toFixed(2)), label: adScore > 15 ? "ACCUMULATION" : adScore < -15 ? "DISTRIBUTION" : "NEUTRAL", volumeTrend: volumeTrend == null ? null : Number(volumeTrend.toFixed(3)) },
   };
 }
