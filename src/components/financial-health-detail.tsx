@@ -7,7 +7,7 @@ interface Indicator {
   label: string;
   value: number | null;
   unit: string;
-  score: number;
+  score: number | null;
   verdict: string;
 }
 interface Group {
@@ -36,14 +36,15 @@ const GROUP_TINT: Record<string, string> = {
   cashflow: "from-sky-500/15",
 };
 
-function scoreColor(score: number): string {
+function scoreColor(score: number | null): string {
+  if (score == null) return "#64748b";
   if (score >= 70) return "#34d399";
   if (score >= 45) return "#fbbf24";
   return "#fb7185";
 }
 
 export function HealthRadar({ groups }: { groups: Group[] }) {
-  const data = groups.map((g) => ({ group: g.label, score: g.score, fullMark: 100 }));
+  const data = groups.map((g) => ({ group: g.label, score: g.score ?? 0, fullMark: 100 }));
   return (
     <div className="h-[260px]">
       <ResponsiveContainer width="100%" height="100%">
@@ -80,11 +81,11 @@ export function HealthDetailCard({ detail }: { detail: HealthDetail }) {
                 <div className="flex justify-between text-[11px] mb-1">
                   <span className="text-slate-300 font-display">{g.label}</span>
                   <span className="font-mono tabular-nums text-slate-400">
-                    {g.score}/100 <span className="text-slate-600">× {(g.weight * 100).toFixed(0)}%</span> = <span style={{ color: scoreColor(g.score) }}>{g.weighted.toFixed(1)}</span>
+                    {g.score == null ? "Chưa đủ dữ liệu" : `${g.score}/100`} <span className="text-slate-600">× {(g.weight * 100).toFixed(0)}%</span> = <span style={{ color: scoreColor(g.score) }}>{g.weighted.toFixed(1)}</span>
                   </span>
                 </div>
                 <div className="bar-track">
-                  <div className="bar-fill" style={{ width: `${g.score}%`, background: scoreColor(g.score) }} />
+                  <div className="bar-fill" style={{ width: `${g.score ?? 0}%`, background: scoreColor(g.score) }} />
                 </div>
               </div>
             ))}
@@ -97,21 +98,21 @@ export function HealthDetailCard({ detail }: { detail: HealthDetail }) {
           <div key={g.key} className={`panel p-4 bg-gradient-to-br ${GROUP_TINT[g.key] ?? "from-transparent"} to-transparent relative overflow-hidden`}>
             <div className="flex items-center justify-between mb-2">
               <div className="font-display text-base font-bold text-white">{g.label}</div>
-              <div className="font-display text-2xl font-extrabold" style={{ color: scoreColor(g.score) }}>{g.score}</div>
+              <div className="font-display text-2xl font-extrabold" style={{ color: scoreColor(g.score) }}>{g.score == null ? "—" : g.score}</div>
             </div>
             <p className="text-[12px] text-slate-300 leading-relaxed mb-3 italic">{g.narrative}</p>
             <div className="space-y-1.5">
               {g.indicators.map((ind) => (
-                <div key={ind.key} className="flex items-center gap-3 text-[11px]">
+                <div key={ind.key} className="health-indicator-row text-[11px]">
                   <div className="w-32 text-slate-400 truncate" title={ind.label}>{ind.label}</div>
                   <div className="flex-1 bar-track">
-                    <div className="bar-fill" style={{ width: `${ind.score}%`, background: scoreColor(ind.score) }} />
+                    <div className="bar-fill" style={{ width: `${ind.score ?? 0}%`, background: scoreColor(ind.score) }} />
                   </div>
                   <div className="w-20 text-right font-mono tabular-nums text-slate-200">
                     {ind.value === null ? "—" : ind.value.toLocaleString("vi-VN", { maximumFractionDigits: 2 })}
                     <span className="text-slate-500 ml-0.5">{ind.unit}</span>
                   </div>
-                  <div className="w-14 text-right font-mono text-[10px]" style={{ color: scoreColor(ind.score) }}>{ind.score}</div>
+                  <div className="w-14 text-right font-mono text-[10px]" style={{ color: scoreColor(ind.score) }}>{ind.score == null ? "—" : ind.score}</div>
                 </div>
               ))}
             </div>

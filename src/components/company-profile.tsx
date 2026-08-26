@@ -93,7 +93,7 @@ export function CompanyProfile({ symbol }: { symbol: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="panel p-4">
+      <div className="panel p-4 stock-tab-panel">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
           <div>
             <h2 className="text-lg font-bold">{profile.name}</h2>
@@ -112,28 +112,28 @@ export function CompanyProfile({ symbol }: { symbol: string }) {
 
         <p className="text-sm text-slate-300 leading-relaxed mb-4">{profile.description}</p>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-          <div className="bg-slate-800/40 rounded p-2">
+        <div className="stock-kpi-grid text-xs">
+          <div className="stock-kpi">
             <div className="text-[10px] text-slate-500">Vốn hóa</div>
             <div className="font-bold text-sm">{profile.marketCapBillionVnd.toLocaleString("vi-VN")} tỷ VND</div>
           </div>
-          <div className="bg-slate-800/40 rounded p-2">
+          <div className="stock-kpi">
             <div className="text-[10px] text-slate-500">Số CP lưu hành</div>
             <div className="font-bold text-sm">{(profile.sharesOutstandingMillions).toLocaleString("vi-VN")} triệu</div>
           </div>
-          <div className="bg-slate-800/40 rounded p-2">
+          <div className="stock-kpi">
             <div className="text-[10px] text-slate-500">Nhân sự</div>
             <div className="font-bold text-sm">{profile.employees.toLocaleString("vi-VN")} người</div>
           </div>
-          <div className="bg-slate-800/40 rounded p-2">
+          <div className="stock-kpi">
             <div className="text-[10px] text-slate-500">Beta</div>
             <div className="font-bold text-sm">{fmtNum(profile.beta)}</div>
           </div>
-          <div className="bg-slate-800/40 rounded p-2 col-span-2">
+          <div className="stock-kpi col-span-2">
             <div className="text-[10px] text-slate-500">Ngày niêm yết</div>
             <div className="font-bold text-sm">{profile.listingDate}</div>
           </div>
-          <div className="bg-slate-800/40 rounded p-2 col-span-2">
+          <div className="stock-kpi col-span-2">
             <div className="text-[10px] text-slate-500">Website</div>
             <div className="font-bold text-sm text-cyan-400">{profile.website}</div>
           </div>

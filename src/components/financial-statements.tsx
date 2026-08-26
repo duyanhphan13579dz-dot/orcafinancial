@@ -105,13 +105,15 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="panel p-4">
-        <div className="flex flex-wrap gap-2 mb-4 items-center">
+      <div className="panel p-4 stock-tab-panel">
+        <div className="stock-section-heading flex-wrap items-center">
           {(["income", "balance", "cashflow"] as StatementType[]).map((t) => (
             <button
               key={t}
               onClick={() => setType(t)}
-              className={`rounded px-3 py-1.5 text-xs ${type === t ? "bg-cyan-500/20 text-cyan-300 border border-cyan-700" : "bg-slate-800 text-slate-400 border border-slate-700 hover:text-slate-200"}`}
+              type="button"
+              aria-pressed={type === t}
+              className={`rounded-lg px-3 py-2 text-xs font-medium transition-colors ${type === t ? "bg-cyan-500/15 text-cyan-200 border border-cyan-600/70" : "bg-slate-900/50 text-slate-400 border border-slate-700 hover:text-slate-200 hover:border-slate-600"}`}
             >
               {TYPE_LABELS[t]}
             </button>
@@ -119,13 +121,17 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
           <div className="ml-auto flex gap-1">
             <button
               onClick={() => setPeriod("quarterly")}
-              className={`rounded px-2 py-1 text-[11px] ${period === "quarterly" ? "text-cyan-300" : "text-slate-500"}`}
+              type="button"
+              aria-pressed={period === "quarterly"}
+              className={`rounded-md px-3 py-1.5 text-[11px] ${period === "quarterly" ? "bg-cyan-500/10 text-cyan-300" : "text-slate-500 hover:text-slate-300"}`}
             >
               Quý
             </button>
             <button
               onClick={() => setPeriod("yearly")}
-              className={`rounded px-2 py-1 text-[11px] ${period === "yearly" ? "text-cyan-300" : "text-slate-500"}`}
+              type="button"
+              aria-pressed={period === "yearly"}
+              className={`rounded-md px-3 py-1.5 text-[11px] ${period === "yearly" ? "bg-cyan-500/10 text-cyan-300" : "text-slate-500 hover:text-slate-300"}`}
             >
               Năm
             </button>
@@ -136,7 +142,7 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
         {loading && <div className="text-sm text-slate-500 mb-3">Đang tải báo cáo…</div>}
 
         {data && (
-          <div className="overflow-x-auto">
+          <div className="stock-table-wrap">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-800 text-left">
@@ -185,7 +191,7 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
           </div>
         )}
 
-        <div className="mt-3 text-[10px] text-slate-600 leading-relaxed">
+        <div className="mt-4 rounded-lg border border-slate-800/80 bg-slate-950/20 px-3 py-2 text-[10px] text-slate-500 leading-relaxed">
           Đơn vị: tỷ VND (trừ EPS và BVPS tính bằng nghìn VND/cp). Số liệu được mô hình hóa từ dữ liệu giá/khối lượng thực và benchmark ngành Việt Nam (sẽ được thay thế bằng báo cáo kiểm toán khi connector tài chính hoạt động). Dữ liệu đảm bảo nhất quán giữa 3 báo cáo.
         </div>
       </div>
