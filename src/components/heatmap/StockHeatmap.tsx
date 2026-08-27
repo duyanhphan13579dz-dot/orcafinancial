@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { api, fmtNum, fmtPct, fmtVol, usePoll } from "@/lib/client";
 
-type Shape = "rectangle" | "polygon";
+type Shape = "rectangle";
 type Metric = "tradingValue" | "volume";
 type HeatColor = "ceiling" | "up" | "unchanged" | "down" | "floor" | "no-data";
 
@@ -141,62 +141,7 @@ function MiniChart({ bars }: { bars: HistoryBar[] }) {
   return <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-20 w-full"><polyline fill="none" stroke={positive ? "#10b981" : "#f43f5e"} strokeWidth="2.5" points={points} vectorEffect="non-scaling-stroke" /></svg>;
 }
 
-function polygonPoints(rect: Rect, index: number) {
-  const x = rect.x * 10;
-  const y = rect.y * 6.4;
-  const w = rect.w * 10;
-  const h = rect.h * 6.4;
-  const gap = Math.min(1.8, Math.max(0.7, Math.min(w, h) * 0.025));
-  const corner = Math.min(10, Math.max(2.2, Math.min(w, h) * 0.14));
-  const jitter = (index % 5 - 2) * Math.min(1.4, Math.min(w, h) * 0.025);
-  return [
-    `${x + corner},${y + gap}`,
-    `${x + w * 0.58 + jitter},${y + gap * 0.7}`,
-    `${x + w - corner},${y + gap + jitter}`,
-    `${x + w - gap},${y + h * 0.48}`,
-    `${x + w - corner * 0.45},${y + h - gap}`,
-    `${x + w * 0.42 - jitter},${y + h - gap * 0.7}`,
-    `${x + corner},${y + h - gap}`,
-    `${x + gap},${y + h * 0.52 + jitter}`,
-  ].join(" ");
-}
 
-function PolygonHeatmap({
-  items,
-  metric,
-  marketStatus,
-  compact,
-  onSelect,
-}: {
-  items: Item[];
-  metric: Metric;
-  marketStatus: string;
-  compact: boolean;
-  onSelect: (item: Item) => void;
-}) {
-  const rects = useMemo(() => treemap(items, metric, 0, 0, 100, 100), [items, metric]);
-  return (
-    <div className="panel overflow-hidden p-1 sm:p-2">
-      <svg viewBox="0 0 1000 640" preserveAspectRatio="none" className="h-[min(70vh,650px)] min-h-[360px] w-full rounded-xl bg-[#0b2135]" role="img" aria-label="Heatmap đa giác cổ phiếu">
-        <defs>
-          <filter id="polygon-shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#020617" floodOpacity="0.45" /></filter>
-        </defs>
-        {rects.map((rect, index) => {
-          const showChange = rect.w > 7 && rect.h > 8;
-          const big = rect.w > 15 && rect.h > 16;
-          return (
-            <g key={rect.item.symbol} role="button" tabIndex={0} aria-label={`${rect.item.symbol} ${fmtPct(rect.item.changePercent)}`} onClick={() => onSelect(rect.item)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(rect.item); }} className="cursor-pointer transition-opacity hover:opacity-85">
-              <polygon points={polygonPoints(rect, index)} fill={colorFor(rect.item)} stroke="#cbdde7" strokeOpacity="0.78" strokeWidth="1.05" vectorEffect="non-scaling-stroke" />
-              {big && <text x={(rect.x + rect.w / 2) * 10} y={(rect.y + rect.h / 2) * 6.4 - (showChange ? 5 : 0)} textAnchor="middle" dominantBaseline="middle" fill={textColor(rect.item)} fontSize={Math.min(26, Math.max(10, Math.min(rect.w, rect.h) * 0.55))} fontWeight="800">{rect.item.symbol}</text>}
-              {big && showChange && <text x={(rect.x + rect.w / 2) * 10} y={(rect.y + rect.h / 2) * 6.4 + 13} textAnchor="middle" dominantBaseline="middle" fill={textColor(rect.item)} fontSize={Math.min(18, Math.max(8, Math.min(rect.w, rect.h) * 0.36))} fontWeight="700">{marketStatus === "PRE_MARKET" ? "—" : fmtPct(rect.item.changePercent)}</text>}
-              {!big && rect.w > 3.2 && rect.h > 4 && <text x={(rect.x + rect.w / 2) * 10} y={(rect.y + rect.h / 2) * 6.4} textAnchor="middle" dominantBaseline="middle" fill={textColor(rect.item)} fontSize={Math.max(6, Math.min(13, Math.min(rect.w, rect.h) * 0.45))} fontWeight="800">{rect.item.symbol}</text>}
-            </g>
-          );
-        })}
-      </svg>
-    </div>
-  );
-}
 
 function StockTooltip({ item, close }: { item: Item; close: () => void }) {
   const [timeframe, setTimeframe] = useState("1M");
@@ -263,7 +208,7 @@ const selectClass =
 
 export function StockHeatmap({ compact = false }: { compact?: boolean }) {
   const { data, meta, error, loading, isValidating, refresh } = usePoll<Item[]>("/market/heatmap", 12_000);
-  const [shape, setShape] = useState<Shape>("rectangle");
+  const shape: Shape = "rectangle";
   const [metric, setMetric] = useState<Metric>("tradingValue");
   const [exchange, setExchange] = useState("all");
   const [sector, setSector] = useState("all");
@@ -285,28 +230,6 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
       .catch(() => undefined), 350);
     return () => { active = false; window.clearTimeout(timer); };
   }, [compact, marketStatus]);
-
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem("orca_heatmap_shape");
-      if (stored === "polygon" || stored === "rectangle") {
-        // Hydration-safe preference restore; localStorage is unavailable during SSR.
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setShape(stored === "polygon" ? "polygon" : "rectangle");
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const setView = (value: Shape) => {
-    setShape(value);
-    try {
-      localStorage.setItem("orca_heatmap_shape", value);
-    } catch {
-      /* ignore */
-    }
-  };
 
   const allItems = useMemo(() => data ?? [], [data]);
   const exchanges = useMemo(
@@ -425,10 +348,6 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
             <option value="tradingValue">GT giao dịch</option>
             <option value="volume">Khối lượng</option>
           </select>
-          <div className="flex h-10 rounded-lg border border-slate-700 bg-slate-900 p-0.5">
-            <button type="button" onClick={() => setView("rectangle")} className={`rounded-md px-2.5 text-xs touch-min ${shape === "rectangle" ? "bg-[#00d4ff]/15 text-[#00d4ff]" : "text-slate-400 hover:text-slate-200"}`}>▭ Ô</button>
-            <button type="button" onClick={() => setView("polygon")} className={`rounded-md px-2.5 text-xs touch-min ${shape === "polygon" ? "bg-[#00d4ff]/15 text-[#00d4ff]" : "text-slate-400 hover:text-slate-200"}`}>⬡ Đa giác</button>
-          </div>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -447,8 +366,7 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
         </div>
       )}
 
-      {shape === "rectangle" ? (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
           {visibleGroups.map((group, index) => {
             const rects = treemap(group.items, metric);
             const large = index < 2 && !compact;
@@ -506,16 +424,7 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
               </article>
             );
           })}
-        </div>
-      ) : (
-        <PolygonHeatmap
-          items={filtered}
-          metric={metric}
-          marketStatus={marketStatus}
-          compact={compact}
-          onSelect={setSelected}
-        />
-      )}
+      </div>
 
       {!compact && (
         <section className="grid gap-3 lg:grid-cols-[1.15fr_.85fr]">
