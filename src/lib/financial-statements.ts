@@ -99,6 +99,17 @@ function jitter(rand: () => number, base: number, pct = 0.08): number {
   return base * (1 - pct + rand() * pct * 2);
 }
 
+export function getLatestCompletedQuarter(asOf = new Date()): { fiscalYear: number; quarter: 1 | 2 | 3 | 4 } {
+  const month = asOf.getMonth();
+  let quarter = Math.floor(month / 3);
+  let fiscalYear = asOf.getFullYear();
+  if (quarter === 0) {
+    quarter = 4;
+    fiscalYear -= 1;
+  }
+  return { fiscalYear, quarter: quarter as 1 | 2 | 3 | 4 };
+}
+
 /**
  * Build a full sequence of quarterly financials.
  * Uses real price/volume data to anchor scale and revenue trend.
@@ -131,9 +142,11 @@ export function generateQuarterlyFinancials(
 
   const quarters: FinancialQuarter[] = [];
   const now = new Date();
-  const currentMonth = now.getMonth();
-  const currentQuarter = Math.floor(currentMonth / 3) + 1;
-  const currentYear = now.getFullYear();
+  // A quarterly report must not be created for the in-progress quarter.
+  // The latest reportable period is the last completed calendar quarter.
+  const latestCompleted = getLatestCompletedQuarter(now);
+  const currentQuarter = latestCompleted.quarter;
+  const currentYear = latestCompleted.fiscalYear;
 
   // Running state for balance sheet continuity across quarters
   let retainedEarningsStart = assetsEst * 0.1 * (0.8 + rand() * 0.4);

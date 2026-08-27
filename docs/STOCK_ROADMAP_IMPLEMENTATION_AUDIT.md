@@ -71,3 +71,10 @@ The final sample PDF generated after this revision is a valid eight-page A4 docu
 The Basic module formula audit identified and corrected a material architecture issue: it had a legacy price-return proxy scorer separate from the statement-based health engine. `generateFundamentalReport` now uses the canonical quarterly financial sequence and `evaluateHealthDetail` for its six health groups.
 
 The audit also corrected missing-data behavior, removed the duplicate OCF/net-income contribution in the cash-flow group, added ROIC and working-capital intensity, and implemented the standard DuPont identity. The documented group weights remain 10% liquidity, 20% leverage, 15% efficiency, 25% profitability, 15% growth and 15% cash flow, totaling 100%. Automated tests cover weight reconstruction, DuPont arithmetic and available-indicator scoring.
+
+
+## Reporting-period integrity correction — 27 August 2026
+
+A period-integrity review found that the synthetic quarterly generator used the in-progress calendar quarter as if it were already reportable. On 27/08/2026 this incorrectly produced Q3/2026, although Vinamilk's official investor-relations calendar lists 30/07/2026 for Q2/2026 and 30/10/2026 for Q3/2026.
+
+The correction anchors fallback quarterly statements to the last completed quarter, filters future-dated actual records in the canonical source loader, and filters persisted future rows in `ensureQuarterlyFinancials`. Q3/2026 may only appear as an explicitly labeled estimate/forecast after a forecast path is requested; it cannot appear as actual reported data before its reporting period is valid. Source verification is recorded in `docs/vnm_reporting_period_source_check_2026-08-27.md`.

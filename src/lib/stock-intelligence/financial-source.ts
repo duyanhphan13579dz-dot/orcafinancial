@@ -121,6 +121,10 @@ export async function loadCanonicalStatements(symbol: string, type: StatementTyp
     const period = parseFinancialPeriod(record.period);
     if (!period) return [];
     const kind = record.kind ?? (actual ? "actual" : "estimate");
+    if (kind === "actual" && period.periodEnd > new Date().toISOString().slice(0, 10)) {
+      warnings.push(`Bỏ qua kỳ actual tương lai ${period.label}; chưa đến ngày kết thúc kỳ báo cáo.`);
+      return [];
+    }
     const provenance: DataProvenance = kind === "actual"
       ? actualProvenance(record.source, period.label, actual ? 0.85 : 0.45, record.retrievedAt, { currency: record.reportedCurrency, unit: record.unit ?? "reported" })
       : kind === "target"

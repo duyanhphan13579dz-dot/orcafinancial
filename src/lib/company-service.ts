@@ -19,6 +19,7 @@ import {
 import { formatPeriodFromComposite } from "@/lib/format";
 import {
   generateQuarterlyFinancials,
+  getLatestCompletedQuarter,
   getStatementFields,
   type FinancialQuarter,
   type StatementType,
@@ -41,6 +42,12 @@ export async function ensureQuarterlyFinancials(symbol: string, numQuarters = 4)
     // A missing/unavailable DB must not prevent degraded, clearly disclosed reports.
     logger.warn("financial_statements_db_unavailable_using_market_fallback", { symbol, error: String(err) });
   }
+
+  const latestCompleted = getLatestCompletedQuarter();
+  existing = existing.filter((row) => {
+    const quarter = Number.parseInt(row.period.replace(/^Q/i, ""), 10);
+    return row.fiscalYear < latestCompleted.fiscalYear || (row.fiscalYear === latestCompleted.fiscalYear && quarter <= latestCompleted.quarter);
+  });
 
   const byKey = new Map<string, { type: StatementType; period: string; fiscalYear: number; data: any }>();
   for (const row of existing) {

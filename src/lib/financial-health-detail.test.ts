@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { evaluateHealthDetail } from "./financial-health-detail";
 import { calculateDuPont } from "./fundamental";
 import { buildFundamentalChart } from "./fundamental-chart";
+import { getLatestCompletedQuarter } from "./financial-statements";
 import type { FinancialQuarter } from "./financial-statements";
 
 function quarter(): FinancialQuarter {
@@ -83,6 +84,12 @@ describe("financial health scoring invariants", () => {
     const cashflow = health.groups.find((group) => group.key === "cashflow");
     expect(cashflow?.indicators.find((indicator) => indicator.key === "cfoToNi")?.score).not.toBeNull();
     expect(cashflow?.indicators.find((indicator) => indicator.key === "workingCapitalIntensity")?.score).not.toBeNull();
+  });
+
+  it("does not create an in-progress reporting quarter", () => {
+    expect(getLatestCompletedQuarter(new Date(2026, 7, 27))).toEqual({ fiscalYear: 2026, quarter: 2 });
+    expect(getLatestCompletedQuarter(new Date(2026, 9, 30))).toEqual({ fiscalYear: 2026, quarter: 3 });
+    expect(getLatestCompletedQuarter(new Date(2026, 0, 15))).toEqual({ fiscalYear: 2025, quarter: 4 });
   });
 
   it("uses the newest-first quarter for Basic comparison cards", () => {
