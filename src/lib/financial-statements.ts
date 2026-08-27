@@ -175,7 +175,16 @@ export function generateQuarterlyFinancials(
       ? (quarterBars[quarterBars.length - 1].close - quarterBars[0].close) / quarterBars[0].close
       : 0;
     const growthQ = 0.03 + qReturn * 0.3; // price change correlates partially with revenue
-    const revenue = quarterlyRevenueBase * (1 + growthQ) * (1 - i * 0.015); // slight fade for older quarters
+    // Preserve period-specific seasonality. A flat annualRevenue / 4 base makes
+    // synthetic quarterly bars visually converge after integer rounding.
+    const seasonalFactorByQuarter: Record<1 | 2 | 3 | 4, number> = {
+      1: 0.94,
+      2: 1.01,
+      3: 1.07,
+      4: 0.98,
+    };
+    const seasonalFactor = seasonalFactorByQuarter[q as 1 | 2 | 3 | 4];
+    const revenue = quarterlyRevenueBase * seasonalFactor * (1 + growthQ) * (1 - i * 0.015); // slight fade for older quarters
     const revenueJ = jitter(qRand, revenue, 0.04);
 
     // ──── INCOME STATEMENT ────

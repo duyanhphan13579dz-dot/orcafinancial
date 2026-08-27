@@ -100,4 +100,25 @@ describe("financial health scoring invariants", () => {
     expect(roe?.company).toBe(chart.quarters[0]?.roePct);
     expect(roe?.company).not.toBe(chart.quarters[1]?.roePct);
   });
+
+  it("maps each Basic chart series from the matching quarter statement", () => {
+    const newest = quarter();
+    const older = {
+      ...quarter(),
+      period: "Q3/2025",
+      quarter: 3,
+      income: {
+        ...quarter().income,
+        revenue: 820,
+        ebitda: 155,
+        netIncome: 91,
+      },
+    };
+    const chart = buildFundamentalChart("VNM", [newest, older]);
+
+    expect(chart.quarters.map((row) => row.revenue)).toEqual([1000, 820]);
+    expect(chart.quarters.map((row) => row.ebitda)).toEqual([240, 155]);
+    expect(chart.quarters.map((row) => row.netIncome)).toEqual([144, 91]);
+    expect(new Set(chart.quarters.map((row) => row.shortTag)).size).toBe(2);
+  });
 });
