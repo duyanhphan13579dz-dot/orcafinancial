@@ -77,7 +77,7 @@ function WatchlistPanel({ items, onSelect, onRemove }: { items: Array<{ symbol: 
 }
 
 function StockQuickView({ symbol, snapshot, onClose, isWatched, onWatch }: { symbol: string; snapshot: MarketSnapshot; onClose: () => void; isWatched: boolean; onWatch: (symbol: string) => void }) {
-  const quote = snapshot.quotes.find((q) => q.symbol === symbol);
+  const quote = [...snapshot.quotes, ...snapshot.sectorQuotes].find((q) => q.symbol === symbol);
   if (!quote) return null;
   return <div className="fixed inset-x-3 bottom-20 z-50 max-w-sm rounded-xl border border-cyan-400/40 bg-[#081d35] p-4 shadow-[0_20px_60px_rgba(0,0,0,.5)] md:inset-auto md:right-6 md:top-24 md:bottom-auto"><div className="flex items-start justify-between"><div><div className="font-mono text-[10px] text-cyan-400">STOCK QUICK VIEW</div><h3 className="mt-1 text-xl font-bold text-white">{quote.symbol}</h3></div><button onClick={onClose} className="text-slate-400 hover:text-white" aria-label="Đóng">×</button></div><div className="mt-4 flex items-end justify-between"><div><div className="font-mono text-2xl font-bold text-white">{fmtNum(quote.close)}</div><div className={`font-mono text-sm font-semibold ${tone(quote.changePct)}`}>{fmtPct(quote.changePct)}</div></div><MiniSparkline quote={quote} /></div><div className="mt-4 grid grid-cols-2 gap-2 text-xs"><div className="rounded bg-[#0e2e4f] p-2"><div className="text-slate-500">Volume</div><div className="mt-1 font-mono text-white">{fmtVol(quote.volume)}</div></div><div className="rounded bg-[#0e2e4f] p-2"><div className="text-slate-500">Confidence</div><div className="mt-1 font-mono text-white">{Math.round(quote.confidence * 100)}%</div></div></div><div className="mt-3 flex gap-2"><button onClick={() => onWatch(quote.symbol)} className="btn-orca-ghost flex-1">{isWatched ? "★ Đang theo dõi" : "☆ Theo dõi mã"}</button><Link href={`/stocks/${quote.symbol}`} className="btn-orca flex-1 text-center text-sm">Mở phân tích</Link></div></div>;
 }
@@ -102,9 +102,9 @@ export function DashboardHome() {
       <Pulse snapshot={snapshot} />
       <section className="grid gap-3 md:grid-cols-2"><BreadthMeter title="Market breadth" breadth={snapshot.marketBreadth} /><BreadthMeter title="Large-cap / tracked breadth" breadth={snapshot.largeCapBreadth} /></section>
       <section>
-        <SectionHeader eyebrow="SECTOR BOARD" title="Market Board theo ngành" action={<Link href="/sector-board" className="text-xs text-cyan-400 hover:underline">Mở toàn bộ board →</Link>} />
-        <div className="grid gap-3 overflow-x-auto sm:grid-cols-2 xl:grid-cols-4">
-          {snapshot.sectors.slice(0, 4).map((sector) => <SectorBoard key={sector.id} sector={sector} onSelect={setSelected} />)}
+        <SectionHeader eyebrow="SECTOR BOARD" title="Market Board theo ngành" action={<div className="flex items-center gap-3 text-xs"><span className="hidden text-slate-500 sm:inline">{snapshot.sectors.length} nhóm · tối thiểu 6 mã/nhóm</span><Link href="/sector-board" className="text-cyan-400 hover:underline">Mở toàn bộ board →</Link></div>} />
+        <div className="grid gap-3 overflow-x-auto sm:grid-cols-2 xl:grid-cols-3">
+          {snapshot.sectors.slice(0, 6).map((sector) => <SectorBoard key={sector.id} sector={sector} onSelect={setSelected} />)}
         </div>
       </section>
       <OvernightMarkets snapshot={snapshot.overnight} />

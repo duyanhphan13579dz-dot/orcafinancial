@@ -129,6 +129,8 @@ export interface MarketSnapshot {
   topGainers: MarketQuote[];
   topLosers: MarketQuote[];
   topVolume: MarketQuote[];
+  /** Expanded quote universe used by the sector board; kept separate from the compact dashboard heatmap. */
+  sectorQuotes: MarketQuote[];
   quotes: MarketQuote[];
   crypto: CryptoSnapshot[];
   overnight: OvernightMarketSnapshot;
@@ -138,11 +140,16 @@ export interface MarketSnapshot {
 }
 
 export const SECTOR_DEFINITIONS = [
-  { id: "banking", label: "Ngân hàng", shortLabel: "BANK", symbols: ["VCB", "TCB", "BID", "CTG", "MBB", "STB", "HDB"] },
-  { id: "securities", label: "Chứng khoán", shortLabel: "SEC", symbols: ["SSI", "VND"] },
-  { id: "real-estate", label: "Bất động sản", shortLabel: "REAL ESTATE", symbols: ["VIC", "VHM", "VRE"] },
-  { id: "steel", label: "Thép", shortLabel: "STEEL", symbols: ["HPG", "HSG", "NKG"] },
-  { id: "construction", label: "Xây dựng", shortLabel: "BUILD", symbols: ["GVR", "POW"] },
-  { id: "retail", label: "Bán lẻ", shortLabel: "RETAIL", symbols: ["MWG", "MSN"] },
-  { id: "technology", label: "Công nghệ", shortLabel: "TECH", symbols: ["FPT"] },
+  { id: "banking", label: "Ngân hàng", shortLabel: "BANK", symbols: ["VCB", "TCB", "BID", "CTG", "MBB", "STB", "HDB", "ACB", "VPB", "SHB", "EIB", "LPB"] },
+  { id: "securities", label: "Chứng khoán", shortLabel: "SEC", symbols: ["SSI", "VND", "VCI", "HCM", "MBS", "FTS", "BSI", "CTS", "ORS", "VDS"] },
+  { id: "real-estate", label: "Bất động sản", shortLabel: "REAL ESTATE", symbols: ["VIC", "VHM", "VRE", "DXG", "DIG", "NVL", "KDH", "NLG", "PDR", "CEO"] },
+  { id: "steel", label: "Thép & vật liệu", shortLabel: "STEEL", symbols: ["HPG", "HSG", "NKG", "TLH", "SMC", "VGS", "POM", "VIS"] },
+  { id: "construction", label: "Xây dựng & hạ tầng", shortLabel: "BUILD", symbols: ["CTD", "HBC", "CII", "HHV", "FCN", "PC1", "LCG", "C4G"] },
+  { id: "retail", label: "Bán lẻ", shortLabel: "RETAIL", symbols: ["MWG", "FRT", "DGW", "PET", "PNJ", "VGC", "VEA", "HTM"] },
+  { id: "technology", label: "Công nghệ & viễn thông", shortLabel: "TECH", symbols: ["FPT", "CMG", "ELC", "CTR", "ITD", "VGI", "FOX", "SIP"] },
+  { id: "energy", label: "Năng lượng & tiện ích", shortLabel: "ENERGY", symbols: ["GAS", "POW", "PLX", "PVD", "PVS", "NT2", "REE", "BSR"] },
+  { id: "chemicals", label: "Hóa chất & cao su", shortLabel: "CHEM", symbols: ["GVR", "DGC", "DPM", "DCM", "CSV", "BMP", "DRC", "AAA"] },
+  { id: "logistics", label: "Cảng & logistics", shortLabel: "LOGISTICS", symbols: ["GMD", "VSC", "HAH", "SCS", "VTP", "HVN", "ACV", "VJC"] },
+  { id: "food-beverage", label: "Thực phẩm & đồ uống", shortLabel: "F&B", symbols: ["VNM", "MSN", "SAB", "QNS", "PAN", "DBC", "SBT", "KDC"] },
+  { id: "insurance", label: "Bảo hiểm", shortLabel: "INSURANCE", symbols: ["BVH", "MIG", "PVI", "BMI", "BIC", "VNR", "ABI", "PTI"] },
 ] as const;

@@ -15,7 +15,7 @@ function QuickQuote({ quote }: { quote: MarketQuote }) {
 export function SectorBoardModule() {
   const { data: snapshot, error, loading } = usePoll<MarketSnapshot>("/market/overview", 30_000, { softTtlMs: 15_000, timeoutMs: 7_000 });
   const [selected, setSelected] = useState<string | null>(null);
-  const selectedQuote = selected && snapshot?.quotes.find((quote) => quote.symbol === selected);
+  const selectedQuote = selected && snapshot && [...snapshot.quotes, ...snapshot.sectorQuotes].find((quote) => quote.symbol === selected);
 
   return (
     <div className="space-y-5">
@@ -25,6 +25,7 @@ export function SectorBoardModule() {
             <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-400">SECTOR INTELLIGENCE</div>
             <h1 className="mt-1 font-display text-2xl font-extrabold text-white">Market Board theo ngành</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-400">Bảng theo dõi độc lập cho sức mạnh ngành, mã dẫn dắt, thanh khoản và biến động trong phiên Việt Nam.</p>
+            {snapshot && <div className="mt-2 font-mono text-[10px] text-cyan-300">{snapshot.sectors.length} nhóm ngành · tối thiểu 6 mã mỗi nhóm</div>}
           </div>
           <Link href="/" className="btn-orca-ghost text-xs">← Về tổng quan</Link>
         </div>

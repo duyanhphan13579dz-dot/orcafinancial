@@ -18,7 +18,7 @@ export function SectorBoard({ sector, onSelect }: SectorBoardProps) {
         <div>
           <div className="font-display text-sm font-bold text-white">{sector.label}</div>
           <div className="font-mono text-[10px] text-slate-500">
-            {sector.advancing} ↑ · {sector.unchanged} = · {sector.declining} ↓
+            {sector.stocks.length >= 6 ? "6 mã hiển thị" : `${sector.stocks.length}/6 mã có dữ liệu`} · {sector.advancing} ↑ · {sector.unchanged} = · {sector.declining} ↓
           </div>
         </div>
         <div className={`font-mono text-sm font-bold ${tone(sector.averageChangePct)}`}>

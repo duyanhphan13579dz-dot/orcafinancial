@@ -30,6 +30,12 @@ export const FEATURED_SYMBOLS = [
   "SSI", "VND", "MSN", "GAS", "VRE", "MBB", "STB", "HDB", "POW", "GVR",
 ];
 
+/**
+ * Expanded sector universe. It is fetched separately from the compact dashboard
+ * universe so the richer board does not make the first overview render heavier.
+ */
+export const SECTOR_SYMBOLS = [...new Set(SECTOR_DEFINITIONS.flatMap((sector) => sector.symbols))];
+
 export const INDICES = [
   { code: "VNINDEX", name: "VN-Index", exchange: "HOSE" },
   { code: "HNX", name: "HNX-Index", exchange: "HNX" },
@@ -45,6 +51,7 @@ const QUOTE_TTL_MS = Number(process.env.MARKET_QUOTE_TTL_MS) || 20_000;
 const HIST_D_TTL_MS = Number(process.env.MARKET_HIST_D_TTL_MS) || 120_000;
 const HIST_INTRA_TTL_MS = Number(process.env.MARKET_HIST_INTRA_TTL_MS) || 30_000;
 const OVERVIEW_AUX_TIMEOUT_MS = Number(process.env.MARKET_OVERVIEW_AUX_TIMEOUT_MS) || 450;
+const SECTOR_QUOTE_TIMEOUT_MS = Number(process.env.MARKET_SECTOR_QUOTE_TIMEOUT_MS) || 1_800;
 const OVERVIEW_TOTAL_TIMEOUT_MS = Number(process.env.MARKET_OVERVIEW_TOTAL_TIMEOUT_MS) || 2_500;
 const OVERNIGHT_TTL_MS = Number(process.env.OVERNIGHT_MARKET_TTL_MS) || 45_000;
 const OVERNIGHT_TIMEOUT_MS = Number(process.env.OVERNIGHT_MARKET_TIMEOUT_MS) || 1_200;
@@ -440,18 +447,25 @@ function emptyOverview(): MarketSnapshot {
     indices: [], breadth, marketBreadth: breadth, largeCapBreadth: breadth, sectors: [],
     pulse: { trend: "flat", trendScore: 0, breadth: "flat", breadthScore: 0, liquidity: "flat", liquidityScore: 0, foreignFlow: "unknown", risk: "medium", regime: "NEUTRAL", regimeLabel: "DATA SYNCING", summary: "Đang đồng bộ dữ liệu thị trường." },
     liquidity: { totalVolume: 0, averageVolume: 0, status: "flat" }, foreignFlow: { status: "unknown", value: null },
-    topGainers: [], topLosers: [], topVolume: [], quotes: [], crypto: [], overnight: emptyOvernightSnapshot(), news: [],
-    quality: { generatedAt, ageSeconds: 0, partial: true, missingSymbols: [...INDICES.map((i) => i.code), ...FEATURED_SYMBOLS], stale: true, sources: [], confidence: 0 }, generatedAt,
+    topGainers: [], topLosers: [], topVolume: [], sectorQuotes: [], quotes: [], crypto: [], overnight: emptyOvernightSnapshot(), news: [],
+    quality: { generatedAt, ageSeconds: 0, partial: true, missingSymbols: [...INDICES.map((i) => i.code), ...FEATURED_SYMBOLS, ...SECTOR_SYMBOLS], stale: true, sources: [], confidence: 0 }, generatedAt,
   };
 }
 
 export async function getMarketOverview(): Promise<MarketSnapshot> {
-  const refresh = cachedWithStaleFallback<MarketSnapshot>("market:overview:v3", OVERVIEW_TTL_MS, async () => {
+  const refresh = cachedWithStaleFallback<MarketSnapshot>("market:overview:v4", OVERVIEW_TTL_MS, async () => {
     const started = Date.now();
     const indexCodes = INDICES.map((i) => i.code);
-    const requestedSymbols = [...new Set([...indexCodes, ...FEATURED_SYMBOLS])];
-    const [allQuotes, cryptoResult] = await Promise.all([
-      getQuotes(requestedSymbols, { persist: false, allowStale: true, fast: true, concurrency: 8 }),
+    const coreSymbols = [...new Set([...indexCodes, ...FEATURED_SYMBOLS])];
+    const requestedSymbols = [...new Set([...coreSymbols, ...SECTOR_SYMBOLS])];
+    const [coreQuotes, sectorOnlyQuotes, cryptoResult] = await Promise.all([
+      getQuotes(coreSymbols, { persist: false, allowStale: true, fast: true, concurrency: 8 }),
+      withDeadline(
+        getQuotes(SECTOR_SYMBOLS, { persist: false, allowStale: true, fast: true, concurrency: 12 }),
+        SECTOR_QUOTE_TIMEOUT_MS,
+        [],
+        "sector-quotes",
+      ),
       withDeadline(cryptoPricesWithFallback().catch((err) => {
         logger.warn("crypto_failed", { error: String(err) });
         return [] as CryptoQuote[];
@@ -460,9 +474,10 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
         return [] as CryptoQuote[];
       }),
     ]);
-    const quoteBySymbol = new Map(allQuotes.map((quote) => [quote.symbol, quote]));
+    const quoteBySymbol = new Map([...coreQuotes, ...sectorOnlyQuotes].map((quote) => [quote.symbol, quote]));
     const indexQuotes = indexCodes.map((symbol) => quoteBySymbol.get(symbol)).filter((quote): quote is Quote => Boolean(quote));
     const quotes = FEATURED_SYMBOLS.map((symbol) => quoteBySymbol.get(symbol)).filter((quote): quote is Quote => Boolean(quote));
+    const sectorQuotes = SECTOR_SYMBOLS.map((symbol) => quoteBySymbol.get(symbol)).filter((quote): quote is Quote => Boolean(quote));
     const indexByCode = new Map(indexQuotes.map((q) => [q.symbol, q]));
     const indices = INDICES.map((idx) => {
       const q = indexByCode.get(idx.code);
@@ -476,7 +491,7 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
     ]);
     const marketBreadth = buildBreadth(marketUniverse.length > quotes.length ? marketUniverse : quotes, marketUniverse.length > quotes.length ? "market" : "featured");
     const largeCapBreadth = buildBreadth(quotes, "featured");
-    const sectors = buildSectors(quotes);
+    const sectors = buildSectors(sectorQuotes);
     const sorted = [...quotes].sort((a, b) => (b.changePct ?? 0) - (a.changePct ?? 0));
     const topVolume = [...quotes].sort((a, b) => b.volume - a.volume).slice(0, 5);
     const totalVolume = quotes.reduce((sum, q) => sum + q.volume, 0);
@@ -490,9 +505,10 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
       imageUrl: item.imageUrl,
     }));
     const generatedAt = new Date().toISOString();
-    const sources = [...new Set([...indices, ...quotes].map((q) => q.source.replace(/-snapshot$/, "")))];
-    const missingSymbols = [...indexCodes, ...FEATURED_SYMBOLS].filter((symbol) => !new Set([...indexQuotes, ...quotes].map((q) => q.symbol)).has(symbol));
-    void logJob("market_overview", "ok", `indices=${indices.length} quotes=${quotes.length} sectors=${sectors.length} overnight=${overnight.items.filter((item) => item.value != null).length}`, Date.now() - started);
+    const sources = [...new Set([...indices, ...quotes, ...sectorQuotes].map((q) => q.source.replace(/-snapshot$/, "")))];
+    const availableSymbols = new Set([...indexQuotes, ...quotes, ...sectorQuotes].map((q) => q.symbol));
+    const missingSymbols = requestedSymbols.filter((symbol) => !availableSymbols.has(symbol));
+    void logJob("market_overview", "ok", `indices=${indices.length} quotes=${quotes.length} sectorQuotes=${sectorQuotes.length} sectors=${sectors.length} overnight=${overnight.items.filter((item) => item.value != null).length}`, Date.now() - started);
     return {
       indices,
       breadth,
@@ -505,14 +521,15 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
       topGainers: sorted.slice(0, 5),
       topLosers: sorted.slice(-5).reverse(),
       topVolume,
+      sectorQuotes,
       quotes,
       crypto: cryptoResult,
       overnight,
       news: newsItems,
-      quality: { generatedAt, ageSeconds: 0, partial: missingSymbols.length > 0, missingSymbols, stale: [...indexQuotes, ...quotes].some((q) => q.source.includes("-stale-snapshot")), sources, confidence: quotes.length > 0 ? Math.min(...quotes.map((q) => q.confidence)) : 0 },
+      quality: { generatedAt, ageSeconds: 0, partial: missingSymbols.length > 0, missingSymbols, stale: [...indexQuotes, ...quotes, ...sectorQuotes].some((q) => q.source.includes("-stale-snapshot")), sources, confidence: [...quotes, ...sectorQuotes].length > 0 ? Math.min(...[...quotes, ...sectorQuotes].map((q) => q.confidence)) : 0 },
       generatedAt,
     };
-  }, { shouldCache: (snapshot) => snapshot.quotes.length > 0 || snapshot.indices.length > 0, fallback: emptyOverview() });
+  }, { shouldCache: (snapshot) => snapshot.quotes.length > 0 || snapshot.sectorQuotes.length > 0 || snapshot.indices.length > 0, fallback: emptyOverview() });
   const result = await withDeadline(refresh, OVERVIEW_TOTAL_TIMEOUT_MS, { value: emptyOverview(), stale: true }, "overview-total");
   const generatedAtMs = Date.parse(result.value.generatedAt);
   const ageSeconds = Number.isFinite(generatedAtMs) ? Math.max(0, Math.floor((Date.now() - generatedAtMs) / 1000)) : 0;
