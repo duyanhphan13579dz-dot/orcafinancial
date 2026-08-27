@@ -2,7 +2,7 @@ import type { PeriodKind, StatementType } from "@/lib/stock-intelligence/canonic
 import type { FinancialQuarter } from "@/lib/financial-statements";
 import { actualProvenance, estimateProvenance, targetProvenance, parseFinancialPeriod, type CanonicalStatement, type DataProvenance } from "@/lib/stock-intelligence/canonical";
 
-export type FinancialSourceKind = "fmp" | "vietstock" | "filing" | "synthetic";
+export type FinancialSourceKind = "fmp" | "vietstock" | "cafef" | "filing" | "synthetic";
 
 export interface RawFinancialRecord {
   period: string;
@@ -145,4 +145,16 @@ export async function loadCanonicalStatements(symbol: string, type: StatementTyp
   const sourceTier: FinancialSourceResult["quality"]["sourceTier"] = actual ? (source === "filing" ? "filing" : "professional") : "fallback";
   const quality = { actualCount: statements.filter((statement) => statement.provenance.kind === "actual").length, estimateCount: statements.filter((statement) => statement.provenance.kind === "estimate").length, targetCount: statements.filter((statement) => statement.provenance.kind === "target").length, latestPeriod: statements.map((statement) => statement.period.periodEnd).sort().at(-1) ?? null, sourceTier };
   return { symbol, statements, source, actual, confidence: actual ? 0.85 : 0.45, warnings, quality };
+}
+
+export class NormalizedFinancialAdapter implements FinancialSourceAdapter {
+  readonly kind: FinancialSourceKind;
+
+  constructor(private readonly records: RawFinancialRecord[], source: FinancialSourceKind = "vietstock") {
+    this.kind = source;
+  }
+
+  async fetch(_symbol: string, _type: StatementType, limit: number): Promise<RawFinancialRecord[]> {
+    return this.records.slice(0, limit);
+  }
 }

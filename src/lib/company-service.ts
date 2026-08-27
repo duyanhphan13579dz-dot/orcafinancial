@@ -176,7 +176,9 @@ async function getStatementsUncached(
   }>;
   fields: string[];
 }> {
-  const quarters = await ensureQuarterlyFinancials(symbol, period === "yearly" ? Math.min(limit * 4, 4) : limit);
+  const { loadPreferredQuarterlyFinancials } = await import("@/lib/financial-ingestion");
+  const preferred = await loadPreferredQuarterlyFinancials(symbol, period === "yearly" ? Math.min(limit * 4, 4) : limit);
+  const quarters = preferred.quarters;
   const periods = quarters.map((q) => {
     const raw = type === "income" ? q.income : type === "balance" ? q.balance : q.cashflow;
     const filtered: Record<string, number> = {};

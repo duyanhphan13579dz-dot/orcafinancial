@@ -10,8 +10,16 @@
   },
   "crons": [
     {
+      "path": "/api/internal/financial-ingest",
+      "schedule": "30 1 1-20 1,4,7,10,12 *"
+    },
+    {
+      "path": "/api/internal/financial-llm",
+      "schedule": "50 1 1-20 1,4,7,10,12 *"
+    },
+    {
       "path": "/api/internal/financial-period-audit",
-      "schedule": "0 2 1-20 1,4,7,10,12 *"
+      "schedule": "10 2 1-20 1,4,7,10,12 *"
     },
     {
       "path": "/api/internal/financial-data-cleanup?apply=true",

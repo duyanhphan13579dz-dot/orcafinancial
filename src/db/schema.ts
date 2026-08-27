@@ -85,6 +85,71 @@ export const financialStatements = pgTable(
   ],
 );
 
+export const financialSourceDocuments = pgTable(
+  "financial_source_documents",
+  {
+    id: serial("id").primaryKey(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    source: varchar("source", { length: 30 }).notNull(),
+    documentType: varchar("document_type", { length: 40 }).notNull(),
+    documentUrl: text("document_url").notNull(),
+    documentHash: varchar("document_hash", { length: 64 }).notNull(),
+    reportType: varchar("report_type", { length: 40 }),
+    period: varchar("period", { length: 10 }),
+    fiscalYear: integer("fiscal_year"),
+    filingDate: varchar("filing_date", { length: 10 }),
+    retrievedAt: timestamp("retrieved_at", { withTimezone: true }).notNull().defaultNow(),
+    contentType: varchar("content_type", { length: 80 }),
+    parserVersion: varchar("parser_version", { length: 30 }).notNull().default("raw-v1"),
+    status: varchar("status", { length: 20 }).notNull().default("raw"),
+    rawPayload: jsonb("raw_payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("fs_source_doc_hash_uq").on(t.documentHash), index("fs_source_doc_symbol_idx").on(t.symbol, t.retrievedAt)],
+);
+
+export const financialNormalizedFacts = pgTable(
+  "financial_normalized_facts",
+  {
+    id: serial("id").primaryKey(),
+    documentId: integer("document_id").references(() => financialSourceDocuments.id),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    statementType: varchar("statement_type", { length: 20 }).notNull(),
+    period: varchar("period", { length: 10 }).notNull(),
+    fiscalYear: integer("fiscal_year").notNull(),
+    reportScope: varchar("report_scope", { length: 20 }).notNull().default("consolidated"),
+    currency: varchar("currency", { length: 10 }).notNull().default("VND"),
+    unit: varchar("unit", { length: 30 }).notNull().default("reported"),
+    periodEnd: varchar("period_end", { length: 10 }),
+    filingDate: varchar("filing_date", { length: 10 }),
+    source: varchar("source", { length: 30 }).notNull(),
+    sourceUrl: text("source_url").notNull(),
+    qualityStatus: varchar("quality_status", { length: 20 }).notNull().default("pending"),
+    qualityIssues: jsonb("quality_issues").notNull().default([]),
+    data: jsonb("data").notNull(),
+    normalizedAt: timestamp("normalized_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("fs_normalized_fact_uq").on(t.symbol, t.statementType, t.period, t.fiscalYear, t.reportScope, t.source), index("fs_normalized_symbol_idx").on(t.symbol, t.fiscalYear, t.period)],
+);
+
+export const financialLlmOutputs = pgTable(
+  "financial_llm_outputs",
+  {
+    id: serial("id").primaryKey(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    analysisType: varchar("analysis_type", { length: 20 }).notNull(),
+    periodKey: varchar("period_key", { length: 80 }).notNull(),
+    inputFingerprint: varchar("input_fingerprint", { length: 64 }).notNull(),
+    model: varchar("model", { length: 80 }).notNull(),
+    sourceDocumentIds: jsonb("source_document_ids").notNull().default([]),
+    output: jsonb("output").notNull(),
+    status: varchar("status", { length: 20 }).notNull().default("valid"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("financial_llm_fingerprint_uq").on(t.inputFingerprint), index("financial_llm_symbol_idx").on(t.symbol, t.analysisType, t.updatedAt)],
+);
+
 export const news = pgTable(
   "news",
   {

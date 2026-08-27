@@ -35,7 +35,7 @@ function isPublicPath(pathname: string): boolean {
 }
 
 function hasAuthorizedCronSecret(req: NextRequest, pathname: string): boolean {
-  if (pathname !== "/api/internal/financial-period-audit" && pathname !== "/api/internal/financial-data-cleanup") return false;
+  if (pathname !== "/api/internal/financial-period-audit" && pathname !== "/api/internal/financial-data-cleanup" && pathname !== "/api/internal/financial-ingest" && pathname !== "/api/internal/financial-llm") return false;
   const secret = process.env.FINANCIAL_AUDIT_SECRET ?? process.env.CRON_SECRET;
   const authorization = req.headers.get("authorization");
   return Boolean(secret && authorization === `Bearer ${secret}`);
