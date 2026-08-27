@@ -14,6 +14,7 @@ import {
 import {
   cryptoPricesWithFallback,
   fetchAllRssNews,
+  tcbsQuote,
   vndirectHistory,
   vndirectQuote,
   vndirectSearch,
@@ -175,12 +176,23 @@ export async function getHistory(
 export async function getQuote(symbol: string, options: { persist?: boolean; fast?: boolean; allowStale?: boolean; concurrency?: number } = {}): Promise<Quote> {
   const key = `quote:${symbol}`;
   const quote = await cached(key, QUOTE_TTL_MS, async () => {
+    const providerOptions = options.fast ? { timeoutMs: 1_500, retries: 0 } : undefined;
+    if (process.env.TCBS_MARKET_DATA_URL?.trim()) {
+      try {
+        return await tcbsQuote(symbol, providerOptions);
+      } catch (tcbsErr) {
+        logger.warn("quote_tcbs_failed", {
+          symbol,
+          error: tcbsErr instanceof Error ? tcbsErr.message : String(tcbsErr),
+        });
+      }
+    }
+
     const snaps = await loadFreshSnapshots([symbol]);
     const snap = snaps.get(symbol);
     if (snap) return snap;
 
     try {
-      const providerOptions = options.fast ? { timeoutMs: 1_500, retries: 0 } : undefined;
       return await vndirectQuote(symbol, providerOptions);
     } catch (primaryErr) {
       logger.warn("quote_primary_failed", {
@@ -188,7 +200,6 @@ export async function getQuote(symbol: string, options: { persist?: boolean; fas
         error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
       });
       const to = Math.floor(Date.now() / 1000);
-      const providerOptions = options.fast ? { timeoutMs: 1_500, retries: 0 } : undefined;
       const bars = await yahooHistory(symbol, to - 86400 * 14, to, "D", providerOptions);
       const last = bars[bars.length - 1];
       const prev = bars.length > 1 ? bars[bars.length - 2] : null;
