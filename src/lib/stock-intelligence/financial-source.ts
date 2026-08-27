@@ -94,7 +94,7 @@ export class SyntheticFinancialAdapter implements FinancialSourceAdapter {
       fiscalYear: quarter.fiscalYear,
       reportedCurrency: "VND",
       data: quarter[type] as unknown as Record<string, unknown>,
-      source: "sector-synthetic-v1",
+      source: "sector-synthetic-v2",
       retrievedAt: new Date().toISOString(),
     }));
   }
