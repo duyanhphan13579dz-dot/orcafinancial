@@ -10,6 +10,7 @@ import type { BacktestResult } from "@/lib/stock-intelligence/backtest-engine";
 import type { CrossModuleContext } from "@/lib/stock-intelligence/cross-module-engine";
 import type { BusinessIntelligence } from "@/lib/stock-intelligence/moat-engine";
 import type { InvestmentThesis } from "@/lib/stock-intelligence/investment-thesis";
+import { generateValueChain } from "@/lib/value-chain";
 import type { Ohlcv } from "@/lib/connectors/core";
 import fs from "node:fs";
 import path from "node:path";
@@ -58,7 +59,7 @@ function translateReportText(value: string): string {
   ];
   return replacements.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value);
 }
-function safeText(value: unknown): string { return translateReportText(String(value ?? "Chưa có dữ liệu").replace(/\s+/g, " ").trim()); }
+function safeText(value: unknown): string { return translateReportText(String(value ?? "Chưa có dữ liệu").replace(/\s+/g, " ").trim()).replace(/\bconnector\b/gi, "nguồn kết nối").replace(/\bstock context\b/gi, "bối cảnh cổ phiếu").replace(/\bcausal headwind\b/gi, "yếu tố bất lợi kéo dài").replace(/\bISH_TREND\b/g, "xu hướng ngành").replace(/\bRISK LOW\b/gi, "rủi ro thấp").replace(/\bRISK MEDIUM\b/gi, "rủi ro trung bình").replace(/\bRISK HIGH\b/gi, "rủi ro cao").replace(/\bactual\b/gi, "số liệu công bố").replace(/\bestimate\b/gi, "ước tính").replace(/\btarget\b/gi, "mục tiêu").replace(/\bcoverage\b/gi, "độ phủ bằng chứng"); }
 function recommendationVi(value: string): string { return ({ "Strong Buy": "Mua mạnh", Buy: "Mua", Hold: "Nắm giữ", Sell: "Bán", "Strong Sell": "Bán mạnh" } as Record<string, string>)[value] ?? value; }
 function riskVi(value: string): string { return ({ low: "Thấp", medium: "Trung bình", high: "Cao", critical: "Rất cao" } as Record<string, string>)[value.toLowerCase()] ?? value; }
 function impactVi(value: string): string { return ({ low: "Tác động thấp", medium: "Tác động trung bình", high: "Tác động cao", critical: "Tác động rất cao" } as Record<string, string>)[value.toLowerCase()] ?? value; }
@@ -102,18 +103,42 @@ function regularFont(doc: PDFKit.PDFDocument): string { return (doc as PDFKit.PD
 function paragraphFallback(doc: PDFKit.PDFDocument, text: string) { doc.font(regularFont(doc)).fontSize(8.8).fillColor(MUTED).text(text, { lineGap: 2 }); }
 
 function valueChainRows(profile: CompanyProfile): string[][] {
-  const banking = /ngân hàng|bank/i.test(`${profile.sector} ${profile.industry}`);
-  return banking
-    ? [
-      ["Input", "Tiền gửi khách hàng, vốn chủ sở hữu, thanh khoản liên ngân hàng, dữ liệu tín dụng và mạng lưới giao dịch."],
-      ["Process", "Huy động vốn; phân bổ tín dụng; quản trị rủi ro; thanh toán; ngân hàng số; dịch vụ ngoại hối và phí."],
-      ["Output", "Thu nhập lãi thuần, phí dịch vụ, thu nhập đầu tư/kinh doanh vốn, lợi nhuận và chất lượng tài sản."],
-    ]
-    : [
-      ["Input", "Nguyên vật liệu/nguồn cung, vốn lưu động, nhân sự, công nghệ và kênh phân phối."],
-      ["Process", "Sản xuất hoặc cung ứng dịch vụ, kiểm soát chi phí, quản trị chất lượng và bán hàng."],
-      ["Output", "Sản phẩm/dịch vụ, doanh thu, lợi nhuận, dòng tiền và năng lực tái đầu tư."],
-    ];
+  const chain = generateValueChain(profile.symbol);
+  return chain.primary.map((item) => [
+    item.nameVi,
+    `${item.description} Biến số cần theo dõi là quy mô hoạt động, khả năng kiếm tiền và mức độ chuyển hóa thành lợi nhuận.`
+  ]);
+}
+
+function businessMechanics(profile: CompanyProfile): string {
+  const text = `${profile.sector} ${profile.industry}`.toLowerCase();
+  if (text.includes("chứng khoán") || text.includes("securities")) {
+    return "Doanh thu của doanh nghiệp chứng khoán thường được hình thành từ môi giới, cho vay ký quỹ, tự doanh, ngân hàng đầu tư và quản lý tài sản. Thanh khoản thị trường và dư nợ margin tác động đến quy mô phí; kết quả tự doanh có thể làm lợi nhuận biến động mạnh hơn doanh thu dịch vụ. Vì vậy, cần đọc đồng thời tăng trưởng hoạt động, chất lượng tài sản và mức độ phụ thuộc vào thu nhập tự doanh thay vì chỉ nhìn một chỉ tiêu lợi nhuận.";
+  }
+  if (text.includes("ngân hàng") || text.includes("bank")) {
+    return "Ngân hàng tạo lợi nhuận chủ yếu từ chênh lệch lãi suất, phí dịch vụ và hiệu quả sử dụng vốn. Tăng trưởng tín dụng, biên lãi ròng, chi phí dự phòng và chất lượng tài sản là các biến số quyết định khả năng duy trì lợi nhuận.";
+  }
+  return "Doanh nghiệp chuyển hóa nguồn lực đầu vào thành sản phẩm hoặc dịch vụ, sau đó biến doanh thu thành lợi nhuận và dòng tiền. Luận điểm đầu tư cần tập trung vào biến số làm thay đổi sản lượng, giá bán, biên lợi nhuận, vốn lưu động và nhu cầu tái đầu tư.";
+}
+
+function thesisStanceVi(value: InvestmentThesis["stance"]): string {
+  return value === "constructive" ? "tích cực có điều kiện" : value === "cautious" ? "thận trọng" : value === "neutral" ? "trung lập" : "chưa đủ dữ liệu";
+}
+
+function implication(direction: string, moduleLabel: string): string {
+  if (direction === "positive") return `Yếu tố này đang hỗ trợ ${moduleLabel.toLowerCase()}, nhưng chỉ trở thành động lực định giá nếu được xác nhận bằng kết quả kinh doanh.`;
+  if (direction === "negative") return `Yếu tố này tạo sức ép lên ${moduleLabel.toLowerCase()} và cần được phản ánh vào biên an toàn khi đánh giá cổ phiếu.`;
+  return "Tác động hiện chưa đủ rõ để trở thành luận điểm định giá chính.";
+}
+
+function reportSignalText(signal: { module: string; direction: string; headline: string; evidence: string }): string {
+  const moduleLabel = moduleVi(signal.module);
+  return `${moduleLabel}: ${safeText(signal.headline)}. Bằng chứng hiện có: ${safeText(signal.evidence)} ${implication(signal.direction, moduleLabel)}`;
+}
+
+function reportCausalText(titleText: string, impact: string, links: Array<{ from: string; to: string }>): string {
+  const path = links.map((link) => `${cleanCausalText(link.from)} dẫn tới ${cleanCausalText(link.to)}`).join("; ");
+  return `Mối liên hệ đáng theo dõi: ${cleanCausalText(titleText)}. Hướng tác động hiện được đánh giá là ${directionVi(impact)}. Chuỗi quan sát: ${path || "chưa đủ dữ liệu để mô tả chi tiết"}.`;
 }
 
 function changeText(current: number | null | undefined, previous: number | null | undefined): string {
@@ -180,110 +205,138 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     doc.font(bold).fontSize(11).fillColor(BLUE).text("KẾT LUẬN ĐIỀU HÀNH", 62, doc.y + 12);
     const valuationHeadline = payload.forecast.expectedValue != null && payload.forecast.valuationConfidence >= 0.6 ? `Giá trị kỳ vọng theo các kịch bản là ${money(payload.forecast.expectedValue)} nghìn VNĐ.` : "Định giá chưa đủ độ tin cậy để đưa ra giá trị kỳ vọng kết luận.";
     doc.font(regular).fontSize(9).fillColor("#172b3f").text(`Đánh giá tổng quan: cổ phiếu đang ở trạng thái ${recommendationVi(payload.technical.recommendation)}. ${valuationHeadline}`, 62, doc.y + 30, { width: 470, lineGap: 2.5 });
-    doc.addPage();
-
-    title("1. THÔNG TIN DOANH NGHIỆP");
-    row("Tên doanh nghiệp", payload.profile.name); row("Mã / sàn", `${payload.profile.symbol} · ${payload.profile.exchange}`); row("Ngành / lĩnh vực", `${payload.profile.industry} · ${payload.profile.sector}`); row("Vốn hóa ước tính", `${money(payload.profile.marketCapBillionVnd)} tỷ VNĐ`); row("Cổ phiếu lưu hành", `${money(payload.profile.sharesOutstandingMillions)} triệu cp`); row("Beta ngành", money(payload.profile.beta));
-    doc.moveDown(0.4); paragraph(payload.profile.description);
-    title("2. CHUỖI GIÁ TRỊ DOANH NGHIỆP");
-    paragraph("Mô hình dưới đây mô tả cách doanh nghiệp chuyển hóa nguồn lực đầu vào thành sản phẩm, dịch vụ, doanh thu và dòng tiền. Những điểm chưa có công bố trực tiếp chỉ mang tính tham chiếu theo đặc điểm ngành.", MUTED);
-    table(["Khâu", "Mô tả"], valueChainRows(payload.profile));
-    if (payload.business?.segments.length) {
-      table(["Phân khúc / năng lực", "Mô tả", "Mức độ tin cậy"], payload.business.segments.slice(0, 5).map((segment) => [segment.name, segment.description, `${Math.round(segment.confidence * 100)}% · ${segment.source === "business-intelligence" ? "Phân tích doanh nghiệp" : "Nguồn dữ liệu"}`]));
+    doc.y += 104;
+    if (payload.thesis) {
+      row("Điểm tích cực", payload.thesis.whyBuy.slice(0, 3).map((item) => item.title).join("; ") || "Chưa xác định");
+      row("Rủi ro cần lưu ý", payload.thesis.whyNotBuy.slice(0, 3).map((item) => item.title).join("; ") || payload.risk.mainRisk);
+      row("Biến số cần theo dõi", payload.thesis.monitoring.slice(0, 3).join("; ") || "Kết quả kinh doanh và dòng tiền");
     }
-    title("3. KẾT QUẢ KINH DOANH VÀ SỨC KHỎE TÀI CHÍNH");
-    paragraph(`Trạng thái dữ liệu tại ${payload.health.asOfPeriod}; sử dụng ${payload.health.dataQuality.periodsUsed} kỳ. Phân loại nguồn: ${dataTierVi(payload.dataConfidence)} (${Math.round(payload.dataConfidence * 100)}%). Các số liệu tài chính trong bản này là ước tính/benchmark khi chưa có báo cáo doanh nghiệp đã xác minh; không được hiểu là actual audited.`);
-    table(["Kỳ / trạng thái", "Doanh thu", "Tăng trưởng quý", "EBITDA", "Biên EBITDA", "LN ròng", "EPS"], payload.quarters.slice(0, 8).map((quarter, index, rows) => [`${quarter.period} · Ước tính`, money(quarter.income.revenue), changeText(quarter.income.revenue, rows[index + 1]?.income.revenue), money(quarter.income.ebitda), pct(quarter.income.revenue > 0 ? quarter.income.ebitda / quarter.income.revenue * 100 : null), money(quarter.income.netIncome), money(quarter.income.eps)]));
+    doc.addPage();
+    title("1. DOANH NGHIỆP VÀ MÔ HÌNH KINH DOANH");
+    row("Tên doanh nghiệp", payload.profile.name);
+    row("Mã cổ phiếu / sàn", `${payload.profile.symbol} · ${payload.profile.exchange}`);
+    row("Ngành / lĩnh vực", `${payload.profile.industry} · ${payload.profile.sector}`);
+    row("Vốn hóa tham chiếu", `${money(payload.profile.marketCapBillionVnd)} tỷ VNĐ`);
+    paragraph(payload.profile.description);
+    paragraph(businessMechanics(payload.profile));
+    table(["Mảng hoạt động", "Cơ chế tạo doanh thu và biến số cần theo dõi"], valueChainRows(payload.profile));
+    if (payload.business?.segments.length) {
+      paragraph("Các mảng dưới đây chỉ được sử dụng khi có bằng chứng hoặc dữ liệu tham chiếu phù hợp; phần chưa đủ độ phủ không được mặc định là lợi thế cạnh tranh.", MUTED);
+      table(["Năng lực / mảng", "Nhận định", "Độ tin cậy"], payload.business.segments.slice(0, 5).map((segment) => [segment.name, segment.description, `${Math.round(segment.confidence * 100)}%`]));
+    }
+
+    doc.addPage();
+    title("2. KẾT QUẢ KINH DOANH VÀ XU HƯỚNG");
+    paragraph(`Báo cáo sử dụng ${payload.health.dataQuality.periodsUsed} kỳ gần nhất đến ${payload.health.asOfPeriod}. ${dataTierVi(payload.dataConfidence)}; số liệu estimate được trình bày rõ ràng và không được gọi là số liệu đã kiểm toán.`, MUTED);
+    table(["Kỳ", "Doanh thu", "Tăng trưởng quý", "EBITDA", "LN ròng", "EPS"], payload.quarters.slice(0, 8).map((quarter, index, rows) => [`${quarter.period} · ước tính`, money(quarter.income.revenue), changeText(quarter.income.revenue, rows[index + 1]?.income.revenue), money(quarter.income.ebitda), money(quarter.income.netIncome), money(quarter.income.eps)]));
     const latest = payload.quarters[0];
     const yearAgo = payload.quarters.find((quarter) => latest && quarter.quarter === latest.quarter && quarter.fiscalYear === latest.fiscalYear - 1);
-    table(["Chỉ số", "Giá trị hiện tại", "So với kỳ trước", "So với cùng kỳ"], [
-      ["Doanh thu", money(indicatorValue(payload.health, "revenue" ) ?? latest?.income.revenue), changeText(latest?.income.revenue, payload.quarters[1]?.income.revenue), changeText(latest?.income.revenue, yearAgo?.income.revenue)],
-      ["LN ròng", money(latest?.income.netIncome), changeText(latest?.income.netIncome, payload.quarters[1]?.income.netIncome), changeText(latest?.income.netIncome, yearAgo?.income.netIncome)],
-      ["Biên EBITDA", pct(indicatorValue(payload.health, "ebitdaMargin")), "Chưa có dữ liệu", "Chưa có dữ liệu"],
-      ["CFO / Lợi nhuận ròng", `${money(indicatorValue(payload.health, "earningsQuality"))}x`, "Chưa có dữ liệu", "Chưa có dữ liệu"],
-      ["CFO", money(latest?.cashflow.operatingCashFlow), changeText(latest?.cashflow.operatingCashFlow, payload.quarters[1]?.cashflow.operatingCashFlow), "Dòng tiền từ hoạt động kinh doanh; số dương là tín hiệu hỗ trợ chất lượng lợi nhuận."],
-      ["FCF", money(latest?.cashflow.freeCashFlow), changeText(latest?.cashflow.freeCashFlow, payload.quarters[1]?.cashflow.freeCashFlow), "Dòng tiền tự do sau chi đầu tư; cần đọc cùng cấu trúc ngành."],
-      ["Tỷ lệ chuyển đổi FCF", `${money(indicatorValue(payload.health, "fcfConversion"))}x`, "Chưa có dữ liệu", "Chưa có dữ liệu"],
-      ["ROA / ROE / ROS", `${pct(indicatorValue(payload.health, "roa"))} / ${pct(indicatorValue(payload.health, "roe"))} / ${pct(indicatorValue(payload.health, "netMargin"))}`, "Chưa có dữ liệu", "Chưa có dữ liệu"],
-      ["Nợ / VCSH", `${money(indicatorValue(payload.health, "debtEquity"))}x`, "Chưa có dữ liệu", "Chưa có dữ liệu"],
+    const revenueChange = changeText(latest?.income.revenue, payload.quarters[1]?.income.revenue);
+    const netIncomeChange = changeText(latest?.income.netIncome, payload.quarters[1]?.income.netIncome);
+    paragraph(`NHẬN ĐỊNH ORCA: Kỳ gần nhất ghi nhận doanh thu ${money(latest?.income.revenue)} tỷ VNĐ và lợi nhuận ròng ${money(latest?.income.netIncome)} tỷ VNĐ. So với kỳ trước, doanh thu thay đổi ${revenueChange} và lợi nhuận ròng thay đổi ${netIncomeChange}. ${yearAgo ? `So với cùng kỳ, doanh thu thay đổi ${changeText(latest?.income.revenue, yearAgo.income.revenue)} và lợi nhuận ròng thay đổi ${changeText(latest?.income.netIncome, yearAgo.income.netIncome)}.` : "Chưa có đủ kỳ tương ứng để so sánh cùng kỳ."}`);
+    paragraph("Ý nghĩa đầu tư: cần xác định biến động lợi nhuận đến từ tăng trưởng hoạt động, thay đổi biên, chi phí tài chính hay khoản thu nhập bất thường. Một quý tăng trưởng đơn lẻ chưa đủ để kết luận xu hướng bền vững.", MUTED);
+    table(["Chỉ tiêu", "Hiện tại", "So với kỳ trước", "Diễn giải"], [
+      ["Doanh thu", money(latest?.income.revenue), revenueChange, "Quy mô hoạt động trong kỳ báo cáo."],
+      ["Biên EBITDA", pct(indicatorValue(payload.health, "ebitdaMargin")), "—", "Khả năng chuyển doanh thu thành lợi nhuận trước khấu hao và lãi vay."],
+      ["Lợi nhuận ròng", money(latest?.income.netIncome), netIncomeChange, "Kết quả sau chi phí tài chính và thuế."],
+      ["ROA / ROE / ROS", `${pct(indicatorValue(payload.health, "roa"))} / ${pct(indicatorValue(payload.health, "roe"))} / ${pct(indicatorValue(payload.health, "netMargin"))}`, "—", "Đọc cùng biên lợi nhuận, vòng quay tài sản và đòn bẩy."],
     ]);
-    table(["Nhóm", "Điểm", "Trọng số", "Nhận xét"], payload.health.groups.map((group) => [group.label, `${group.score}/100`, `${(group.weight * 100).toFixed(0)}%`, group.narrative]));
-    paragraph(`Phương pháp điểm sức khỏe: điểm tổng hợp = tổng (điểm nhóm × trọng số). Trọng số hiện tại: ${payload.health.groups.map((group) => `${group.label} ${(group.weight * 100).toFixed(0)}%`).join(", ")}. Điểm nhóm được tính từ các chỉ báo với ngưỡng benchmark được định nghĩa trong health engine; bảng trên cho phép tái lập theo từng nhóm.`, MUTED);
+
+    doc.addPage();
+    title("3. SỨC KHỎE TÀI CHÍNH VÀ DÒNG TIỀN");
+    const healthNarrative = payload.health.groups.map((group) => `${group.label}: ${group.narrative}`).join(" ");
+    paragraph(`Điểm sức khỏe tài chính ${payload.health.overall}/100, xếp loại ${ratingVi(payload.health.rating)}. ${healthNarrative}`);
+    table(["Chỉ tiêu", "Giá trị", "Ý nghĩa đối với luận điểm"], [
+      ["CFO", money(latest?.cashflow.operatingCashFlow), "Dòng tiền dương hỗ trợ chất lượng lợi nhuận; cần kiểm tra tính lặp lại qua nhiều kỳ."],
+      ["FCF", money(latest?.cashflow.freeCashFlow), "Phần tiền còn lại sau chi đầu tư; âm kéo dài có thể làm giảm khả năng tự tài trợ."],
+      ["CFO / lợi nhuận ròng", `${money(indicatorValue(payload.health, "earningsQuality"))}x`, "Đo mức độ chuyển đổi lợi nhuận kế toán thành dòng tiền."],
+      ["Nợ / vốn chủ", `${money(indicatorValue(payload.health, "debtEquity"))}x`, "Đòn bẩy cao làm tăng độ nhạy của lợi nhuận và định giá với lãi suất."],
+      ["Thanh khoản", `${payload.health.groups.find((group) => group.key === "liquidity")?.score ?? "—"}/100`, "Khả năng đáp ứng nghĩa vụ ngắn hạn."],
+    ]);
     const dupontMargin = indicatorValue(payload.health, "netMargin");
     const dupontTurnover = indicatorValue(payload.health, "assetTurnover");
     const dupontLeverage = indicatorValue(payload.health, "debtEquity");
-    table(["Phân rã DuPont", "Giá trị", "Diễn giải"], [["Biên lợi nhuận ròng", pct(dupontMargin), "Lợi nhuận ròng / doanh thu"], ["Vòng quay tài sản", dupontTurnover == null ? "Chưa có dữ liệu" : `${money(dupontTurnover)} vòng`, "Doanh thu năm hóa / tổng tài sản"], ["Đòn bẩy vốn chủ", dupontLeverage == null ? "Chưa có dữ liệu" : `${money(1 + dupontLeverage)} lần`, "Tổng tài sản / vốn chủ, xấp xỉ từ nợ trên vốn chủ"], ["ROE", pct(indicatorValue(payload.health, "roe")), "Kết quả tổng hợp; cần đọc cùng ba thành phần trên"]]);
-    title("4. PHÂN TÍCH KỸ THUẬT TẠI THỜI ĐIỂM LẬP BÁO CÁO");
-    paragraph("Biểu đồ dưới đây sử dụng 90 phiên OHLCV gần nhất tại thời điểm lập báo cáo. Đường giá không thay thế phân tích nến hoặc dữ liệu trong phiên.", MUTED);
+    table(["Phân rã DuPont", "Giá trị", "Cách đọc"], [
+      ["Biên lợi nhuận ròng", pct(dupontMargin), "Lợi nhuận ròng trên doanh thu."],
+      ["Vòng quay tài sản", dupontTurnover == null ? "Chưa có dữ liệu" : `${money(dupontTurnover)} vòng`, "Hiệu quả sử dụng tài sản để tạo doanh thu."],
+      ["Hệ số nhân vốn chủ", dupontLeverage == null ? "Chưa có dữ liệu" : `${money(1 + dupontLeverage)} lần`, "Mức độ khuếch đại ROE từ đòn bẩy."],
+      ["ROE", pct(indicatorValue(payload.health, "roe")), "Kết quả cần được giải thích bởi ba thành phần trên."],
+    ]);
+    paragraph("NHẬN ĐỊNH ORCA: sức khỏe tài chính chỉ có ý nghĩa đầu tư khi kết nối được với khả năng duy trì lợi nhuận và dòng tiền. Điểm số là tín hiệu tóm tắt, không thay thế việc đọc xu hướng từng kỳ.", MUTED);
+
+    doc.addPage();
+    title("4. PHÂN TÍCH KỸ THUẬT VÀ THIẾT LẬP GIAO DỊCH");
+    paragraph("Biểu đồ dưới đây là snapshot giá của 90 phiên gần nhất. Phần này phục vụ góc nhìn giao dịch ngắn và trung hạn, không phải bằng chứng thay thế cho luận điểm đầu tư dài hạn.", MUTED);
     drawPriceSnapshot(doc, payload.priceHistory);
-    table(["Chỉ báo kỹ thuật", "Giá trị tại thời điểm lập báo cáo"], [
-      ["Xu hướng / khuyến nghị", `${recommendationVi(payload.technical.recommendation)} · ${payload.technical.score}/100`],
-      ["RSI(14)", money(payload.technical.rsi14)],
-      ["SMA20 / SMA50", `${money(payload.technical.sma20)} / ${money(payload.technical.sma50)}`],
-      ["Biến động năm hóa", pct(payload.technical.volatilityPct)],
-      ["Drawdown tối đa", pct(payload.technical.maxDrawdownPct)],
-      ["Hỗ trợ / kháng cự", payload.technical.supportResistance ? `${money(payload.technical.supportResistance.support)} / ${money(payload.technical.supportResistance.resistance)}` : "Chưa có dữ liệu"],
+    table(["Chỉ báo", "Giá trị tại thời điểm lập báo cáo", "Diễn giải"], [
+      ["Xu hướng kỹ thuật", `${recommendationVi(payload.technical.recommendation)} · ${payload.technical.score}/100`, "Tín hiệu tổng hợp từ động lượng và xu hướng giá."],
+      ["RSI(14)", money(payload.technical.rsi14), "Đo động lượng; cần tránh diễn giải đơn lẻ."],
+      ["SMA20 / SMA50", `${money(payload.technical.sma20)} / ${money(payload.technical.sma50)}`, "So sánh giá với xu hướng ngắn và trung hạn."],
+      ["Hỗ trợ / kháng cự", payload.technical.supportResistance ? `${money(payload.technical.supportResistance.support)} / ${money(payload.technical.supportResistance.resistance)}` : "Chưa có dữ liệu", "Các vùng cần quan sát khi giá biến động."],
+      ["Biến động / drawdown", `${pct(payload.technical.volatilityPct)} / ${pct(payload.technical.maxDrawdownPct)}`, "Đo biên độ rủi ro của giá trong lịch sử."],
     ]);
-    doc.moveDown(0.3); payload.technical.reasons.slice(0, 5).forEach((reason) => bullet(reason));
+    payload.technical.reasons.slice(0, 4).forEach((reason) => bullet(`Tín hiệu kỹ thuật: ${reason}`));
+    if (payload.risk.tradePlan) {
+      title("Thiết lập giao dịch ngắn hạn");
+      paragraph(`Vùng quan sát ${money(payload.risk.tradePlan.entryLow)}–${money(payload.risk.tradePlan.entryHigh)}, dừng lỗ ${money(payload.risk.tradePlan.stopLoss)}, mục tiêu ${money(payload.risk.tradePlan.takeProfit1)} và ${money(payload.risk.tradePlan.takeProfit2)}. Đây là thiết lập kỹ thuật độc lập, không phải xác nhận rằng định giá cơ bản đang hấp dẫn.`, MUTED);
+    }
+
+    doc.addPage();
+    title("5. ĐỊNH GIÁ VÀ DỰ PHÓNG");
     const currentPrice = payload.technical.lastClose;
-    const latestEps = payload.quarters[0]?.income.eps ?? null;
-    const latestBookValue = payload.quarters[0]?.balance.bookValuePerShare ?? null;
-    title("5. ĐỊNH GIÁ HIỆN TẠI");
-    paragraph("P/E và P/B được tính từ giá đóng cửa gần nhất chia cho EPS và giá trị sổ sách trên mỗi cổ phiếu của kỳ gần nhất. Đây là chỉ báo tham chiếu tại thời điểm lập báo cáo và cần được cập nhật khi có báo cáo tài chính chính thức.", MUTED);
-    table(["Chỉ tiêu", "Giá trị", "Cơ sở", "Diễn giải"], [
-      ["Giá hiện tại", `${money(currentPrice)} nghìn VNĐ`, "Dữ liệu giá", "Giá đóng cửa gần nhất từ hệ thống dữ liệu thị trường."],
-      ["P/E", latestEps && latestEps > 0 ? `${money(currentPrice / latestEps)} lần` : "Không xác định", `EPS ${money(latestEps)}`, latestEps && latestEps > 0 ? "Hệ số giá trên lợi nhuận của kỳ gần nhất." : "Không có EPS dương để tính."],
-      ["P/B", latestBookValue && latestBookValue > 0 ? `${money(currentPrice / latestBookValue)} lần` : "Không xác định", `BVPS ${money(latestBookValue)}`, latestBookValue && latestBookValue > 0 ? "Hệ số giá trên giá trị sổ sách của kỳ gần nhất." : "Không có BVPS hợp lệ để tính."],
-      ["Giá trị hợp lý tổng hợp", payload.forecast.expectedValue == null || payload.forecast.valuationConfidence < 0.6 ? "Chưa đủ dữ liệu để kết luận" : `${money(payload.forecast.expectedValue)} nghìn VNĐ`, `Các kịch bản; độ tin cậy ${Math.round(payload.forecast.valuationConfidence * 100)}%`, "Không phải mức giá cam kết; chỉ sử dụng khi độ tin cậy đạt ngưỡng."] ,
+    const latestEps = latest?.income.eps ?? null;
+    const latestBookValue = latest?.balance.bookValuePerShare ?? null;
+    const securities = /chứng khoán|securities/i.test(`${payload.profile.sector} ${payload.profile.industry}`);
+    paragraph(securities ? "Với doanh nghiệp chứng khoán, P/B, ROE, chất lượng tài sản và khả năng tạo thu nhập trên vốn thường phù hợp hơn một khung doanh thu–EBITDA–FCF áp dụng máy móc như doanh nghiệp sản xuất. Các bội số dưới đây chỉ là tham chiếu và cần được hiệu chỉnh bằng dữ liệu ngành." : "Các bội số được tính từ giá hiện tại và số liệu kỳ gần nhất. Giá trị hợp lý chỉ được nêu khi độ tin cậy mô hình đạt ngưỡng; estimate không được trình bày như mục tiêu chắc chắn.", MUTED);
+    table(["Chỉ tiêu", "Giá trị", "Cơ sở và cách diễn giải"], [
+      ["Giá hiện tại", `${money(currentPrice)} nghìn VNĐ`, "Giá đóng cửa gần nhất."],
+      ["P/E", latestEps && latestEps > 0 ? `${money(currentPrice / latestEps)} lần` : "Không xác định", `EPS ${money(latestEps)}; nhạy với chất lượng số liệu lợi nhuận.`],
+      ["P/B", latestBookValue && latestBookValue > 0 ? `${money(currentPrice / latestBookValue)} lần` : "Không xác định", `BVPS ${money(latestBookValue)}; đặc biệt cần theo dõi với doanh nghiệp tài chính.`],
+      ["Giá trị kỳ vọng", payload.forecast.expectedValue == null || payload.forecast.valuationConfidence < 0.6 ? "Chưa đủ độ tin cậy" : `${money(payload.forecast.expectedValue)} nghìn VNĐ`, `Độ tin cậy định giá ${Math.round(payload.forecast.valuationConfidence * 100)}%.`],
     ]);
-    title("6. DỰ PHÓNG KẾT QUẢ KINH DOANH VÀ ĐỊNH GIÁ");
-    paragraph(`Mô hình dự phóng ${forecastVersionVi(payload.forecast.modelVersion)}; độ tin cậy dự báo ${Math.round(payload.forecast.predictionConfidence * 100)}%, độ tin cậy định giá ${Math.round(payload.forecast.valuationConfidence * 100)}%. Khi độ tin cậy định giá dưới 60%, báo cáo không đưa ra kết luận giá trị hợp lý.`);
-    table(["Kịch bản", "Xác suất", "Giá trị hợp lý", "Đóng góp kỳ vọng", "Luận điểm"], payload.forecast.scenarios.map((scenario) => [scenario.name === "bull" ? "Tích cực" : scenario.name === "bear" ? "Tiêu cực" : "Cơ sở", `${(scenario.probability * 100).toFixed(0)}%`, scenario.fairValue == null ? "Chưa có dữ liệu" : money(scenario.fairValue), scenario.weightedContribution == null ? "Chưa có dữ liệu" : money(scenario.weightedContribution), scenario.rationale]));
-    payload.forecast.assumptionBridge.slice(0, 4).forEach((assumption) => bullet(`Giả định mô hình: ${assumption}`, MUTED));
-    table(["Kỳ dự phóng", "Doanh thu", "EBITDA", "Lợi nhuận ròng", "EPS"], payload.forecast.forecast.map((point) => [point.period, money(point.revenue), money(point.ebitda), money(point.netIncome), money(point.eps)]));
-    title("7. RỦI RO, ĐỘNG LỰC VÀ KẾ HOẠCH THEO DÕI");
-    row("Mức rủi ro", `${riskVi(payload.risk.level)} · ${payload.risk.overall}/100`); row("Rủi ro chính", payload.risk.mainRisk); row("Độ chính xác kiểm định", `${(payload.backtest.metrics.recommendationAccuracy * 100).toFixed(1)}%`); row("Xu hướng tin tức 7 ngày", payload.news.trend.d7.toFixed(3));
-    payload.news.events.slice(0, 5).forEach((event) => bullet(`${impactVi(event.impact)} · ${categoryVi(event.category)}: ${event.title}`));
-    if (payload.risk.tradePlan) { doc.moveDown(0.25); paragraph(`Kế hoạch giao dịch nghiên cứu: vùng vào ${money(payload.risk.tradePlan.entryLow)}–${money(payload.risk.tradePlan.entryHigh)}, mức dừng lỗ ${money(payload.risk.tradePlan.stopLoss)}, mục tiêu 1 ${money(payload.risk.tradePlan.takeProfit1)}, mục tiêu 2 ${money(payload.risk.tradePlan.takeProfit2)}; tỷ lệ lợi nhuận/rủi ro ${payload.risk.tradePlan.riskReward1} lần / ${payload.risk.tradePlan.riskReward2} lần.`, MUTED); }
-    if (payload.crossModule || payload.business || payload.thesis) {
-      title("8. BỐI CẢNH, HÀO KINH TẾ VÀ LUẬN ĐIỂM ĐẦU TƯ");
-      if (payload.crossModule) {
-        row("Trạng thái thị trường", `${regimeVi(payload.crossModule.market.regimeLabel)} · rủi ro ${riskVi(payload.crossModule.market.risk)}`);
-        row("Điểm bối cảnh liên kết", payload.crossModule.aggregateScore == null ? "Chưa có dữ liệu" : `${payload.crossModule.aggregateScore}/100`);
-        payload.crossModule.signals.filter((signal) => signal.direction !== "unknown").slice(0, 5).forEach((signal) => bullet(`${moduleVi(signal.module)} · ${directionVi(signal.direction)}: ${signal.headline} — ${signal.evidence}`));
-        payload.crossModule.causalChains.slice(0, 3).forEach((chain) => bullet(`Chuỗi tác động ${directionVi(chain.impact)}: ${cleanCausalText(chain.title)}: ${chain.links.map((link) => `${cleanCausalText(link.from)} → ${cleanCausalText(link.to)}`).join(" → ")}`));
-      }
-      if (payload.business) {
-        row("Điểm hào kinh tế", payload.business.moat.rating === "insufficient_data" ? "Chưa đủ dữ liệu / độ phủ bằng chứng thấp" : `${payload.business.moat.score}/100 · ${payload.business.moat.rating === "strong" ? "mạnh" : payload.business.moat.rating === "moderate" ? "vừa phải" : "yếu"}`);
-        payload.business.moat.factors.slice(0, 5).forEach((factor) => bullet(`Hào kinh tế · ${factor.label}: ${moatScoreVi(factor.score, factor.coverage)} — ${factor.evidence}`));
-        payload.business.growthDrivers.slice(0, 3).forEach((driver) => bullet(`Động lực tăng trưởng · ${directionVi(driver.direction)}: ${driver.driver} — ${driver.evidence}`));
-      }
-      if (payload.thesis) {
-        row("Luận điểm đầu tư", `${payload.thesis.stance === "constructive" ? "tích cực" : payload.thesis.stance === "cautious" ? "thận trọng" : payload.thesis.stance === "neutral" ? "trung lập" : "chưa đủ dữ liệu"}${payload.thesis.score == null ? "" : ` · ${payload.thesis.score}/100`}`);
-        payload.thesis.whyBuy.slice(0, 3).forEach((item) => bullet(`Cơ sở tích cực: ${item.title} — ${item.detail}`));
-        payload.thesis.whyNotBuy.slice(0, 3).forEach((item) => bullet(`Điểm cần thận trọng: ${item.title} — ${item.detail}`, RED));
-        payload.thesis.invalidation.slice(0, 3).forEach((item) => bullet(`Điều kiện làm suy yếu luận điểm: ${item.title} — ${item.detail}`, MUTED));
-      }
-    }
+    table(["Kịch bản", "Xác suất", "Giá trị hợp lý", "Luận điểm chính"], payload.forecast.scenarios.map((scenario) => [scenario.name === "bull" ? "Tích cực" : scenario.name === "bear" ? "Tiêu cực" : "Cơ sở", `${(scenario.probability * 100).toFixed(0)}%`, scenario.fairValue == null ? "Chưa có dữ liệu" : money(scenario.fairValue), scenario.rationale]));
+    table(["Kỳ dự phóng", "Doanh thu", "EBITDA", "LN ròng", "EPS"], payload.forecast.forecast.map((point) => [point.period, money(point.revenue), money(point.ebitda), money(point.netIncome), money(point.eps)]));
+    payload.forecast.assumptionBridge.slice(0, 3).forEach((assumption) => bullet(`Giả định cần kiểm chứng: ${assumption}`, MUTED));
+
     doc.addPage();
-    title("9. VĨ MÔ, CHU KỲ NGÀNH VÀ CHU KỲ KINH TẾ");
+    title("6. LUẬN ĐIỂM ĐẦU TƯ");
+    if (payload.thesis) {
+      row("Quan điểm hiện tại", `${thesisStanceVi(payload.thesis.stance)}${payload.thesis.score == null ? "" : ` · điểm tổng hợp ${payload.thesis.score}/100`}`);
+      paragraph("Luận điểm được xây dựng từ bằng chứng hiện có và vẫn có thể thay đổi khi báo cáo tài chính, xu hướng giá hoặc bối cảnh ngành được cập nhật.");
+      title("Điều gì đang hỗ trợ cổ phiếu?");
+      payload.thesis.whyBuy.slice(0, 4).forEach((item) => bullet(`${item.title}: ${item.detail}`));
+      title("Điều gì khiến cần thận trọng?");
+      payload.thesis.whyNotBuy.slice(0, 4).forEach((item) => bullet(`${item.title}: ${item.detail}`, RED));
+      title("Catalyst và điều kiện thay đổi quan điểm");
+      payload.thesis.catalysts.slice(0, 4).forEach((item) => bullet(`Catalyst: ${item.title}. ${item.detail}`));
+      payload.thesis.invalidation.slice(0, 3).forEach((item) => bullet(`Nếu xảy ra, cần hạ đánh giá: ${item.title}. ${item.detail}`, MUTED));
+    }
+
     const macroSignals = payload.crossModule?.signals.filter((signal) => ["macro", "market", "industry", "fx", "commodity"].includes(signal.module)) ?? [];
-    table(["Yếu tố", "Trạng thái", "Tác động dự kiến", "Độ tin cậy"], macroSignals.map((signal) => [moduleVi(signal.module), signal.headline, `${directionVi(signal.direction)}: ${signal.evidence}`, `${Math.round(signal.confidence * 100)}%`]));
-    if (payload.crossModule) {
-      row("Chu kỳ thị trường", `${regimeVi(payload.crossModule.market.regimeLabel)} · rủi ro ${riskVi(payload.crossModule.market.risk)}`);
-      row("Chu kỳ ngành", `${payload.crossModule.industry.sector} · thay đổi ${pct(payload.crossModule.industry.sectorChangePct)} · mức độ mạnh ${money(payload.crossModule.industry.sectorStrength)}`);
-      paragraph("Đánh giá chu kỳ ngành và kinh tế phản ánh bối cảnh thị trường hiện có. Cổ phiếu có thể được hưởng lợi hoặc chịu áp lực tùy theo lãi suất, tỷ giá, tín dụng, sức mua và xu hướng chung của ngành.", MUTED);
-    }
+    paragraph("Bối cảnh và rủi ro cần đưa vào luận điểm:", MUTED);
+    if (macroSignals.length) macroSignals.slice(0, 3).forEach((signal) => bullet(reportSignalText(signal)));
+    else paragraph("Chưa có đủ dữ liệu vĩ mô liên quan để đưa vào luận điểm định giá; yếu tố này không được sử dụng như giả định bổ sung.", MUTED);
+    if (payload.crossModule?.causalChains.length) payload.crossModule.causalChains.slice(0, 2).forEach((chain) => bullet(reportCausalText(chain.title, chain.impact, chain.links)));
+    row("Rủi ro tổng hợp", `${riskVi(payload.risk.level)} · ${payload.risk.overall}/100`);
+    row("Rủi ro chính", payload.risk.mainRisk);
+    if (payload.thesis?.monitoring.length) payload.thesis.monitoring.slice(0, 3).forEach((item) => bullet(`Cần theo dõi: ${item}`));
+    paragraph(`Chu kỳ hiện tại: ${payload.crossModule ? regimeVi(payload.crossModule.market.regimeLabel) : "chưa đủ dữ liệu"}. Đây là bối cảnh tham khảo, không thay thế phân tích mô hình lợi nhuận.`, MUTED);
+
     doc.addPage();
-    title("10. NHẬN XÉT CHUNG VỀ DOANH NGHIỆP VÀ CỔ PHIẾU");
+    title("8. GÓC NHÌN ORCA — NHẬN ĐỊNH TỔNG QUAN");
     const recommendation = recommendationVi(payload.technical.recommendation);
-    const valuationSentence = payload.forecast.expectedValue != null && payload.forecast.valuationConfidence >= 0.6 ? `Giá trị kỳ vọng theo các kịch bản là ${money(payload.forecast.expectedValue)} nghìn VNĐ.` : "Định giá chưa đủ độ tin cậy để kết luận; cần ưu tiên xác minh số liệu tài chính.";
-    paragraph(`Doanh nghiệp ${payload.profile.name} hoạt động trong lĩnh vực ${payload.profile.industry}. Sức khỏe tài chính hiện đạt ${payload.health.overall}/100; trạng thái kỹ thuật được đánh giá là ${recommendation}. ${valuationSentence}`);
-    paragraph(`Nhận định tổng quan: cổ phiếu phù hợp để tiếp tục theo dõi theo hướng ${recommendation.toLowerCase()}, với trọng tâm là khả năng duy trì tăng trưởng doanh thu, cải thiện lợi nhuận, tạo dòng tiền và giữ vị thế trong chu kỳ ngành. Mức độ tích cực chỉ được nâng lên khi các yếu tố hỗ trợ được xác nhận bằng kết quả kinh doanh và diễn biến giá; ngược lại, cần thận trọng nếu lợi nhuận, dòng tiền hoặc xu hướng kỹ thuật suy yếu liên tiếp.`);
-    doc.roundedRect(48, doc.y + 6, 499, 54, 4).fillAndStroke("#f2f7fb", LINE);
-    doc.font(bold).fontSize(10).fillColor(BLUE).text(`NHẬN ĐỊNH MỘT DÒNG: ${payload.symbol} — ${recommendation}; ${payload.forecast.expectedValue != null && payload.forecast.valuationConfidence >= 0.6 ? `giá trị kỳ vọng tham chiếu ${money(payload.forecast.expectedValue)} nghìn VNĐ, cần xác nhận bằng kết quả kinh doanh và diễn biến thị trường.` : "chưa đủ độ tin cậy để kết luận định giá; cần theo dõi kết quả kinh doanh, dòng tiền và xu hướng giá."}`, 60, doc.y + 17, { width: 475, lineGap: 2 });
-    doc.y += 58;
-    doc.moveDown(0.8);     doc.font(regular).fontSize(8).fillColor(MUTED).text("Báo cáo chỉ nhằm mục đích nghiên cứu và không phải là khuyến nghị đầu tư cá nhân.");
+    const valuationSentence = payload.forecast.expectedValue != null && payload.forecast.valuationConfidence >= 0.6 ? `Giá trị kỳ vọng theo các kịch bản là ${money(payload.forecast.expectedValue)} nghìn VNĐ.` : "Định giá chưa đủ độ tin cậy để đưa ra mức giá mục tiêu kết luận.";
+    paragraph(`Góc nhìn Orca: ${payload.profile.name} đang được đánh giá theo hướng ${thesisStanceVi(payload.thesis?.stance ?? "insufficient_data")}. Giá hiện tại là ${money(currentPrice)} nghìn VNĐ và trạng thái kỹ thuật là ${recommendation}. ${valuationSentence}`);
+    paragraph(`Luận điểm tích cực phụ thuộc vào khả năng duy trì tăng trưởng hoạt động, cải thiện chất lượng lợi nhuận và chuyển hóa thành dòng tiền. Ngược lại, quan điểm cần được hạ xuống nếu lợi nhuận suy yếu qua nhiều kỳ, đòn bẩy hoặc rủi ro tăng lên, hoặc vùng hỗ trợ kỹ thuật bị phá vỡ với thanh khoản bất thường.`);
+    if (payload.thesis?.monitoring.length) {
+      title("Ba đến năm biến số cần theo dõi");
+      payload.thesis.monitoring.slice(0, 5).forEach((item) => bullet(item));
+    }
+    doc.roundedRect(48, doc.y + 8, 499, 66, 4).fillAndStroke("#f2f7fb", LINE);
+    doc.font(bold).fontSize(10).fillColor(BLUE).text(`NHẬN ĐỊNH MỘT DÒNG: ${payload.symbol} — ${thesisStanceVi(payload.thesis?.stance ?? "insufficient_data")}; chỉ nên nâng đánh giá khi kết quả kinh doanh, dòng tiền và các catalyst được xác nhận bằng dữ liệu mới.`, 60, doc.y + 20, { width: 475, lineGap: 2 });
+    doc.y += 72;
+    doc.moveDown(0.8);
+    doc.font(regular).fontSize(8).fillColor(MUTED).text("Báo cáo phục vụ mục đích nghiên cứu; không phải khuyến nghị đầu tư cá nhân.");
     const range = doc.bufferedPageRange();
     for (let i = range.start; i < range.start + range.count; i += 1) { doc.switchToPage(i); doc.font(regular).fontSize(7.5).fillColor(MUTED).text(`ORCA FINANCIAL · ${payload.symbol} · BÁO CÁO PHÂN TÍCH`, 48, 805, { width: 350, lineBreak: false }); doc.text(`Trang ${i + 1}/${range.count}`, 430, 805, { width: 117, align: "right", lineBreak: false }); }
     doc.end();
