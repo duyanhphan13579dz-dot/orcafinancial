@@ -14,6 +14,7 @@ interface Item {
   exchange: string;
   sector: string;
   industry: string;
+  marketCap: number | null;
   price: number | null;
   changePercent: number | null;
   volume: number | null;
@@ -28,6 +29,7 @@ interface Item {
   isStale: boolean;
 }
 
+interface MarketCapGroup { key: string; name: string; count: number; tradingValue: number }
 interface Stats {
   ceiling: number;
   up: number;
@@ -213,11 +215,13 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
   const [exchange, setExchange] = useState("all");
   const [sector, setSector] = useState("all");
   const [industry, setIndustry] = useState("all");
+  const [marketCapGroup, setMarketCapGroup] = useState("all");
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [selected, setSelected] = useState<Item | null>(null);
   const marketStatus = String(meta?.marketStatus ?? "PRE_MARKET");
   const stats = meta?.stats as unknown as Stats | undefined;
+  const marketCapGroups = (meta?.marketCapGroups ?? []) as unknown as MarketCapGroup[];
   const dataQuality = meta?.dataQuality as { universeCount?: number; validQuoteCount?: number; staleCount?: number; exchanges?: string[] } | undefined;
   const realtime = meta?.realtime as { status?: string; ageSeconds?: number | null } | undefined;
   const [aiInsight, setAiInsight] = useState<{ insight?: string; provider?: string }>({});
@@ -251,11 +255,12 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
           (exchange === "all" || item.exchange === exchange) &&
           (sector === "all" || item.sector === sector) &&
           (industry === "all" || item.industry === industry) &&
+          (marketCapGroup === "all" || (marketCapGroup === "mega" && (item.marketCap ?? 0) >= 100000) || (marketCapGroup === "large" && (item.marketCap ?? 0) >= 30000 && (item.marketCap ?? 0) < 100000) || (marketCapGroup === "mid" && (item.marketCap ?? 0) >= 5000 && (item.marketCap ?? 0) < 30000) || (marketCapGroup === "small" && (item.marketCap ?? 0) < 5000 && item.marketCap != null)) &&
           (!deferredQuery ||
             item.symbol.includes(deferredQuery.toUpperCase()) ||
             item.name.toLowerCase().includes(deferredQuery.toLowerCase())),
       ),
-    [allItems, exchange, sector, industry, deferredQuery],
+    [allItems, exchange, sector, industry, marketCapGroup, deferredQuery],
   );
   const groups = useMemo(() => {
     const map = new Map<string, Item[]>();
@@ -270,8 +275,11 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
       }))
       .sort((a, b) => b.value - a.value);
   }, [filtered, metric]);
-  const visibleGroups = compact ? groups.slice(0, 6) : groups;
-
+    const visibleGroups = compact ? groups.slice(0, 6) : groups;
+  const visibleLayouts = useMemo(
+    () => visibleGroups.map((group) => ({ group, rects: treemap(group.items, metric) })),
+    [visibleGroups, metric],
+  );
   const sectorIntel = useMemo(() => groups.map((group) => {
     const valid = group.items.filter((item) => item.changePercent != null);
     const averageChange = valid.length ? valid.reduce((sum, item) => sum + (item.changePercent ?? 0), 0) / valid.length : null;
@@ -341,6 +349,14 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
             {industries.map((x) => <option key={x} value={x}>{x}</option>)}
           </select>
           <select
+            value={marketCapGroup}
+            onChange={(e) => setMarketCapGroup(e.target.value)}
+            className={`${selectClass} max-w-[160px]`}
+          >
+            <option value="all">Tất cả vốn hóa</option>
+            {marketCapGroups.map((group) => <option key={group.key} value={group.key}>{group.name} ({group.count})</option>)}
+          </select>
+          <select
             value={metric}
             onChange={(e) => setMetric(e.target.value as Metric)}
             className={selectClass}
@@ -367,8 +383,7 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
       )}
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          {visibleGroups.map((group, index) => {
-            const rects = treemap(group.items, metric);
+          {visibleLayouts.map(({ group, rects }, index) => {
             const large = index < 2 && !compact;
             return (
               <article
@@ -384,7 +399,7 @@ export function StockHeatmap({ compact = false }: { compact?: boolean }) {
                   </span>
                 </h3>
                 <div
-                  className={`relative ${
+                  className={`relative [content-visibility:auto] ${
                     large ? "h-[280px] sm:h-[310px]" : compact ? "h-[160px]" : "h-[200px] sm:h-[220px]"
                   }`}
                 >

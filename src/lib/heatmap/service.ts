@@ -1,6 +1,6 @@
 import { asc, desc } from "drizzle-orm";
 import { db } from "@/db";
-import { companies, priceSnapshots } from "@/db/schema";
+import { companies, companyProfiles, priceSnapshots } from "@/db/schema";
 import { FEATURED_SYMBOLS, getQuotes } from "@/lib/market";
 import { vndirectSearch } from "@/lib/connectors/providers";
 import { cached } from "@/lib/connectors/core";
@@ -17,6 +17,7 @@ export interface HeatmapItem {
   exchange: string;
   sector: string;
   industry: string;
+  marketCap: number | null;
   price: number | null;
   changePercent: number | null;
   volume: number | null;
@@ -186,13 +187,14 @@ export async function getMarketHeatmap(): Promise<{
   dataQuality: { universeCount: number; validQuoteCount: number; staleCount: number; noDataCount: number; exchanges: string[]; staleAfterSeconds: number };
   realtime: ReturnType<typeof getRealtimeStatus>;
   sectors: Array<{ name: string; count: number; tradingValue: number }>;
+  marketCapGroups: Array<{ key: string; name: string; count: number; tradingValue: number }>;
 }> {
   return cached("market:heatmap:v3", HEATMAP_CACHE_MS, async () => {
     // Background only — never block the response path
     void warmFeaturedSnapshots();
     void syncListedUniverse();
 
-    const [companyRows, snapshots] = await Promise.all([
+    const [companyRows, profileRows, snapshots] = await Promise.all([
       db
         .select({
           symbol: companies.symbol,
@@ -204,6 +206,9 @@ export async function getMarketHeatmap(): Promise<{
         })
         .from(companies)
         .orderBy(asc(companies.symbol)),
+      db
+        .select({ symbol: companyProfiles.symbol, marketCap: companyProfiles.marketCap })
+        .from(companyProfiles),
       // price_snapshots has one row per symbol; read the complete latest universe.
       // This avoids silently dropping older-but-valid symbols behind a global LIMIT.
       db
@@ -221,9 +226,10 @@ export async function getMarketHeatmap(): Promise<{
         .orderBy(desc(priceSnapshots.updatedAt)),
     ]);
 
+    const marketCapBySymbol = new Map(profileRows.map((row) => [row.symbol, row.marketCap != null ? Number(row.marketCap) : null]));
     const universe = new Map<
       string,
-      { symbol: string; name: string; exchange: string; sector: string; industry: string }
+      { symbol: string; name: string; exchange: string; sector: string; industry: string; marketCap: number | null }
     >();
     for (const symbol of FEATURED_SYMBOLS) {
       const benchmark = getBenchmarkForSymbol(symbol);
@@ -233,6 +239,7 @@ export async function getMarketHeatmap(): Promise<{
         exchange: "HOSE",
         sector: benchmark.sector,
         industry: benchmark.industry,
+        marketCap: null,
       });
     }
     for (const company of companyRows) {
@@ -244,6 +251,7 @@ export async function getMarketHeatmap(): Promise<{
           exchange: company.exchange.toUpperCase(),
           sector: normalizedSector(company.symbol, company.sector),
           industry: company.industry?.trim() || benchmark.industry || "Khác",
+          marketCap: null,
         });
       }
     }
@@ -252,6 +260,8 @@ export async function getMarketHeatmap(): Promise<{
     for (const snapshot of snapshots) {
       if (!latest.has(snapshot.symbol)) latest.set(snapshot.symbol, snapshot);
     }
+
+    for (const company of universe.values()) company.marketCap = marketCapBySymbol.get(company.symbol) ?? null;
 
     const missingSymbols = [...universe.keys()].filter((symbol) => !latest.has(symbol));
     void warmMissingQuoteBatch(missingSymbols);
@@ -293,6 +303,16 @@ export async function getMarketHeatmap(): Promise<{
       sectorMap.set(item.sector, current);
     }
 
+    const marketCapGroups = [
+      { key: "mega", name: "Siêu lớn", min: 100_000, max: Infinity },
+      { key: "large", name: "Lớn", min: 30_000, max: 100_000 },
+      { key: "mid", name: "Trung bình", min: 5_000, max: 30_000 },
+      { key: "small", name: "Nhỏ", min: 0, max: 5_000 },
+    ].map(({ key, name, min, max }) => {
+      const grouped = items.filter((item) => item.marketCap != null && item.marketCap >= min && item.marketCap < max);
+      return { key, name, count: grouped.length, tradingValue: grouped.reduce((sum, item) => sum + item.tradingValue, 0) };
+    });
+
     const stats = {
       ceiling: 0,
       up: 0,
@@ -325,6 +345,7 @@ export async function getMarketHeatmap(): Promise<{
       sectors: [...sectorMap.values()].sort(
         (a, b) => b.tradingValue - a.tradingValue || b.count - a.count,
       ),
+      marketCapGroups,
     };
   });
 }
