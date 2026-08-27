@@ -599,6 +599,12 @@ export default function StockPage({
   const [watchMsg, setWatchMsg] =
     useState<string | null>(null);
 
+  const [reportLoading, setReportLoading] =
+    useState(false);
+
+  const [reportError, setReportError] =
+    useState<string | null>(null);
+
   /* ==========================================================
    * STOCK / API DATA
    * ========================================================== */
@@ -1108,6 +1114,62 @@ export default function StockPage({
     };
 
   /* ==========================================================
+   * ANALYSIS REPORT
+   * ========================================================== */
+
+  const downloadAnalysisReport =
+    async () => {
+      if (reportLoading) return;
+
+      setReportLoading(true);
+      setReportError(null);
+
+      try {
+        const response = await fetch(
+          `/api/v1/stocks/${encodeURIComponent(symbol)}/analysis-report`,
+          {
+            credentials: "include",
+            cache: "no-store",
+          },
+        );
+
+        if (!response.ok) {
+          let message = `Không thể tạo báo cáo (HTTP ${response.status}).`;
+          try {
+            const payload = (await response.json()) as { error?: string };
+            if (payload.error) message = payload.error;
+          } catch {
+            // Keep the HTTP fallback when the server response is not JSON.
+          }
+          throw new Error(message);
+        }
+
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!contentType.includes("application/pdf")) {
+          throw new Error("Máy chủ không trả về file PDF hợp lệ.");
+        }
+
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = objectUrl;
+        anchor.download = `ORCA_${symbol}_BAO_CAO_PHAN_TICH.pdf`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      } catch (error) {
+        setReportError(
+          error instanceof Error
+            ? error.message
+            : "Không thể tải báo cáo phân tích.",
+        );
+      } finally {
+        setReportLoading(false);
+      }
+    };
+
+  /* ==========================================================
    * RENDER
    * ========================================================== */
 
@@ -1221,22 +1283,33 @@ export default function StockPage({
             </>
           )}
 
-          <button
-            onClick={
-              addToWatchlist
-            }
-            className="ml-auto rounded-md border border-cyan-700 bg-cyan-500/10 px-3 py-1.5 text-sm text-cyan-300 hover:bg-cyan-500/20"
-          >
-            {watchMsg ??
-              "+ Watchlist"}
-          </button>
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={downloadAnalysisReport}
+              disabled={reportLoading}
+              aria-busy={reportLoading}
+              className="inline-flex items-center gap-2 rounded-md border border-amber-500/70 bg-amber-500/10 px-3 py-1.5 text-sm font-semibold text-amber-200 transition-colors hover:bg-amber-500/20 disabled:cursor-wait disabled:opacity-60"
+            >
+              <span aria-hidden="true">{reportLoading ? "…" : "↓"}</span>
+              {reportLoading ? "Đang tạo báo cáo…" : "BÁO CÁO PHÂN TÍCH"}
+            </button>
+
+            <button
+              type="button"
+              onClick={addToWatchlist}
+              className="rounded-md border border-cyan-700 bg-cyan-500/10 px-3 py-1.5 text-sm text-cyan-300 hover:bg-cyan-500/20"
+            >
+              {watchMsg ?? "+ Watchlist"}
+            </button>
+          </div>
         </div>
 
-        {quoteError && (
+        {(quoteError || reportError) && (
           <div className="panel border-rose-800 bg-rose-950/30 p-4 text-sm text-rose-300">
-            Không lấy được dữ liệu cho{" "}
-            {symbol}:{" "}
-            {quoteError}
+            {quoteError
+              ? <>Không lấy được dữ liệu cho {symbol}: {quoteError}</>
+              : <>Không thể tải BÁO CÁO PHÂN TÍCH: {reportError}</>}
           </div>
         )}
 
