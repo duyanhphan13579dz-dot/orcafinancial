@@ -292,6 +292,9 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
   // EPS and BVPS are derived from the canonical synthetic statement sequence in this environment.
   // They remain estimates until provider-grade filings are available.
   const latestFinancial = financialQuarters[0];
+  const previousFinancial = financialQuarters[1];
+  const averageEquity = latestFinancial && previousFinancial ? (latestFinancial.balance.equity + previousFinancial.balance.equity) / 2 : latestFinancial?.balance.equity ?? 0;
+  const averageAssets = latestFinancial && previousFinancial ? (latestFinancial.balance.totalAssets + previousFinancial.balance.totalAssets) / 2 : latestFinancial?.balance.totalAssets ?? 0;
   const typicalPE = 14;
   const typicalPB = 2.0;
   const epsProxy = latestFinancial?.income.eps ?? currentPrice / typicalPE;
@@ -299,8 +302,8 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
 
   const ret1y = n > 252 ? ((closes[n - 1] - closes[n - 253]) / closes[n - 253]) * 100 : null;
   const ret6m = n > 132 ? ((closes[n - 1] - closes[n - 133]) / closes[n - 133]) * 100 : null;
-  const roeProxy = latestFinancial?.balance.equity ? latestFinancial.income.netIncome * 4 / latestFinancial.balance.equity * 100 : null;
-  const roaProxy = latestFinancial?.balance.totalAssets ? latestFinancial.income.netIncome * 4 / latestFinancial.balance.totalAssets * 100 : null;
+  const roeProxy = averageEquity > 0 && latestFinancial ? latestFinancial.income.netIncome * 4 / averageEquity * 100 : null;
+  const roaProxy = averageAssets > 0 && latestFinancial ? latestFinancial.income.netIncome * 4 / averageAssets * 100 : null;
   const rosProxy = latestFinancial?.income.revenue ? latestFinancial.income.netIncome / latestFinancial.income.revenue * 100 : null;
 
   // CAGR 3y (if enough data)
@@ -312,8 +315,8 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
 
   // DuPont decomposition: ROE (%) = net profit margin (%) × asset turnover × equity multiplier.
   const netProfitMargin = rosProxy ?? 0;
-  const assetTurnover = latestFinancial?.balance.totalAssets ? (latestFinancial.income.revenue * 4) / latestFinancial.balance.totalAssets : 0;
-  const equityMultiplier = latestFinancial?.balance.equity ? latestFinancial.balance.totalAssets / latestFinancial.balance.equity : 0;
+  const assetTurnover = averageAssets > 0 && latestFinancial ? (latestFinancial.income.revenue * 4) / averageAssets : 0;
+  const equityMultiplier = averageEquity > 0 && latestFinancial ? averageAssets / averageEquity : 0;
   const dupont = calculateDuPont(netProfitMargin, assetTurnover, equityMultiplier);
 
   // Financial Health: one canonical statement-based engine for the Basic module and PDF.

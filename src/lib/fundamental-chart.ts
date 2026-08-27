@@ -59,12 +59,15 @@ export function buildFundamentalChart(
 ): FundamentalChart {
   const bench = getBenchmarkForSymbol(symbol);
 
-  const quarters: QuarterChartPoint[] = qs.map((q) => {
+  const quarters: QuarterChartPoint[] = qs.map((q, index) => {
     const inc = q.income;
     const bal = q.balance;
     const cf = q.cashflow;
-    const roe = bal.equity > 0 ? (inc.netIncome * 4) / bal.equity * 100 : 0;
-    const roa = bal.totalAssets > 0 ? (inc.netIncome * 4) / bal.totalAssets * 100 : 0;
+    const previous = qs[index + 1];
+    const averageEquity = previous ? (bal.equity + previous.balance.equity) / 2 : bal.equity;
+    const averageAssets = previous ? (bal.totalAssets + previous.balance.totalAssets) / 2 : bal.totalAssets;
+    const roe = averageEquity > 0 ? (inc.netIncome * 4) / averageEquity * 100 : 0;
+    const roa = averageAssets > 0 ? (inc.netIncome * 4) / averageAssets * 100 : 0;
     const gm = inc.revenue > 0 ? (inc.grossProfit / inc.revenue) * 100 : 0;
     const nm = inc.revenue > 0 ? (inc.netIncome / inc.revenue) * 100 : 0;
     const em = inc.revenue > 0 ? (inc.ebitda / inc.revenue) * 100 : 0;
@@ -96,6 +99,7 @@ export function buildFundamentalChart(
   const equityMultiplier = 1 / (1 - bench.leverage);
   const benchRoe = bench.netMargin * bench.assetTurnover * equityMultiplier * 100;
   const benchRoa = bench.netMargin * bench.assetTurnover * 100;
+  const benchmarkEbitdaMargin = bench.operatingMargin + bench.depreciationPctFA * 0.55;
 
   const industry: IndustryBenchmark = {
     sector: bench.sector,
@@ -104,12 +108,13 @@ export function buildFundamentalChart(
     roaPct: Number(benchRoa.toFixed(2)),
     netMarginPct: Number((bench.netMargin * 100).toFixed(2)),
     grossMarginPct: Number((bench.grossMargin * 100).toFixed(2)),
-    ebitdaMarginPct: Number((bench.operatingMargin * 100 + 4).toFixed(2)), // EBITDA ≈ OPM + D&A
+    ebitdaMarginPct: Number((benchmarkEbitdaMargin * 100).toFixed(2)), // EBITDA ≈ OPM + D&A; fixed assets are ~55% of assets in the synthesis model
     debtEquity: Number((bench.leverage / (1 - bench.leverage)).toFixed(2)),
     assetTurnover: bench.assetTurnover,
   };
 
-  const latest = quarters[quarters.length - 1];
+  // Financial statements are newest-first; comparisons must use the current quarter.
+  const latest = quarters[0];
   const comparisons = latest
     ? [
         { metric: "roe", label: "ROE", company: latest.roePct, industry: industry.roePct, unit: "%" },

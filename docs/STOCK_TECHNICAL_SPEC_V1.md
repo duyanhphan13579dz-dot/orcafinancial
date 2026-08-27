@@ -79,3 +79,12 @@ Each indicator is normalized through a bounded ramp between a documented bad and
 DuPont is calculated using the standard identity `ROE (%) = net profit margin (%) × asset turnover × equity multiplier`, where asset turnover is annualized revenue divided by total assets and equity multiplier is total assets divided by equity. This formula is implemented in the exported `calculateDuPont` helper and covered by automated tests.
 
 The previous price-return proxy scorer remains in the source only as legacy code for backward compatibility; it is no longer used by `generateFundamentalReport`. The Basic report uses the canonical quarterly statement sequence and labels its data as synthetic/estimated until provider-grade filings are available.
+
+
+## Basic metrics reconciliation addendum — 27 August 2026
+
+The Basic tab was reconciled against the OrcaFinancial review criteria. ROE and ROA now annualize the current quarter and use average beginning/ending equity or assets when the prior quarter is available. This avoids overstating returns by dividing quarterly profit by a single end-period balance.
+
+The comparison chart now uses the newest-first quarter (`quarters[0]`) rather than the oldest returned quarter. Its company ROE/ROA values use the same average-balance method as the health engine. The industry EBITDA margin is derived from operating margin plus depreciation applied to the modeled fixed-asset share, rather than an unexplained flat four-percentage-point uplift.
+
+Non-finite values are treated as unavailable and excluded from group averages. The reconciliation is covered by tests for weight reconstruction, DuPont arithmetic, available-indicator scoring and newest-quarter selection.

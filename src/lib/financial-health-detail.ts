@@ -61,7 +61,7 @@ function clamp01(n: number): number {
 }
 
 function ramp(value: number, bad: number, good: number, higherIsBetter = true): number {
-  if (!Number.isFinite(value)) return 0.5;
+  if (!Number.isFinite(value)) return 0;
   const v = higherIsBetter ? value : -value;
   const b = higherIsBetter ? bad : -bad;
   const g = higherIsBetter ? good : -good;
@@ -77,8 +77,9 @@ function verdictOf(score: number): string {
 }
 
 function ind(key: string, label: string, value: number | null, unit: string, score01: number | null): IndicatorDetail {
-  const score = score01 == null ? null : Math.round(clamp01(score01) * 100);
-  return { key, label, value: value === null ? null : Number(value.toFixed(2)), unit, score, verdict: score == null ? "Chưa có dữ liệu" : verdictOf(score) };
+  const validValue = value !== null && Number.isFinite(value) ? value : null;
+  const score = validValue === null || score01 == null || !Number.isFinite(score01) ? null : Math.round(clamp01(score01) * 100);
+  return { key, label, value: validValue === null ? null : Number(validValue.toFixed(2)), unit, score, verdict: score == null ? "Chưa có dữ liệu" : verdictOf(score) };
 }
 
 function scoreAvg(indicators: IndicatorDetail[]): number {
@@ -97,6 +98,8 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
   const inc = latest.income;
   const bal = latest.balance;
   const cf = latest.cashflow;
+  const averageEquity = prev ? (bal.equity + prev.balance.equity) / 2 : bal.equity;
+  const averageAssets = prev ? (bal.totalAssets + prev.balance.totalAssets) / 2 : bal.totalAssets;
 
   // Derived indicators
   const currentRatio = bal.currentLiabilities > 0 ? bal.currentAssets / bal.currentLiabilities : null;
@@ -112,8 +115,8 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
   const inventoryTurnover = bal.inventory > 0 && inc.revenue > 0 ? (inc.costOfGoodsSold * 4) / bal.inventory : null;
   const dso = inc.revenue > 0 && bal.receivables > 0 ? (bal.receivables / (inc.revenue * 4)) * 365 : null;
 
-  const roe = bal.equity > 0 ? (inc.netIncome * 4) / bal.equity * 100 : null; // annualised %
-  const roa = bal.totalAssets > 0 ? (inc.netIncome * 4) / bal.totalAssets * 100 : null;
+  const roe = averageEquity > 0 ? (inc.netIncome * 4) / averageEquity * 100 : null; // annualised %
+  const roa = averageAssets > 0 ? (inc.netIncome * 4) / averageAssets * 100 : null;
   const netMargin = inc.revenue > 0 ? inc.netIncome / inc.revenue * 100 : null;
   const grossMargin = inc.revenue > 0 ? inc.grossProfit / inc.revenue * 100 : null;
 

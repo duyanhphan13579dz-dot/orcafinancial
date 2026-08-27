@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { evaluateHealthDetail } from "./financial-health-detail";
 import { calculateDuPont } from "./fundamental";
+import { buildFundamentalChart } from "./fundamental-chart";
 import type { FinancialQuarter } from "./financial-statements";
 
 function quarter(): FinancialQuarter {
@@ -82,5 +83,14 @@ describe("financial health scoring invariants", () => {
     const cashflow = health.groups.find((group) => group.key === "cashflow");
     expect(cashflow?.indicators.find((indicator) => indicator.key === "cfoToNi")?.score).not.toBeNull();
     expect(cashflow?.indicators.find((indicator) => indicator.key === "workingCapitalIntensity")?.score).not.toBeNull();
+  });
+
+  it("uses the newest-first quarter for Basic comparison cards", () => {
+    const newest = quarter();
+    const older = { ...quarter(), period: "Q3/2025", quarter: 3, income: { ...quarter().income, netIncome: 40 } };
+    const chart = buildFundamentalChart("VNM", [newest, older]);
+    const roe = chart.comparisons.find((comparison) => comparison.metric === "roe");
+    expect(roe?.company).toBe(chart.quarters[0]?.roePct);
+    expect(roe?.company).not.toBe(chart.quarters[1]?.roePct);
   });
 });
