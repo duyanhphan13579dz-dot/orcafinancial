@@ -229,6 +229,11 @@ function remember(r: IngestResult) {
 }
 
 /** Retention: drop intraday rows older than N days to keep the table lean. */
+/** Backward-compatible entry point for the scheduler and refresh endpoint. */
+export async function startIngestCycle(opts: { force?: boolean } = {}): Promise<IngestResult> {
+  return ingestCycle(opts);
+}
+
 export async function pruneOldIntraday(days = 30): Promise<number> {
   try {
     const res = await db.execute(sql`
