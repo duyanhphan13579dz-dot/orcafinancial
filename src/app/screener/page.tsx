@@ -7,16 +7,16 @@ import { ProtectedPage } from "@/components/ProtectedPage";
 
 const METHODS = [
   { id: "canslim", name: "CANSLIM", desc: "Bộ lọc tăng trưởng William O'Neil", defaultMin: 70 },
-  { id: "minervini", name: "Trend Template", desc: "Bộ lọc xu hướng Mark Minervini", defaultMin: 80 },
+  { id: "minervini", name: "Mẫu xu hướng", desc: "Bộ lọc xu hướng Mark Minervini", defaultMin: 80 },
   { id: "wyckoff", name: "Wyckoff", desc: "Xác định pha Tích lũy/Phân phối", defaultMin: 60 },
-  { id: "elliott", name: "Elliott Wave", desc: "Đếm sóng đẩy và điều chỉnh", defaultMin: 55 },
+  { id: "elliott", name: "Sóng Elliott", desc: "Đếm sóng đẩy và điều chỉnh", defaultMin: 55 },
 ];
 
 const PRESETS = [
   { value: 40, label: "Lỏng" },
   { value: 60, label: "Vừa" },
   { value: 75, label: "Chặt" },
-  { value: 90, label: "Elite" },
+  { value: 90, label: "Cao cấp" },
 ];
 
 export default function ScreenerPage() {
@@ -44,13 +44,11 @@ export default function ScreenerPage() {
     }
   };
 
-  // Reset slider when method changes
   useEffect(() => {
     const m = METHODS.find((x) => x.id === method);
     if (m) queueMicrotask(() => setMinScore(m.defaultMin));
   }, [method]);
 
-  // Re-run when either method or score changes (debounced)
   useEffect(() => {
     const t = setTimeout(() => void runScreen(method, minScore), 250);
     return () => clearTimeout(t);
@@ -64,10 +62,10 @@ export default function ScreenerPage() {
       <div className="space-y-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <div className="font-mono text-[10px] tracking-[0.3em] text-[#00d4ff] uppercase">ORCA Quantitative Screener</div>
-            <h1 className="display-xl text-4xl md:text-5xl text-white mt-1">Stock Screener</h1>
+            <div className="font-mono text-[10px] tracking-[0.3em] text-[#00d4ff] uppercase">BỘ LỌC ĐỊNH LƯỢNG ORCA</div>
+            <h1 className="display-xl text-4xl md:text-5xl text-white mt-1">Lọc cổ phiếu</h1>
             <p className="text-sm text-slate-400 mt-2 max-w-2xl">
-              {currentMethod.desc} · Điều chỉnh ngưỡng điểm tối thiểu để tinh chỉnh kết quả theo khẩu vị rủi ro của bạn.
+              {currentMethod.desc}
             </p>
           </div>
         <div className="flex gap-2 flex-wrap">
@@ -93,7 +91,7 @@ export default function ScreenerPage() {
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
               <div>
-                <div className="font-mono text-[10px] tracking-[0.25em] text-slate-400 uppercase">Min score threshold</div>
+                <div className="font-mono text-[10px] tracking-[0.25em] text-slate-400 uppercase">Ngưỡng điểm tối thiểu</div>
                 <div className="flex items-baseline gap-3 mt-1">
                   <span className="font-display text-5xl font-extrabold text-white tabular-nums leading-none">{minScore}</span>
                   <span className="font-mono text-xs text-slate-500">/ 100</span>
@@ -136,15 +134,15 @@ export default function ScreenerPage() {
 
           <div className="flex gap-3 lg:border-l lg:border-[#1a3558] lg:pl-5">
             <div className="text-center">
-              <div className="font-mono text-[9px] tracking-[0.25em] text-slate-500 uppercase">Universe</div>
+              <div className="font-mono text-[9px] tracking-[0.25em] text-slate-500 uppercase">Phạm vi</div>
               <div className="font-display text-2xl font-bold text-white tabular-nums">{total}</div>
             </div>
             <div className="text-center">
-              <div className="font-mono text-[9px] tracking-[0.25em] text-slate-500 uppercase">Passed</div>
+              <div className="font-mono text-[9px] tracking-[0.25em] text-slate-500 uppercase">Đạt</div>
               <div className="font-display text-2xl font-bold text-[#00d4ff] tabular-nums">{passedCount}</div>
             </div>
             <div className="text-center">
-              <div className="font-mono text-[9px] tracking-[0.25em] text-slate-500 uppercase">Hit rate</div>
+              <div className="font-mono text-[9px] tracking-[0.25em] text-slate-500 uppercase">Tỷ lệ đạt</div>
               <div className="font-display text-2xl font-bold text-emerald-300 tabular-nums">
                 {total > 0 ? `${((passedCount / total) * 100).toFixed(0)}%` : "—"}
               </div>

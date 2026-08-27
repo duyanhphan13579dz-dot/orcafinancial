@@ -66,7 +66,7 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
   if (!data) {
     return (
       <section className="panel overflow-hidden">
-        <div className="px-4 py-2.5 text-xs text-slate-500">On-chain · …</div>
+        <div className="px-4 py-2.5 text-xs text-slate-500">Chuỗi khối · …</div>
       </section>
     );
   }
@@ -74,7 +74,7 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
   if (!data.available) {
     return (
       <section className="panel overflow-hidden">
-        <div className="px-4 py-2.5 text-xs text-slate-500">On-chain · N/A</div>
+        <div className="px-4 py-2.5 text-xs text-slate-500">Chuỗi khối · Chưa có</div>
       </section>
     );
   }
@@ -91,7 +91,7 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
         className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-white/[0.02]"
       >
         <div className="flex min-w-0 items-center gap-2">
-          <span className="text-sm font-semibold text-white">On-chain</span>
+          <span className="text-sm font-semibold text-white">Chuỗi khối</span>
           <span className="rounded-full bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
             {data.sources.join(" · ") || "—"}
           </span>
@@ -103,11 +103,11 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
         <div className="space-y-2 border-t border-slate-800/80 px-3 pb-3 pt-2.5">
           <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
             <Tile
-              label="DeFi TVL"
+              label="TVL DeFi"
               value={fmtUsd(d.tvl)}
               sub={
                 d.tvlChange1d != null
-                  ? `${d.tvlChange1d >= 0 ? "+" : ""}${d.tvlChange1d.toFixed(1)}% 1d`
+                  ? `${d.tvlChange1d >= 0 ? "+" : ""}${d.tvlChange1d.toFixed(1)}% / 24 giờ`
                   : d.protocolName ?? undefined
               }
               subClass={
@@ -119,34 +119,34 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
               }
             />
             <Tile
-              label="Circ / Supply"
+              label="Lưu hành / cung"
               value={
                 s.circulatingRatio != null
                   ? `${(s.circulatingRatio * 100).toFixed(0)}%`
                   : "—"
               }
-              sub={s.circulating != null ? `${fmtNum(s.circulating, 0)} circ` : undefined}
+              sub={s.circulating != null ? `${fmtNum(s.circulating, 0)} lưu hành` : undefined}
             />
             <Tile
-              label="Market Cap"
+              label="Vốn hóa"
               value={fmtUsd(s.marketCap)}
               sub={s.fdv != null ? `FDV ${fmtUsd(s.fdv)}` : undefined}
             />
             <Tile
-              label="CEX vol conc."
+              label="Tập trung khối lượng CEX"
               value={
                 a.exchangeVolumeConcentration != null
                   ? `${(a.exchangeVolumeConcentration * 100).toFixed(0)}%`
                   : "—"
               }
-              sub="top-3 / 24h"
+              sub="Top 3 / 24 giờ"
             />
           </div>
 
           {data.bitcoin && (
             <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
               <Tile
-                label="Fee fast"
+                label="Phí ưu tiên"
                 value={
                   data.bitcoin.feeFastSatVb != null
                     ? `${data.bitcoin.feeFastSatVb} sat/vB`
@@ -154,7 +154,7 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
                 }
               />
               <Tile
-                label="Fee ~30m"
+                label="Phí khoảng 30 phút"
                 value={
                   data.bitcoin.feeHalfHourSatVb != null
                     ? `${data.bitcoin.feeHalfHourSatVb} sat/vB`
@@ -162,7 +162,7 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
                 }
               />
               <Tile
-                label="Hashrate"
+                label="Tốc độ băm"
                 value={
                   data.bitcoin.hashrateEh != null
                     ? `${data.bitcoin.hashrateEh.toFixed(0)} EH/s`
@@ -170,7 +170,7 @@ export function CryptoOnChainPanel({ symbol }: { symbol: string }) {
                 }
               />
               <Tile
-                label="Difficulty"
+                label="Độ khó"
                 value={
                   data.bitcoin.difficulty != null
                     ? fmtNum(data.bitcoin.difficulty, 0)

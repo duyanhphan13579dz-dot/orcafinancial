@@ -32,7 +32,7 @@ const SUGGESTIONS = [
 
 export default function AgentPage() {
   return (
-    <ProtectedPage featureName="AI Agent">
+    <ProtectedPage featureName="trợ lý AI">
       <AgentChatShell />
     </ProtectedPage>
   );
@@ -131,7 +131,6 @@ function AgentChatShell() {
       if (conversationId === id) startNewChat();
       setConversations((list) => list.filter((c) => c.id !== id));
     } catch {
-      // ignore
     }
   };
 
@@ -314,10 +313,10 @@ function AgentChatShell() {
           </button>
           <div className="min-w-0 flex-1">
             <h1 className="text-sm sm:text-base md:text-lg font-bold text-white truncate">
-              ORCA AI Agent
+              Trợ lý AI ORCA
             </h1>
             <p className="text-[10px] sm:text-xs text-slate-500 truncate hidden xs:block sm:block">
-              Thị trường · Tài chính cá nhân · DN · Wealth · Lịch sử lưu trên tài khoản
+              Thị trường · Tài chính cá nhân · Doanh nghiệp · Tài sản
             </p>
           </div>
           <button
@@ -434,9 +433,6 @@ function AgentChatShell() {
               )}
             </button>
           </div>
-          <p className="max-w-3xl mx-auto mt-1.5 text-[10px] text-slate-600 text-center sm:text-left">
-            Enter để gửi · Shift+Enter xuống dòng · Nội dung mang tính tham khảo
-          </p>
         </form>
       </div>
     </div>

@@ -16,8 +16,6 @@ interface CommodityPrice {
   currency: string;
   date: string;
   source: string | null;
-  dataAgeSeconds: number;
-  freshness: "live" | "delayed" | "stale";
   prevClose: number | null;
   high52w: number | null;
   low52w: number | null;
@@ -105,10 +103,9 @@ export default function CommoditiesPage() {
   };
 
   useEffect(() => {
-    const initialLoad = window.setTimeout(() => void load(), 0);
-    // Live board: re-poll every 30s so prices stay fresh without a page reload.
+    queueMicrotask(() => void load());
     const t = setInterval(() => void load(), 30_000);
-    return () => { window.clearTimeout(initialLoad); clearInterval(t); };
+    return () => clearInterval(t);
   }, []);
 
   const refreshNow = async () => {
@@ -135,24 +132,16 @@ export default function CommoditiesPage() {
 
   const groups = ["all", ...Array.from(new Set(items.map((c) => c.group)))];
   const sources = Array.from(new Set(items.map((c) => c.source).filter(Boolean)));
-  const pulse = Array.from(new Set(items.map((c) => c.group))).map((g) => {
-    const rows = items.filter((c) => c.group === g && c.changeDayPct !== null);
-    const avg = rows.length ? rows.reduce((sum, c) => sum + (c.changeDayPct ?? 0), 0) / rows.length : null;
-    return { group: g, avg };
-  }).filter((p) => p.avg !== null).sort((a, b) => (b.avg ?? 0) - (a.avg ?? 0));
-  const topGainer = [...items].filter((c) => c.changeDayPct !== null).sort((a, b) => (b.changeDayPct ?? -Infinity) - (a.changeDayPct ?? -Infinity))[0];
-  const topLoser = [...items].filter((c) => c.changeDayPct !== null).sort((a, b) => (a.changeDayPct ?? Infinity) - (b.changeDayPct ?? Infinity))[0];
 
   return (
     <ProtectedPage featureName="bảng giá hàng hóa">
       <div className="space-y-5">
-        {/* Header */}
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <div className="font-mono text-[10px] tracking-[0.3em] uppercase text-[#00d4ff]">Commodity Market</div>
-            <h1 className="display-xl text-2xl md:text-3xl text-white mt-1">Thị trường hàng hóa</h1>
+            <div className="font-mono text-[10px] tracking-[0.3em] uppercase text-[#00d4ff]">BẢNG GIÁ HÀNG HÓA</div>
+            <h1 className="display-xl text-2xl md:text-3xl text-white mt-1">Hàng hóa</h1>
             <p className="text-xs md:text-sm text-slate-400 mt-1.5">
-              {items.length} tài sản · giá quy đổi VND theo tỷ giá Vietcombank
+              {items.length} mặt hàng · quy đổi VND theo tỷ giá Vietcombank
               {status?.currentAuthority && (
                 <>
                   {" "}· nguồn đang dùng:{" "}
@@ -177,29 +166,6 @@ export default function CommoditiesPage() {
           </div>
         </div>
 
-        {/* Market Pulse */}
-        {items.length > 0 && (
-          <div className="panel p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="font-mono text-[10px] tracking-[0.25em] uppercase text-slate-400">Commodity Pulse</div>
-              <div className="text-[10px] text-slate-600">bình quân thay đổi trong ngày</div>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              {pulse.slice(0, 4).map((p) => (
-                <div key={p.group} className="rounded-lg bg-[#0a1d33]/70 px-3 py-2">
-                  <div className="text-[10px] text-slate-500">{GROUP_LABELS[p.group] ?? p.group}</div>
-                  <div className={`font-mono text-sm font-semibold ${pctClass(p.avg)}`}>{fmtPct(p.avg)}</div>
-                </div>
-              ))}
-            </div>
-            {(topGainer || topLoser) && <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-slate-400">
-              {topGainer && <span>Top gainer: <b className="text-emerald-400">{topGainer.name} {fmtPct(topGainer.changeDayPct)}</b></span>}
-              {topLoser && <span>Top loser: <b className="text-rose-400">{topLoser.name} {fmtPct(topLoser.changeDayPct)}</b></span>}
-            </div>}
-          </div>
-        )}
-
-        {/* Filters */}
         <div className="panel p-3 md:p-4 space-y-3">
           <input
             type="text"
@@ -313,10 +279,7 @@ export default function CommoditiesPage() {
                               {c.name}
                             </Link>
                             <div className="text-[10px] text-slate-500 mt-0.5">
-                              {GROUP_LABELS[c.group] ?? c.group} · {c.unit} · {c.source ?? "—"}
-                            </div>
-                            <div className={`text-[9px] mt-1 ${c.freshness === "live" ? "text-emerald-400" : c.freshness === "delayed" ? "text-amber-400" : "text-rose-400"}`}>
-                              {c.freshness === "live" ? "● Live" : c.freshness === "delayed" ? "● Delayed" : "● Stale"} · {c.dataAgeSeconds < 60 ? `${c.dataAgeSeconds}s trước` : `${Math.round(c.dataAgeSeconds / 60)}m trước`}
+                              {GROUP_LABELS[c.group] ?? c.group} · {c.unit}
                             </div>
                           </td>
                           <td className="py-3 px-3 text-right font-mono tabular-nums text-white">{fmtVnd(c.priceVnd)}</td>

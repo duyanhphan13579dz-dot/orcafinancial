@@ -1,0 +1,139 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Forex Engine Status",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "2": { "text": "HEALTHY", "color": "green" }, "1": { "text": "DEGRADED", "color": "orange" }, "0": { "text": "DOWN", "color": "red" }, "-1": { "text": "UNKNOWN", "color": "purple" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 2 }] }
+        }
+      },
+      "targets": [{ "expr": "orca_forex_status{component=\"overall\"}", "refId": "A" }]
+    },
+    {
+      "title": "DB Status",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "id": 2,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "2": { "text": "UP", "color": "green" }, "1": { "text": "DEGRADED", "color": "orange" }, "0": { "text": "DOWN", "color": "red" } } }
+          ]
+        }
+      },
+      "targets": [{ "expr": "orca_db_status", "refId": "A" }]
+    },
+    {
+      "title": "Uptime",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "id": 3,
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{ "expr": "orca_forex_uptime_seconds", "refId": "A" }]
+    },
+    {
+      "title": "DB Latency",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "id": 4,
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [{ "expr": "orca_db_latency_last_ms", "refId": "A" }]
+    },
+    {
+      "title": "Component Health",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "id": 5,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "2": { "text": "OK", "color": "green" }, "1": { "text": "DEG", "color": "orange" }, "0": { "text": "DOWN", "color": "red" }, "-1": { "text": "?", "color": "purple" } } }
+          ]
+        }
+      },
+      "targets": [{ "expr": "orca_forex_status{component!=\"overall\"}", "legendFormat": "{{component}}", "refId": "A" }]
+    },
+    {
+      "title": "Provider Success Rate %",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 10,
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
+      "targets": [{ "expr": "orca_forex_provider_success_rate", "legendFormat": "{{provider}}", "refId": "A" }]
+    },
+    {
+      "title": "Provider Avg Latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 11,
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [{ "expr": "orca_forex_provider_latency_avg_ms", "legendFormat": "{{provider}}", "refId": "A" }]
+    },
+    {
+      "title": "Provider Errors (rate)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "id": 12,
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [{ "expr": "rate(orca_forex_provider_error_total[5m])", "legendFormat": "{{provider}}", "refId": "A" }]
+    },
+    {
+      "title": "Cache Hit Rate %",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "id": 13,
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
+      "targets": [{ "expr": "orca_forex_cache_hit_rate", "legendFormat": "{{cache}}", "refId": "A" }]
+    },
+    {
+      "title": "Analysis Latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "id": 14,
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        { "expr": "orca_forex_analysis_latency_avg_ms", "legendFormat": "avg", "refId": "A" },
+        { "expr": "orca_forex_analysis_latency_last_ms", "legendFormat": "last", "refId": "B" }
+      ]
+    },
+    {
+      "title": "OHLCV Freshness",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "id": 15,
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        { "expr": "orca_forex_ohlcv_freshness_avg_ms", "legendFormat": "avg age", "refId": "A" },
+        { "expr": "orca_forex_ohlcv_freshness_max_ms", "legendFormat": "max age", "refId": "B" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["orca", "forex"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "ORCA Forex Engine",
+  "uid": "orca-forex-engine",
+  "version": 1
+}

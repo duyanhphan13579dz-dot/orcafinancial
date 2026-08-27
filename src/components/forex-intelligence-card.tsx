@@ -3,6 +3,10 @@
 import { memo, useState } from "react";
 import { api } from "@/lib/client";
 
+function displayLabel(value: string): string {
+  return ({ BUY: "Mua", SELL: "Bán", LONG: "Mua", SHORT: "Bán", NEUTRAL: "Trung tính", BULLISH: "Tăng", BEARISH: "Giảm", HIGH: "Cao", MEDIUM: "Trung bình", LOW: "Thấp" } as Record<string, string>)[value] ?? value;
+}
+
 function fmt(n: number | null | undefined, d = 5) {
   if (n == null || !Number.isFinite(n)) return "—";
   return n.toFixed(d);
@@ -63,9 +67,9 @@ export function ForexIntelligenceCard({
           result: "OPEN",
         }),
       });
-      setJournalMsg("Đã thêm vào Journal");
+      setJournalMsg("Đã thêm vào nhật ký");
     } catch (e) {
-      setJournalMsg(e instanceof Error ? e.message : "Lỗi journal");
+      setJournalMsg(e instanceof Error ? e.message : "Lỗi nhật ký");
     } finally {
       setBusy(false);
     }
@@ -89,9 +93,9 @@ export function ForexIntelligenceCard({
           addToJournal: true,
         }),
       });
-      setJournalMsg("Đã mở position + journal");
+      setJournalMsg("Đã mở vị thế và thêm nhật ký");
     } catch (e) {
-      setJournalMsg(e instanceof Error ? e.message : "Lỗi portfolio");
+      setJournalMsg(e instanceof Error ? e.message : "Lỗi danh mục");
     } finally {
       setBusy(false);
     }
@@ -102,10 +106,10 @@ export function ForexIntelligenceCard({
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="text-[10px] uppercase tracking-wide text-slate-400">
-            Trade Intelligence · {timeframeLabel}
+            Phân tích giao dịch · {timeframeLabel}
           </div>
           <div className="mt-1 flex flex-wrap items-baseline gap-2">
-            <span className="text-3xl font-black text-white">{signal}</span>
+            <span className="text-3xl font-black text-white">{displayLabel(signal)}</span>
             {conf != null && (
               <span className="rounded bg-slate-900/50 px-2 py-0.5 font-mono text-lg text-[#00d4ff]">
                 {conf}%
@@ -115,16 +119,15 @@ export function ForexIntelligenceCard({
         </div>
         {a?.tradeSetup?.setupQuality && (
           <span className="rounded border border-slate-600 px-2 py-1 text-xs font-bold text-white">
-            Grade {a.tradeSetup.setupQuality}
+            Mức {a.tradeSetup.setupQuality}
           </span>
         )}
       </div>
 
-      {/* Compact intel chips */}
       <div className="mt-3 flex flex-wrap gap-1.5 text-[10px]">
         {mtf && (
           <span className="rounded-full border border-slate-700 bg-slate-900/40 px-2 py-0.5 text-slate-300">
-            MTF {mtf.overall} · {(mtf.alignment * 100).toFixed(0)}%
+            MTF {displayLabel(mtf.overall)} · {(mtf.alignment * 100).toFixed(0)}%
           </span>
         )}
         {fx?.session && (
@@ -139,12 +142,12 @@ export function ForexIntelligenceCard({
         )}
         {a?.volatilityRegime && (
           <span className="rounded-full border border-slate-700 bg-slate-900/40 px-2 py-0.5 text-slate-300">
-            Vol {a.volatilityRegime}
+            Biến động {a.volatilityRegime}
           </span>
         )}
         {macro?.eventRisk && macro.eventRisk !== "NONE" && (
           <span className="rounded-full border border-amber-700/60 bg-amber-500/10 px-2 py-0.5 text-amber-200">
-            Macro {macro.eventRisk}
+            Vĩ mô {macro.eventRisk}
           </span>
         )}
       </div>
@@ -156,13 +159,13 @@ export function ForexIntelligenceCard({
       )}
 
       <div className="mt-4 grid grid-cols-2 gap-y-2 text-xs">
-        <span className="text-slate-500">Entry</span>
+        <span className="text-slate-500">Điểm vào</span>
         <span className="text-right font-mono text-white">{fmt(a?.entryPrice)}</span>
-        <span className="text-slate-500">Stop Loss</span>
+        <span className="text-slate-500">Dừng lỗ</span>
         <span className="text-right font-mono text-rose-300">{fmt(a?.stopLoss)}</span>
-        <span className="text-slate-500">Take Profit 1</span>
+        <span className="text-slate-500">Chốt lời 1</span>
         <span className="text-right font-mono text-emerald-300">{fmt(a?.takeProfit)}</span>
-        <span className="text-slate-500">Take Profit 2</span>
+        <span className="text-slate-500">Chốt lời 2</span>
         <span className="text-right font-mono text-emerald-300/80">
           {fmt(a?.takeProfit2)}
         </span>
@@ -179,7 +182,7 @@ export function ForexIntelligenceCard({
       {analyst?.traderSummary && (
         <div className="mt-3 rounded border border-slate-800 bg-slate-900/40 p-2 text-[10px] text-slate-300">
           <div className="font-semibold text-white">
-            {analyst.traderSummary.bias} · Risk {analyst.traderSummary.risk}
+            {displayLabel(analyst.traderSummary.bias)} · Rủi ro {analyst.traderSummary.risk}
           </div>
           <div className="mt-0.5">{analyst.traderSummary.action}</div>
         </div>
@@ -217,7 +220,7 @@ export function ForexIntelligenceCard({
           onClick={() => void addJournal()}
           className="min-h-9 rounded bg-slate-800 px-3 text-xs text-white disabled:opacity-40"
         >
-          + Journal
+          + Nhật ký
         </button>
         <button
           type="button"
@@ -225,7 +228,7 @@ export function ForexIntelligenceCard({
           onClick={() => void openPosition()}
           className="min-h-9 rounded bg-[#00d4ff]/90 px-3 text-xs font-semibold text-[#0A2540] disabled:opacity-40"
         >
-          Open position
+          Mở vị thế
         </button>
       </div>
       {journalMsg && (

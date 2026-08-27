@@ -14,19 +14,19 @@ export function ValueChainVisual({ chain }: { chain: ValueChain }) {
     <div className="panel p-5 relative scanlines overflow-hidden">
       <div className="flex items-end justify-between flex-wrap gap-3 mb-5">
         <div>
-          <div className="font-mono text-[10px] tracking-[0.3em] text-[#00d4ff] uppercase">Porter value chain</div>
+          <div className="font-mono text-[10px] tracking-[0.3em] text-[#00d4ff] uppercase">Chuỗi giá trị Porter</div>
           <div className="font-display text-xl md:text-2xl font-extrabold text-white tracking-tight mt-1">
             Chuỗi giá trị · <span className="italic text-[#7aa8d4] text-base">{chain.industry}</span>
           </div>
         </div>
         <div className="font-mono text-[10px] text-slate-500">
-          model <span className="text-[#00d4ff]">{chain.modelVersion}</span> · {chain.primary.length + chain.support.length} activities
+          mô hình <span className="text-[#00d4ff]">{chain.modelVersion}</span> · {chain.primary.length + chain.support.length} hoạt động
         </div>
       </div>
 
-      {/* Primary pipeline */}
+      {/* Dòng hoạt động chính */}
       <div className="mb-2 flex items-center gap-2">
-        <span className="font-mono text-[10px] tracking-[0.25em] uppercase text-cyan-300">Primary</span>
+        <span className="font-mono text-[10px] tracking-[0.25em] uppercase text-cyan-300">Chính</span>
         <div className="flex-1 h-px bg-gradient-to-r from-cyan-500/40 via-cyan-500/10 to-transparent" />
       </div>
       <div className="chain-track reveal-stagger">
@@ -48,9 +48,9 @@ export function ValueChainVisual({ chain }: { chain: ValueChain }) {
         ))}
       </div>
 
-      {/* Support rail */}
+      {/* Nhóm hoạt động hỗ trợ */}
       <div className="mt-6 mb-2 flex items-center gap-2">
-        <span className="font-mono text-[10px] tracking-[0.25em] uppercase text-amber-300">Support</span>
+        <span className="font-mono text-[10px] tracking-[0.25em] uppercase text-amber-300">Hỗ trợ</span>
         <div className="flex-1 h-px bg-gradient-to-r from-amber-500/40 via-amber-500/10 to-transparent" />
       </div>
       <div className="chain-rail reveal-stagger">

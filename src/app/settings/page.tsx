@@ -31,7 +31,6 @@ function SettingsInner() {
   const { user, logout } = useAuth();
   const [tab, setTab] = useState<TabId>("appearance");
 
-  // Sync tab with ?tab= query param so links/back-button work.
   useEffect(() => {
     const q = params.get("tab") as TabId | null;
     if (q && TABS.some((t) => t.id === q)) queueMicrotask(() => setTab(q));
@@ -46,9 +45,8 @@ function SettingsInner() {
 
   return (
     <div className="space-y-5">
-      {/* Header */}
       <header>
-        <div className="font-mono text-[10px] tracking-[0.3em] uppercase text-[#00d4ff]">ORCA Account</div>
+        <div className="font-mono text-[10px] tracking-[0.3em] uppercase text-[#00d4ff]">TÀI KHOẢN ORCA</div>
         <h1 className="display-xl text-3xl md:text-4xl text-white mt-1">Cài đặt</h1>
         {user && (
           <p className="text-sm text-slate-400 mt-2">
@@ -58,9 +56,7 @@ function SettingsInner() {
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-5">
-        {/* ── Sidebar (desktop) / horizontal scroller (mobile) ── */}
         <nav className="lg:sticky lg:top-24 lg:self-start">
-          {/* Mobile: horizontal chips */}
           <div className="lg:hidden -mx-4 px-4 overflow-x-auto scrollbar-hide">
             <div className="flex gap-2 pb-2 w-max">
               {TABS.map((t) => (
@@ -80,7 +76,6 @@ function SettingsInner() {
             </div>
           </div>
 
-          {/* Desktop: vertical list */}
           <div className="hidden lg:block panel p-2">
             {TABS.map((t) => (
               <button
@@ -118,7 +113,6 @@ function SettingsInner() {
           </div>
         </nav>
 
-        {/* ── Panel content ── */}
         <div className="min-w-0">
           <div className="lg:hidden mb-3">
             <h2 className="font-display text-lg font-bold text-white">
@@ -135,7 +129,6 @@ function SettingsInner() {
           {tab === "data" && <DataPanel />}
           {tab === "support" && <SupportPanel />}
 
-          {/* Mobile logout */}
           <div className="lg:hidden mt-5">
             <button
               onClick={() => void logout()}

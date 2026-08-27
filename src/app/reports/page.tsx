@@ -210,7 +210,7 @@ export default function ReportsPage() {
         setPreview({ type, date, html });
         setReports((prev) => {
           const title =
-            type === "morning" ? `Morning Brief ${date}` : `Market Summary ${date}`;
+            type === "morning" ? `Bản tin sáng ${date}` : `Tóm tắt thị trường ${date}`;
           const rest = prev.filter((r) => !(r.type === type && r.date === date));
           return [{ type, date, title, createdAt: new Date().toISOString() }, ...rest];
         });
@@ -432,32 +432,32 @@ export default function ReportsPage() {
     <div className="panel p-3 relative overflow-hidden bg-gradient-to-r from-[#0a1d33] via-[#0A2540] to-[#0a1d33]">
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-[11px] font-mono">
         <div>
-          <div className="text-[9px] tracking-[0.25em] uppercase text-slate-500">Scheduler</div>
+          <div className="text-[9px] tracking-[0.25em] uppercase text-slate-500">Lịch tự động</div>
           <div className="text-white mt-0.5 flex items-center gap-1.5">
             <span
               className={`h-1.5 w-1.5 rounded-full ${
                 scheduler.started ? "bg-emerald-400 live-dot" : "bg-rose-500"
               }`}
             />
-            {scheduler.started ? "RUNNING" : "STOPPED"}
+            {scheduler.started ? "ĐANG CHẠY" : "ĐÃ DỪNG"}
           </div>
         </div>
         <div>
-          <div className="text-[9px] tracking-[0.25em] uppercase text-slate-500">Tick interval</div>
+          <div className="text-[9px] tracking-[0.25em] uppercase text-slate-500">Chu kỳ</div>
           <div className="text-white mt-0.5 tabular-nums">
-            {(scheduler.tickMs / 1000).toFixed(0)}s · retry ≤ {scheduler.maxRetry}
+            {(scheduler.tickMs / 1000).toFixed(0)}s · thử lại ≤ {scheduler.maxRetry}
           </div>
         </div>
         <div>
-          <div className="text-[9px] tracking-[0.25em] uppercase text-slate-500">Last tick</div>
+          <div className="text-[9px] tracking-[0.25em] uppercase text-slate-500">Lần chạy gần nhất</div>
           <div className="text-white mt-0.5">{timeAgo(scheduler.lastTickAt)}</div>
         </div>
         <div>
-          <div className="text-[9px] tracking-[0.25em] uppercase text-slate-500">Tick count</div>
+          <div className="text-[9px] tracking-[0.25em] uppercase text-slate-500">Số lần chạy</div>
           <div className="text-white mt-0.5 tabular-nums">#{scheduler.tickCount}</div>
         </div>
         <div>
-          <div className="text-[9px] tracking-[0.25em] uppercase text-slate-500">VN local</div>
+          <div className="text-[9px] tracking-[0.25em] uppercase text-slate-500">Giờ Việt Nam</div>
           <div className="text-white mt-0.5 tabular-nums">
             {pad2(clock.hh)}:{pad2(clock.mm)} ·{" "}
             {isWeekday ? "ngày giao dịch" : "cuối tuần"}
@@ -481,19 +481,18 @@ export default function ReportsPage() {
           <div className="relative flex flex-wrap items-end justify-between gap-6">
             <div>
               <div className="font-mono text-[10px] tracking-[0.35em] uppercase text-[#00d4ff]">
-                ORCA Newsroom · Publishing desk
+                BẢN TIN ORCA · BIÊN TẬP
               </div>
               <h1 className="display-xl text-5xl md:text-6xl text-white mt-2">
                 Bản tin <span className="italic text-[#7aa8d4]">hàng ngày</span>
               </h1>
               <p className="font-display text-base text-slate-300 mt-3 max-w-2xl leading-relaxed">
-                Hai ấn phẩm tự động — Morning Brief 07:30 và Market Summary 15:15 (ICT), mỗi ngày giao
-                dịch. Nhấn <strong>Phát hành ngay</strong> để tạo bản tin thủ công.
+                Hai ấn phẩm tự động — Bản tin sáng 07:30 và tóm tắt thị trường 15:15 (ICT) mỗi ngày giao dịch. Nhấn <strong>Phát hành ngay</strong> để tạo bản tin thủ công.
               </p>
             </div>
             <div className="text-right">
               <div className="font-mono text-[10px] tracking-[0.25em] uppercase text-slate-500">
-                VN local time · GMT+7
+                Giờ Việt Nam · GMT+7
               </div>
               <div className="font-display text-4xl md:text-5xl font-extrabold text-white tabular-nums leading-none mt-1">
                 {pad2(clock.hh)}
@@ -532,7 +531,7 @@ export default function ReportsPage() {
             "#0ea5e9",
             "#bae6fd",
             "☀",
-            "Morning Brief",
+            "Bản tin sáng",
             "Điểm tin vĩ mô & thị trường qua đêm, kèm chiến lược thận trọng trong ngày.",
             { hh: 7, mm: 30 },
             morningToday,
@@ -543,7 +542,7 @@ export default function ReportsPage() {
             "#0A2540",
             "#7dd3fc",
             "🌙",
-            "Market Summary",
+            "Tóm tắt thị trường",
             "Đọc vị phiên vừa khép và kế hoạch hành động phiên tiếp theo với ba kịch bản.",
             { hh: 15, mm: 15 },
             summaryToday,
@@ -554,7 +553,7 @@ export default function ReportsPage() {
         <section className="panel p-5">
           <div className="flex items-end justify-between mb-4">
             <div>
-              <div className="font-mono text-[10px] tracking-[0.3em] uppercase text-[#00d4ff]">Archive</div>
+              <div className="font-mono text-[10px] tracking-[0.3em] uppercase text-[#00d4ff]">Kho lưu trữ</div>
               <h3 className="font-display text-xl font-extrabold text-white tracking-tight">
                 Lịch sử phát hành
               </h3>
@@ -589,7 +588,7 @@ export default function ReportsPage() {
                             className="font-mono text-[10px] tracking-[0.25em] uppercase"
                             style={{ color: accent }}
                           >
-                            {isMorning ? "Morning Brief" : "Market Summary"}
+                            {isMorning ? "Bản tin sáng" : "Tóm tắt thị trường"}
                           </span>
                           <span className="font-display text-base font-bold text-white tabular-nums">
                             {r.date}
@@ -623,7 +622,7 @@ export default function ReportsPage() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="font-display text-lg font-bold text-white truncate">
-                {preview.type === "morning" ? "Morning Brief" : "Market Summary"} ·{" "}
+                {preview.type === "morning" ? "Bản tin sáng" : "Tóm tắt thị trường"} ·{" "}
                 <span className="tabular-nums">{preview.date}</span>
               </div>
               <div className="flex gap-2 flex-wrap">

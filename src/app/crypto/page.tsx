@@ -19,7 +19,6 @@ import {
   fmtVol,
   usePoll,
 } from "@/lib/client";
-import CryptoScalpingBoard from "@/components/crypto-scalping-board";
 
 import {
   createBinanceMarketWebSocket,
@@ -97,6 +96,7 @@ const PREFETCH_BATCH_DELAY = 300;
  * User mở detail vẫn có thể request dữ liệu đầy đủ.
  */
 const PREFETCH_TIMEFRAME = "1h";
+const PREFETCH_CANDLE_LIMIT = 120;
 
 /*
  * Delay trước khi bắt đầu background prefetch.
@@ -179,14 +179,8 @@ export default function CryptoPage() {
     Record<string, RealtimePatch>
   >({});
 
-  /*
-   * Chỉ dùng để kích hoạt render theo batch.
-   *
-   * Không chứa data.
-   */
-  const [realtimeVersion, setRealtimeVersion] =
-    useState(0);
-  const [realtimeSnapshot, setRealtimeSnapshot] = useState<Record<string, RealtimePatch>>({});
+  const [realtimeSnapshot, setRealtimeSnapshot] =
+    useState<Record<string, RealtimePatch>>({});
 
   const realtimeCommitTimerRef =
     useRef<ReturnType<typeof setTimeout> | null>(
@@ -241,7 +235,6 @@ export default function CryptoPage() {
       realtimeDirtyRef.current = false;
 
       setRealtimeSnapshot({ ...realtimeRef.current });
-      setRealtimeVersion((version) => version + 1);
     }, REALTIME_RENDER_INTERVAL);
   }, []);
 
@@ -354,20 +347,49 @@ export default function CryptoPage() {
 
       try {
         /*
-         * Chỉ warm metadata. Historical candles thuộc về Binance WebSocket
-         * client của detail page và không nên tạo REST traffic nền.
+         * Profile + OHLCV chạy song song.
          */
-        const profileResult = await fetch(
-          `/api/v1/crypto/${encodeURIComponent(normalized)}`,
-          {
-            method: "GET",
-            cache: "force-cache",
-            credentials: "same-origin",
-          },
-        );
+        const [
+          profileResult,
+          ohlcvResult,
+        ] = await Promise.allSettled([
+          fetch(
+            `/api/v1/crypto/${encodeURIComponent(
+              normalized,
+            )}`,
+            {
+              method: "GET",
+              cache: "force-cache",
+              credentials: "same-origin",
+            },
+          ),
 
-        if (profileResult.ok) {
-          prefetchedRef.current.add(key);
+          fetch(
+            `/api/v1/crypto/${encodeURIComponent(
+              normalized,
+            )}/ohlcv?timeframe=${PREFETCH_TIMEFRAME}&limit=${PREFETCH_CANDLE_LIMIT}`,
+            {
+              method: "GET",
+              cache: "force-cache",
+              credentials: "same-origin",
+            },
+          ),
+        ]);
+
+        const profileOk =
+          profileResult.status ===
+            "fulfilled" &&
+          profileResult.value.ok;
+
+        const ohlcvOk =
+          ohlcvResult.status ===
+            "fulfilled" &&
+          ohlcvResult.value.ok;
+
+        if (profileOk && ohlcvOk) {
+          prefetchedRef.current.add(
+            key,
+          );
         }
       } catch {
         /*
@@ -484,14 +506,6 @@ export default function CryptoPage() {
   /* ---------------------------------------------------------------------- */
 
   const mergedRows = useMemo(() => {
-    /*
-     * realtimeVersion cố tình được đọc ở đây.
-     *
-     * Mỗi 500ms component mới lấy snapshot realtime
-     * mới nhất.
-     */
-    void realtimeVersion;
-
     const realtime = realtimeSnapshot;
 
     return (
@@ -526,11 +540,7 @@ export default function CryptoPage() {
           live.timestamp,
       };
     });
-  }, [
-    feed.data,
-    realtimeVersion,
-    realtimeSnapshot,
-  ]);
+  }, [feed.data, realtimeSnapshot]);
 
   /* ---------------------------------------------------------------------- */
   /* SEARCH + SORT                                                          */
@@ -600,12 +610,12 @@ export default function CryptoPage() {
 
   const websocketText =
     wsStatus === "connected"
-      ? "BINANCE LIVE"
+      ? "BINANCE TRỰC TIẾP"
       : wsStatus === "reconnecting"
-        ? "RECONNECTING"
+        ? "ĐANG KẾT NỐI LẠI"
         : wsStatus === "connecting"
-          ? "CONNECTING"
-          : "FALLBACK";
+          ? "ĐANG KẾT NỐI"
+          : "DỰ PHÒNG";
 
   const websocketDot =
     wsStatus === "connected"
@@ -630,7 +640,7 @@ export default function CryptoPage() {
 
         <div>
           <div className="font-mono text-[10px] tracking-[.3em] text-[#00d4ff] uppercase">
-            Binance Market Intelligence
+            PHÂN TÍCH THỊ TRƯỜNG BINANCE
           </div>
 
           <h1 className="text-3xl font-black text-white mt-1">
@@ -638,7 +648,7 @@ export default function CryptoPage() {
           </h1>
 
           <p className="text-sm text-slate-400 mt-1">
-            Giá USDT realtime · Binance WebSocket
+            Giá USDT trực tiếp · Binance WebSocket
           </p>
         </div>
 
@@ -725,8 +735,6 @@ export default function CryptoPage() {
       {/* MARKET TABLE                                                       */}
       {/* ------------------------------------------------------------------ */}
 
-      <CryptoScalpingBoard />
-
       <div className="panel overflow-x-auto">
 
         <table className="w-full min-w-[760px] text-sm">
@@ -735,7 +743,7 @@ export default function CryptoPage() {
             <tr className="border-b border-slate-700 text-xs text-slate-500">
 
               <th className="text-left p-3">
-                Coin
+                Mã crypto
               </th>
 
               <th className="text-right">
@@ -751,7 +759,7 @@ export default function CryptoPage() {
               </th>
 
               <th className="text-right">
-                Volume 24h
+                Khối lượng 24h
               </th>
 
               <th className="text-right pr-3">
@@ -775,9 +783,7 @@ export default function CryptoPage() {
                * Không tạo state riêng cho từng row.
                */
               const live =
-                realtimeSnapshot[
-                  normalized
-                ];
+                realtimeSnapshot[normalized];
 
               const handlePrefetch =
                 () => {

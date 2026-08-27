@@ -17,12 +17,11 @@ interface AccentColor {
 }
 
 const THEMES = [
-  { value: "dark", label: "Tối (Dark)", icon: "🌙" },
-  { value: "light", label: "Sáng (Light)", icon: "☀️" },
+  { value: "dark", label: "Tối", icon: "🌙" },
+  { value: "light", label: "Sáng", icon: "☀️" },
   { value: "system", label: "Theo hệ thống", icon: "💻" },
 ];
 
-/** Apply preferences to the document immediately (live preview). */
 export function applyAppearance(p: Partial<Prefs>) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
@@ -72,7 +71,7 @@ export function AppearancePanel() {
     if (!prefs) return;
     const next = { ...prefs, ...patch };
     setPrefs(next);
-    applyAppearance(patch); // instant preview
+    applyAppearance(patch);
     setSaving(true);
     try {
       const res = await fetch("/api/v1/users/preferences", {
@@ -152,7 +151,6 @@ export function AppearancePanel() {
         <Row label="Ngôn ngữ" hint="Áp dụng cho nhãn giao diện.">
           <Select value={prefs.language} onChange={(e) => update({ language: e.target.value })}>
             <option value="vi">Tiếng Việt</option>
-            <option value="en">English</option>
           </Select>
         </Row>
         <Row label="Cỡ chữ" hint="Điều chỉnh kích thước chữ toàn hệ thống.">

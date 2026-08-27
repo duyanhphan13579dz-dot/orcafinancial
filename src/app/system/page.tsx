@@ -47,6 +47,10 @@ const STATUS_STYLE: Record<string, { dot: string; text: string; ring: string; ti
   DOWN: { dot: "bg-rose-500", text: "text-rose-300", ring: "border-rose-700/60", tint: "from-rose-500/15 to-transparent" },
 };
 
+function statusLabel(value: string): string {
+  return ({ UP: "Hoạt động", DEGRADED: "Suy giảm", DOWN: "Gián đoạn", OK: "Ổn định", up: "Hoạt động", degraded: "Suy giảm", down: "Gián đoạn" } as Record<string, string>)[value] ?? value;
+}
+
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   const s = Math.floor(ms / 1000);
@@ -137,13 +141,12 @@ export default function SystemPage() {
 
   return (
     <div className="space-y-6">
-      {/* ─── Header ─── */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-[10px] tracking-[0.3em] text-[#00d4ff] font-bold uppercase">ORCA OPS CONSOLE</div>
-          <h1 className="display text-3xl md:text-4xl text-white mt-1">Upstream Health & Telemetry</h1>
+          <div className="text-[10px] tracking-[0.3em] text-[#00d4ff] font-bold uppercase">BẢNG ĐIỀU HÀNH ORCA</div>
+          <h1 className="display text-3xl md:text-4xl text-white mt-1">Sức khỏe nguồn dữ liệu & giám sát</h1>
           <p className="text-sm text-slate-400 mt-2 max-w-2xl">
-            Giám sát real-time trạng thái mọi connector — circuit breaker, uptime, success rate, alert timeline và structured logs.
+            Giám sát trạng thái các kết nối, độ ổn định và nhật ký hệ thống.
           </p>
         </div>
         <div className="text-right text-xs text-slate-500">
@@ -152,7 +155,6 @@ export default function SystemPage() {
         </div>
       </div>
 
-      {/* ─── Overall status banner ─── */}
       <div
         className={`panel relative overflow-hidden p-6 ${
           overall === "OK" ? "breathe-ok" : overall === "DEGRADED" ? "breathe-deg" : "breathe-down"
@@ -162,41 +164,40 @@ export default function SystemPage() {
         <div className="relative flex flex-wrap items-center gap-6">
           <div className={`h-4 w-4 rounded-full ${STATUS_STYLE[overall === "OK" ? "UP" : overall].dot} live-dot`} />
           <div>
-            <div className="text-[10px] tracking-[0.2em] text-slate-400 uppercase">System Status</div>
+            <div className="text-[10px] tracking-[0.2em] text-slate-400 uppercase">Trạng thái hệ thống</div>
             <div className={`display text-4xl ${STATUS_STYLE[overall === "OK" ? "UP" : overall].text}`}>
-              {overall === "OK" ? "ALL SYSTEMS OPERATIONAL" : overall === "DEGRADED" ? "PARTIAL DEGRADATION" : "UPSTREAM OUTAGE"}
+              {overall === "OK" ? "TẤT CẢ HỆ THỐNG HOẠT ĐỘNG" : overall === "DEGRADED" ? "SUY GIẢM MỘT PHẦN" : "NGUỒN DỮ LIỆU GIÁN ĐOẠN"}
             </div>
           </div>
           <div className="ml-auto flex gap-6 text-sm">
             <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-wider">Up</div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-wider">Hoạt động</div>
               <div className="text-2xl font-bold text-emerald-300 tabular-nums">{totals.up}</div>
             </div>
             <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-wider">Degraded</div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-wider">Suy giảm</div>
               <div className="text-2xl font-bold text-amber-300 tabular-nums">{totals.degraded}</div>
             </div>
             <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-wider">Down</div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-wider">Gián đoạn</div>
               <div className="text-2xl font-bold text-rose-300 tabular-nums">{totals.down}</div>
             </div>
             <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-wider">Stale flags</div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-wider">Cờ dữ liệu cũ</div>
               <div className="text-2xl font-bold text-slate-200 tabular-nums">{data?.staleFlags.length ?? 0}</div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* ─── Upstream latency matrix ─── */}
       {upstream && (
         <div className="panel p-4 relative scanlines overflow-hidden">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase">Upstream matrix · /api/health/upstream</div>
-              <div className="font-display text-sm text-white mt-0.5">Aggregate: <span className={upstream.aggregate === "up" ? "text-emerald-300" : upstream.aggregate === "degraded" ? "text-amber-300" : "text-rose-300"}>{upstream.aggregate.toUpperCase()}</span></div>
+              <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase">Ma trận nguồn dữ liệu · /api/health/upstream</div>
+              <div className="font-display text-sm text-white mt-0.5">Tổng hợp: <span className={upstream.aggregate === "up" ? "text-emerald-300" : upstream.aggregate === "degraded" ? "text-amber-300" : "text-rose-300"}>{statusLabel(upstream.aggregate.toLowerCase())}</span></div>
             </div>
-            <div className="font-mono text-[9px] text-slate-500">{Object.keys(upstream.upstream).length} systems</div>
+            <div className="font-mono text-[9px] text-slate-500">{Object.keys(upstream.upstream).length} hệ thống</div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 reveal-stagger">
             {Object.entries(upstream.upstream).map(([name, u]) => {
@@ -208,9 +209,9 @@ export default function SystemPage() {
                     <span className="h-1.5 w-1.5 rounded-full live-dot" style={{ background: color, color }} />
                   </div>
                   <div className="flex items-baseline justify-between mt-1">
-                    <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color }}>{u.status}</span>
+                    <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color }}>{statusLabel(u.status)}</span>
                     <span className="font-mono text-[11px] tabular-nums text-slate-200">
-                      {u.latencyMs !== null ? `${(u.latencyMs / 1000).toFixed(1)}s ago` : "—"}
+                      {u.latencyMs !== null ? `${(u.latencyMs / 1000).toFixed(1)} giây trước` : "—"}
                     </span>
                   </div>
                   {u.error && <div className="mt-1 text-[9px] text-rose-300/80 truncate" title={u.error}>{u.error}</div>}
@@ -223,11 +224,10 @@ export default function SystemPage() {
 
       {error && <div className="panel border-rose-700 bg-rose-950/20 p-3 text-sm text-rose-300">Không lấy được trạng thái: {error}</div>}
 
-      {/* ─── Connector cards grid ─── */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-bold text-white tracking-wider uppercase">Connectors</h2>
-          <span className="text-[10px] text-slate-500">{data?.connectors.length ?? 0} registered</span>
+          <h2 className="text-sm font-bold text-white tracking-wider uppercase">Kết nối</h2>
+          <span className="text-[10px] text-slate-500">{data?.connectors.length ?? 0} đã đăng ký</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {(data?.connectors ?? []).map((c, i) => {
@@ -248,33 +248,33 @@ export default function SystemPage() {
                         <span className="font-bold text-white truncate">{c.name}</span>
                       </div>
                       <div className="text-[10px] text-slate-500 mt-0.5">
-                        P{c.priority} · <span className="uppercase tracking-wider">{c.role}</span> · circuit {c.circuit.state}
+                        Mức {c.priority} · <span className="uppercase tracking-wider">{c.role}</span> · mạch {c.circuit.state}
                       </div>
                     </div>
                     <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider ${st.text} border ${st.ring}`}>
-                      {c.circuit.status}
+                      {statusLabel(c.circuit.status)}
                     </span>
                   </div>
 
                   <div className="space-y-2 text-xs">
                     <div>
                       <div className="flex justify-between text-[10px] text-slate-500 mb-0.5">
-                        <span>Success rate</span>
+                        <span>Tỷ lệ thành công</span>
                         <span className="tabular-nums text-slate-300">{(c.circuit.successRate * 100).toFixed(1)}%</span>
                       </div>
                       <SuccessBar rate={c.circuit.successRate} />
                     </div>
                     <div className="grid grid-cols-3 gap-2 text-[10px]">
                       <div className="bg-slate-900/40 rounded px-2 py-1">
-                        <div className="text-slate-500">Calls</div>
+                        <div className="text-slate-500">Số lượt gọi</div>
                         <div className="text-slate-200 tabular-nums font-semibold">{c.circuit.totalCalls.toLocaleString()}</div>
                       </div>
                       <div className="bg-slate-900/40 rounded px-2 py-1">
-                        <div className="text-slate-500">Uptime</div>
+                        <div className="text-slate-500">Thời gian hoạt động</div>
                         <div className="text-slate-200 tabular-nums font-semibold">{formatDuration(c.circuit.uptimeMs)}</div>
                       </div>
                       <div className="bg-slate-900/40 rounded px-2 py-1">
-                        <div className="text-slate-500">Last OK</div>
+                        <div className="text-slate-500">Lần hoạt động gần nhất</div>
                         <div className="text-slate-200 font-semibold">{c.circuit.lastSuccessAt ? timeAgo(c.circuit.lastSuccessAt) : "—"}</div>
                       </div>
                     </div>
@@ -290,7 +290,7 @@ export default function SystemPage() {
 
                   {c.recentLogs && c.recentLogs.length > 0 && (
                     <details className="mt-3 group">
-                      <summary className="text-[10px] text-slate-500 cursor-pointer hover:text-[#00d4ff]">Recent logs ({c.recentLogs.length})</summary>
+                      <summary className="text-[10px] text-slate-500 cursor-pointer hover:text-[#00d4ff]">Nhật ký gần đây ({c.recentLogs.length})</summary>
                       <div className="mt-1 max-h-28 overflow-y-auto rounded bg-black/30 p-2 space-y-0.5">
                         {c.recentLogs.map((l, j) => (
                           <div key={j} className="log-line text-slate-400">
@@ -311,14 +311,14 @@ export default function SystemPage() {
                       disabled={!!actionBusy}
                       className="btn-orca-ghost flex-1"
                     >
-                      {actionBusy === "test" ? "Đang chạy…" : "Test"}
+                      {actionBusy === "test" ? "Đang chạy…" : "Kiểm tra"}
                     </button>
                     <button
                       onClick={() => doAction(c.name, "reset")}
                       disabled={!!actionBusy}
                       className="btn-orca-ghost flex-1"
                     >
-                      {actionBusy === "reset" ? "…" : "Reset circuit"}
+                      {actionBusy === "reset" ? "…" : "Đặt lại mạch"}
                     </button>
                   </div>
                 </div>
@@ -328,13 +328,12 @@ export default function SystemPage() {
         </div>
       </div>
 
-      {/* ─── Alerts timeline + stale flags ─── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="panel p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-bold text-white tracking-wider uppercase">Alert timeline</h2>
+            <h2 className="text-sm font-bold text-white tracking-wider uppercase">Dòng thời gian cảnh báo</h2>
             <span className="text-[10px] text-slate-500">
-              {data?.openAlerts.length ?? 0} open · Slack {data?.config.slackWebhookConfigured ? "ON" : "OFF"}
+              {data?.openAlerts.length ?? 0} đang mở · Slack {data?.config.slackWebhookConfigured ? "BẬT" : "TẮT"}
             </span>
           </div>
           {(data?.openAlerts.length ?? 0) > 0 && (
@@ -347,21 +346,21 @@ export default function SystemPage() {
           )}
           <div className="space-y-1.5 max-h-72 overflow-y-auto">
             {(data?.recentAlerts.length ?? 0) === 0 && (
-              <div className="text-xs text-slate-500 italic">Chưa có alert nào được dispatch trong phiên này.</div>
+              <div className="text-xs text-slate-500 italic">Chưa có cảnh báo trong phiên này.</div>
             )}
             {(data?.recentAlerts ?? []).map((a, i) => {
               const color = a.level === "DOWN" ? "text-rose-300 border-rose-800 bg-rose-950/30" : a.level === "RECOVERED" ? "text-emerald-300 border-emerald-800 bg-emerald-950/20" : "text-amber-300 border-amber-800 bg-amber-950/20";
               return (
                 <div key={i} className={`rounded border px-2.5 py-1.5 text-[11px] ${color}`}>
                   <div className="flex justify-between items-center">
-                    <span className="font-bold">{a.level}</span>
+                    <span className="font-bold">{statusLabel(a.level)}</span>
                     <span className="text-slate-500">{timeAgo(a.dispatchedAt)}</span>
                   </div>
                   <div className="text-slate-300 mt-0.5">
                     <span className="font-semibold">{(a as any).provider}</span> — {a.message.slice(0, 180)}
                   </div>
                   {a.slackOk !== null && a.slackOk !== undefined && (
-                    <div className="text-[9px] text-slate-500 mt-0.5">Slack: {a.slackOk ? "✓ delivered" : "✗ failed"}</div>
+                    <div className="text-[9px] text-slate-500 mt-0.5">Slack: {a.slackOk ? "✓ đã gửi" : "✗ thất bại"}</div>
                   )}
                 </div>
               );
@@ -370,10 +369,10 @@ export default function SystemPage() {
         </div>
 
         <div className="panel p-4">
-          <h2 className="text-sm font-bold text-white tracking-wider uppercase mb-3">Stale data flags</h2>
+          <h2 className="text-sm font-bold text-white tracking-wider uppercase mb-3">Dữ liệu cũ</h2>
           {(data?.staleFlags.length ?? 0) === 0 ? (
             <div className="text-xs text-emerald-300/80 flex items-center gap-2">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 live-dot" /> Không có dữ liệu stale — mọi luồng dữ liệu đang tươi.
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 live-dot" /> Không có dữ liệu cũ — mọi luồng dữ liệu đang mới.
             </div>
           ) : (
             <div className="space-y-1.5">
@@ -381,13 +380,13 @@ export default function SystemPage() {
                 <div key={s.key} className="rounded border border-amber-800/60 bg-amber-950/20 px-2.5 py-1.5 text-[11px] text-amber-200">
                   <div className="font-semibold">{s.kind}{s.symbol ? ` · ${s.symbol}` : ""}</div>
                   <div className="text-amber-300/80">{s.reason.slice(0, 180)}</div>
-                  <div className="text-[9px] text-slate-500">since {timeAgo(s.since)}</div>
+                  <div className="text-[9px] text-slate-500">từ {timeAgo(s.since)}</div>
                 </div>
               ))}
             </div>
           )}
 
-          <h2 className="text-sm font-bold text-white tracking-wider uppercase mb-2 mt-5">Resilience config</h2>
+          <h2 className="text-sm font-bold text-white tracking-wider uppercase mb-2 mt-5">Cấu hình chịu lỗi</h2>
           <div className="grid grid-cols-2 gap-1.5 text-[10px]">
             {data?.config && Object.entries(data.config).map(([k, v]) => (
               <div key={k} className="bg-slate-900/40 rounded px-2 py-1 flex justify-between gap-2">
@@ -399,10 +398,9 @@ export default function SystemPage() {
         </div>
       </div>
 
-      {/* ─── Structured logs ─── */}
       <div className="panel p-4">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h2 className="text-sm font-bold text-white tracking-wider uppercase">Structured logs (ring buffer)</h2>
+          <h2 className="text-sm font-bold text-white tracking-wider uppercase">Nhật ký có cấu trúc</h2>
           <div className="flex gap-2 text-[11px]">
             <select
               value={logFilter.provider}

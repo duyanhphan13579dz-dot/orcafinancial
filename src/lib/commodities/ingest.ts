@@ -242,6 +242,3 @@ export async function pruneOldIntraday(days = 30): Promise<number> {
     return 0;
   }
 }
-
-/** Backward-compatible scheduler entry point. */
-export const startIngestCycle = ingestCycle;

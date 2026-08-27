@@ -63,7 +63,7 @@ export function HealthDetailCard({ detail }: { detail: HealthDetail }) {
   return (
     <div className="space-y-5">
       <div className="panel p-4 bg-gradient-to-br from-[#0a1d33] to-[#0A2540] reveal">
-        <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase mb-2">Diagnostic summary</div>
+        <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase mb-2">Tóm tắt chẩn đoán</div>
         <p className="text-slate-200 text-sm leading-relaxed font-display">{detail.summary}</p>
       </div>
 
@@ -74,7 +74,7 @@ export function HealthDetailCard({ detail }: { detail: HealthDetail }) {
         </div>
 
         <div className="panel p-4 reveal">
-          <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase mb-2">Trọng số nhóm</div>
+          <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase mb-2">Trọng số theo nhóm</div>
           <div className="space-y-2.5 mt-3">
             {detail.groups.map((g) => (
               <div key={g.key}>

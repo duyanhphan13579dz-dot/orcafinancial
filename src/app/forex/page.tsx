@@ -1,12 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { changeColor, fmtNum, fmtPct, usePoll } from "@/lib/client";
-import { createBiquoteMarketWebSocket, type BiquoteMarketStatus } from "@/lib/forex/biquote-market-websocket";
-import type { ForexQuoteContract } from "@/lib/forex/types";
-import { FOREX_PAIRS } from "@/lib/forex/data";
-import ForexScalpingBoard from "@/components/forex-scalping-board";
 
 interface Row {
   symbol: string;
@@ -34,6 +30,10 @@ const LABELS: Record<string, string> = {
   oil: "Dầu thô",
   index: "Chỉ số",
 };
+
+function freshnessLabel(f?: string) {
+  return ({ LIVE: "TRỰC TIẾP", FRESH: "MỚI", STALE: "CŨ", DEGRADED: "SUY GIẢM", OFFLINE: "NGOẠI TUYẾN" } as Record<string, string>)[f ?? ""] ?? f ?? "—";
+}
 
 function freshnessClass(f?: string) {
   switch (f) {
@@ -70,46 +70,24 @@ function SkeletonGrid() {
 }
 
 export default function ForexPage() {
-  // REST is metadata/degraded fallback; live prices arrive from one Biquote stream.
   const feed = usePoll<{ prices: Row[]; freshness: Record<string, unknown> }>(
     "/forex/prices",
-    60_000,
-    { softTtlMs: 30_000, hardTtlMs: 300_000 },
+    6_000,
+    { softTtlMs: 4_000, hardTtlMs: 60_000 },
   );
-  const [liveQuotes, setLiveQuotes] = useState<Record<string, ForexQuoteContract>>({});
-  const [marketStatus, setMarketStatus] = useState<BiquoteMarketStatus>("connecting");
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    const symbols = FOREX_PAIRS
-      .filter((pair) => !pair.derived && !["BRENTUSD", "WTIUSD"].includes(pair.symbol))
-      .map((pair) => pair.symbol);
-    const connection = createBiquoteMarketWebSocket({
-      symbols,
-      onQuote: (quote) => setLiveQuotes((current) => ({ ...current, [quote.symbol]: quote })),
-      onStatus: setMarketStatus,
-    });
-    return () => connection.disconnect();
-  }, []);
-
   const rows = useMemo(
     () =>
-      (feed.data?.prices ?? []).map((base) => ({
-        ...base,
-        ...(liveQuotes[base.symbol] ?? {}),
-        freshness: liveQuotes[base.symbol]
-          ? marketStatus === "live" ? "LIVE" : marketStatus === "stale" ? "STALE" : "DEGRADED"
-          : base.freshness,
-        source: liveQuotes[base.symbol]?.source ?? base.source,
-      })).filter(
+      (feed.data?.prices ?? []).filter(
         (x) =>
           (category === "all" || x.category === category) &&
           (!query ||
             x.symbol.includes(query.toUpperCase()) ||
             x.name.toLowerCase().includes(query.toLowerCase())),
       ),
-    [feed.data, liveQuotes, marketStatus, category, query],
+    [feed.data, category, query],
   );
 
   return (
@@ -117,7 +95,7 @@ export default function ForexPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <div className="font-mono text-[10px] uppercase tracking-[.25em] text-[#00d4ff]">
-            Global Rates
+            TỶ GIÁ QUỐC TẾ
           </div>
           <h1 className="mt-1 text-2xl font-black text-white sm:text-3xl">
             Forex · Vàng · Dầu · DXY
@@ -127,10 +105,10 @@ export default function ForexPage() {
           </p>
         </div>
         <span className="inline-flex items-center gap-2 text-xs text-emerald-300">
-          <i className={`live-dot h-2 w-2 rounded-full ${marketStatus === "live" ? "bg-emerald-400" : "bg-amber-400"}`} />
-          {marketStatus === "live" ? "LIVE" : marketStatus === "reconnecting" ? "RECONNECT" : "DEGRADED"}
+          <i className="live-dot h-2 w-2 rounded-full bg-emerald-400" />
+          TRỰC TIẾP
           {feed.isValidating && (
-            <span className="text-[10px] text-slate-500">metadata…</span>
+            <span className="text-[10px] text-slate-500">đang cập nhật…</span>
           )}
         </span>
       </div>
@@ -161,8 +139,6 @@ export default function ForexPage() {
           ))}
         </div>
       </div>
-
-      <ForexScalpingBoard />
 
       {feed.error && !feed.data && (
         <div className="panel border-rose-800 p-4 text-sm text-rose-300">
@@ -198,7 +174,7 @@ export default function ForexPage() {
                   <div
                     className={`mt-0.5 font-mono text-[9px] ${freshnessClass(r.freshness)}`}
                   >
-                    {r.freshness}
+                    {freshnessLabel(r.freshness)}
                     {r.ageMs != null ? ` · ${formatAge(r.ageMs)}` : ""}
                   </div>
                 )}
@@ -208,13 +184,13 @@ export default function ForexPage() {
               {fmtNum(r.price, r.price > 1000 ? 2 : r.price < 10 ? 5 : 3)}
             </div>
             <div className="mt-2 grid grid-cols-3 gap-1 text-[10px] text-slate-500">
-              <span className="truncate">Bid {fmtNum(r.bid, 5)}</span>
+              <span className="truncate">Mua {fmtNum(r.bid, 5)}</span>
               <span className="text-center">
                 {r.spreadPips != null
                   ? `${fmtNum(r.spreadPips, 1)}p`
                   : "—"}
               </span>
-              <span className="truncate text-right">Ask {fmtNum(r.ask, 5)}</span>
+              <span className="truncate text-right">Bán {fmtNum(r.ask, 5)}</span>
             </div>
           </Link>
         ))}
@@ -226,9 +202,6 @@ export default function ForexPage() {
         </div>
       )}
 
-      <p className="text-[10px] text-slate-600">
-        Dữ liệu tham khảo · không phải lời khuyên đầu tư.
-      </p>
     </div>
   );
 }

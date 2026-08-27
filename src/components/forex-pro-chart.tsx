@@ -262,7 +262,7 @@ export function ForexProChart({
           lineWidth: 1,
           priceLineVisible: false,
           lastValueVisible: false,
-          title: "Signal",
+          title: "Tín hiệu",
         },
         paneIdx,
       );
@@ -420,7 +420,7 @@ export function ForexProChart({
     const sr = incremental ? null : seriesData?.sr;
     add(levels?.support ?? sr?.support, "rgba(52, 211, 153, 0.7)", "S");
     add(levels?.resistance ?? sr?.resistance, "rgba(251, 113, 133, 0.7)", "R");
-    add(levels?.entry, "rgba(0, 212, 255, 0.9)", "Entry", 0);
+    add(levels?.entry, "rgba(0, 212, 255, 0.9)", "Điểm vào", 0);
     add(levels?.stopLoss, "rgba(251, 113, 133, 0.95)", "SL", 0);
     add(levels?.takeProfit, "rgba(52, 211, 153, 0.95)", "TP1", 0);
     add(levels?.takeProfit2, "rgba(16, 185, 129, 0.85)", "TP2", 2);

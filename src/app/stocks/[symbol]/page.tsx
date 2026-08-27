@@ -31,7 +31,6 @@ import {
 import {
   ProtectedPage,
 } from "@/components/ProtectedPage";
-import { StockExecutiveSummary } from "@/components/stock-executive-summary";
 
 /* ============================================================
  * CODE-SPLIT: heavy per-tab components
@@ -359,6 +358,10 @@ const HISTORY_PAGE_SIZE: Record<
  * UI CONFIG
  * ============================================================ */
 
+function recommendationLabel(value: string) {
+  return ({ "Strong Buy": "Mua mạnh", Buy: "Mua", Hold: "Giữ", Sell: "Bán", "Strong Sell": "Bán mạnh" } as Record<string, string>)[value] ?? value;
+}
+
 const RECO_STYLE: Record<
   string,
   string
@@ -595,8 +598,6 @@ export default function StockPage({
 
   const [watchMsg, setWatchMsg] =
     useState<string | null>(null);
-  const [analysisReportLoading, setAnalysisReportLoading] =
-    useState(false);
 
   /* ==========================================================
    * STOCK / API DATA
@@ -616,12 +617,6 @@ export default function StockPage({
   const { data: analysis } =
     usePoll<Analysis>(
       `/stocks/${symbol}/analysis`,
-      60000,
-    );
-
-  const { data: executiveSummary } =
-    usePoll<any>(
-      `/stocks/${symbol}/executive-summary`,
       60000,
     );
 
@@ -1026,8 +1021,8 @@ export default function StockPage({
       setHistoryLoading(true);
       setHistoryLoadingMore(false);
       setHistoryHasMore(true);
+      setHistoryError(null);
     });
-    queueMicrotask(() => setHistoryError(null));
   }, [symbol, tf]);
 
   /* ==========================================================
@@ -1035,10 +1030,14 @@ export default function StockPage({
    * ========================================================== */
 
   useEffect(() => {
-    queueMicrotask(() => void loadHistory("initial"));
-  }, [
-    loadHistory,
-  ]);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) void loadHistory("initial");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadHistory]);
 
   /* ==========================================================
    * REFRESH CHART DATA
@@ -1108,63 +1107,6 @@ export default function StockPage({
       );
     };
 
-  const shareStock = async () => {
-    const shareData = {
-      title: `${symbol} · Orca Financial`,
-      text: `Xem phân tích cổ phiếu ${symbol} trên Orca Financial`,
-      url: window.location.href,
-    };
-    try {
-      if (navigator.share) {
-        await navigator.share(shareData);
-        setWatchMsg("Đã mở chia sẻ");
-        return;
-      }
-      await navigator.clipboard.writeText(window.location.href);
-      setWatchMsg("Đã sao chép liên kết");
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      setWatchMsg("Không thể chia sẻ lúc này");
-    }
-  };
-
-  const downloadAnalysisReport =
-    async () => {
-      setAnalysisReportLoading(true);
-      try {
-        const response = await fetch(
-          `/api/v1/stocks/${encodeURIComponent(symbol)}/analysis-report`,
-          { credentials: "include" },
-        );
-        if (!response.ok) {
-          let detail = "Không thể tạo báo cáo phân tích lúc này.";
-          try {
-            const body = (await response.json()) as { error?: string; meta?: { code?: string } };
-            if (body.error) detail = `${body.error}${body.meta?.code ? ` [${body.meta.code}]` : ""}`;
-          } catch {
-            detail = `Không thể tạo báo cáo phân tích lúc này (HTTP ${response.status}).`;
-          }
-          throw new Error(detail);
-        }
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = `${symbol}_BAO_CAO_PHAN_TICH.pdf`;
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        window.URL.revokeObjectURL(url);
-      } catch (error) {
-        setWatchMsg(
-          error instanceof Error
-            ? error.message
-            : "Không thể tải báo cáo.",
-        );
-      } finally {
-        setAnalysisReportLoading(false);
-      }
-    };
   /* ==========================================================
    * RENDER
    * ========================================================== */
@@ -1173,13 +1115,13 @@ export default function StockPage({
     <ProtectedPage
       featureName="chi tiết cổ phiếu"
     >
-      <div className="stock-detail-shell space-y-5">
+      <div className="space-y-4">
 
         {/* ======================================================
          * HEADER
          * ====================================================== */}
 
-        <div className="stock-header panel p-4 flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div className="panel p-4 flex flex-wrap items-center gap-x-6 gap-y-3">
 
           <div>
             <div className="flex items-center gap-3">
@@ -1279,31 +1221,15 @@ export default function StockPage({
             </>
           )}
 
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={shareStock}
-              className="rounded-md border border-slate-600 bg-slate-800/60 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700"
-            >
-              Chia sẻ
-            </button>
-            <button
-              type="button"
-              onClick={downloadAnalysisReport}
-              disabled={analysisReportLoading}
-              className="rounded-md border border-amber-700 bg-amber-500/10 px-3 py-1.5 text-sm font-medium text-amber-300 hover:bg-amber-500/20 disabled:cursor-wait disabled:opacity-60"
-            >
-              {analysisReportLoading
-                ? "Đang tạo PDF…"
-                : "BÁO CÁO PHÂN TÍCH"}
-            </button>
-            <button
-              onClick={addToWatchlist}
-              className="rounded-md border border-cyan-700 bg-cyan-500/10 px-3 py-1.5 text-sm text-cyan-300 hover:bg-cyan-500/20"
-            >
-              {watchMsg ?? "+ Watchlist"}
-            </button>
-          </div>
+          <button
+            onClick={
+              addToWatchlist
+            }
+            className="ml-auto rounded-md border border-cyan-700 bg-cyan-500/10 px-3 py-1.5 text-sm text-cyan-300 hover:bg-cyan-500/20"
+          >
+            {watchMsg ??
+              "+ Watchlist"}
+          </button>
         </div>
 
         {quoteError && (
@@ -1314,12 +1240,11 @@ export default function StockPage({
           </div>
         )}
 
-        <StockExecutiveSummary data={executiveSummary} />
         {/* ======================================================
          * TABS
          * ====================================================== */}
 
-        <div className="stock-tabbar" role="tablist" aria-label="Các mục phân tích cổ phiếu">
+        <div className="flex gap-1 border-b border-slate-800 pb-0 overflow-x-auto">
           {TABS.map(
             (item) => (
               <button
@@ -1329,11 +1254,11 @@ export default function StockPage({
                     item,
                   )
                 }
-                type="button"
-                role="tab"
-                aria-selected={tab === item}
-                data-active={tab === item}
-                className="stock-tab"
+                className={`whitespace-nowrap px-3 py-2 text-sm border-b-2 -mb-px transition-colors ${
+                  tab === item
+                    ? "border-cyan-500 text-cyan-300"
+                    : "border-transparent text-slate-500 hover:text-slate-300"
+                }`}
               >
                 {item}
               </button>
@@ -1535,7 +1460,7 @@ export default function StockPage({
                     }`}
                   >
                     {
-                      analysis.recommendation
+                      recommendationLabel(analysis.recommendation)
                     }
 
                     <span className="ml-1 font-normal text-xs opacity-80">
@@ -1769,7 +1694,7 @@ export default function StockPage({
         {tab ===
           "Phân tích KT" &&
           analysis && (
-            <div className="panel p-4 max-w-6xl">
+            <div className="panel p-4 max-w-3xl">
 
               <div
                 className={`inline-block rounded-md border px-4 py-2 text-lg font-bold mb-4 ${
@@ -1779,7 +1704,7 @@ export default function StockPage({
                 }`}
               >
                 {
-                  analysis.recommendation
+                  recommendationLabel(analysis.recommendation)
                 }
 
                 <span className="text-sm font-normal opacity-80">
@@ -1795,7 +1720,7 @@ export default function StockPage({
                 </span>
               </div>
 
-              <div className="stock-kpi-grid mb-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
 
                 {[
                   [
@@ -1805,7 +1730,7 @@ export default function StockPage({
                   ],
 
                   [
-                    "MACD hist",
+                    "Histogram MACD",
                     analysis.macd
                       ?.histogram,
                     3,
@@ -1862,7 +1787,7 @@ export default function StockPage({
                   ],
 
                   [
-                    "Max drawdown",
+                    "Mức giảm tối đa",
                     analysis.maxDrawdownPct,
                     1,
                   ],
@@ -1906,7 +1831,7 @@ export default function StockPage({
                             "Biến động",
                           ) ||
                           label.includes(
-                            "drawdown",
+                            "Mức giảm",
                           ) ||
                           label.includes(
                             "tháng",
@@ -1954,7 +1879,7 @@ export default function StockPage({
 
         {tab ===
           "Cơ bản" && (
-          <div className="space-y-6 max-w-none">
+          <div className="space-y-6 max-w-6xl">
 
             {/* VISUAL ANALYST */}
 
@@ -1962,7 +1887,7 @@ export default function StockPage({
               <div className="space-y-5">
 
                 <SectionTitle
-                  eyebrow="Visual analyst"
+                  eyebrow="PHÂN TÍCH TRỰC QUAN"
                   title={
                     <>
                       Hiệu suất & định giá qua{" "}
@@ -2007,7 +1932,7 @@ export default function StockPage({
                   <div className="panel p-4 reveal">
 
                     <div className="font-mono text-[10px] tracking-[0.25em] text-[#00d4ff] uppercase mb-2">
-                      Gauge sức khỏe tài chính
+                      Đồng hồ sức khỏe tài chính
                     </div>
 
                     {chartData.health ? (
@@ -2100,7 +2025,7 @@ export default function StockPage({
               <div>
 
                 <SectionTitle
-                  eyebrow="Health diagnostic"
+                  eyebrow="CHẨN ĐOÁN SỨC KHỎE"
                   title="Phân tích sức khỏe tài chính chi tiết"
                 >
                   {
@@ -2228,7 +2153,7 @@ export default function StockPage({
                     Chỉ số cơ bản
                   </h3>
 
-                  <div className="stock-kpi-grid">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
 
                     {[
   [
@@ -2260,7 +2185,7 @@ export default function StockPage({
       key={
         label
       }
-      className="stock-kpi"
+      className="bg-slate-800/40 rounded p-3"
     >
       <div className="text-[10px] text-slate-500">
         {
@@ -2362,7 +2287,7 @@ export default function StockPage({
                     Định giá
                   </h3>
 
-                  <div className="stock-kpi-grid mb-3">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
 
                     {[
                       [
@@ -2450,7 +2375,7 @@ export default function StockPage({
                         DCF 3 Kịch bản (giá trị mỗi CP ước tính)
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <div className="flex gap-3">
 
                         <div className="flex-1 bg-rose-500/10 border border-rose-800 rounded p-2 text-center">
                           <div className="text-[10px] text-rose-400">
@@ -2509,7 +2434,7 @@ export default function StockPage({
                         Vùng giá trị nội tại ước tính
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-3 text-sm">
+                      <div className="flex items-center gap-3 text-sm">
 
                         <span className="text-rose-400">
                           {fmtNum(
@@ -2614,7 +2539,7 @@ export default function StockPage({
                       Báo cáo 4 quý gần nhất
                     </h3>
 
-                    <div className="stock-table-wrap">
+                    <div className="overflow-x-auto">
 
                       <table className="w-full text-xs">
 
@@ -2746,9 +2671,9 @@ export default function StockPage({
 
         {tab ===
           "Mẫu hình" && (
-          <div className="space-y-5 max-w-6xl">
+          <div className="space-y-4 max-w-4xl">
 
-            <div className="flex flex-wrap items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2">
 
               <h3 className="text-sm font-semibold text-slate-300">
                 Timeframe:
@@ -2815,7 +2740,7 @@ export default function StockPage({
                             key={
                               index
                             }
-                            className="pattern-card rounded-lg border border-slate-800/80 bg-slate-900/35 p-3"
+                            className="bg-slate-800/40 rounded p-3"
                           >
 
                             <div className="flex items-center gap-2 mb-1">
@@ -2981,10 +2906,10 @@ export default function StockPage({
 
         {tab ===
           "Tin tức" && (
-          <div className="space-y-4 max-w-5xl">
+          <div className="space-y-3 max-w-3xl">
 
             {sentiment && (
-              <div className="panel p-4 flex flex-wrap items-center gap-4 sm:gap-6">
+              <div className="panel p-4 flex items-center gap-6">
 
                 <div>
                   <div className="text-xs text-slate-500 mb-1">

@@ -107,7 +107,9 @@ export default function LaunchpadPage() {
 
   useEffect(() => {
     let cancelled = false;
-    queueMicrotask(() => setLoading(true));
+    queueMicrotask(() => {
+      if (!cancelled) setLoading(true);
+    });
     void api<LaunchpadIntelligence>("/crypto/launchpad")
       .then((r) => {
         if (!cancelled) {
@@ -137,18 +139,18 @@ export default function LaunchpadPage() {
             ← Thị trường Crypto
           </Link>
           <div className="mt-2 font-mono text-[10px] uppercase tracking-[.25em] text-[#00d4ff]">
-            Phase 5 · Binance CMS
+            Giai đoạn 5 · CMS Binance
           </div>
           <h1 className="mt-1 text-2xl font-black text-white sm:text-3xl">
-            Launchpad & Launchpool
+            Mở bán và phân phối token
           </h1>
           <p className="mt-1 text-sm text-slate-400">
-            New listings · Launchpool · Launchpad · Delist announcements
+            Niêm yết mới · Phân phối token · Mở bán token · Thông báo hủy niêm yết
           </p>
         </div>
         {data?.fetchedAt && (
           <span className="text-[10px] text-slate-500">
-            Updated {fmtDate(data.fetchedAt)}
+            Cập nhật {fmtDate(data.fetchedAt)}
           </span>
         )}
       </div>
@@ -157,12 +159,12 @@ export default function LaunchpadPage() {
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
           {(
             [
-              ["Total", s.total],
-              ["Launchpool", s.launchpool],
-              ["Launchpad", s.launchpad],
-              ["Spot list", s.spotListings],
-              ["Futures", s.futuresListings],
-              ["Delist", s.delistings],
+              ["Tổng số", s.total],
+              ["Phân phối token", s.launchpool],
+              ["Mở bán token", s.launchpad],
+              ["Niêm yết giao ngay", s.spotListings],
+              ["Phái sinh", s.futuresListings],
+              ["Hủy niêm yết", s.delistings],
             ] as const
           ).map(([label, n]) => (
             <div
@@ -177,7 +179,7 @@ export default function LaunchpadPage() {
       )}
 
       {loading && !data && (
-        <div className="panel p-10 text-center text-slate-500">Đang tải announcements…</div>
+        <div className="panel p-10 text-center text-slate-500">Đang tải thông báo…</div>
       )}
 
       {error && (
@@ -186,27 +188,23 @@ export default function LaunchpadPage() {
 
       {data?.available && (
         <>
-          <Section title="Highlights" count={data.highlights.length} items={data.highlights} />
-          <Section title="Launchpool" count={data.launchpool.length} items={data.launchpool} />
-          <Section title="Launchpad" count={data.launchpad.length} items={data.launchpad} />
-          <Section title="New listings" count={data.listings.length} items={data.listings} />
-          <Section title="Delistings" count={data.delistings.length} items={data.delistings} />
+          <Section title="Nổi bật" count={data.highlights.length} items={data.highlights} />
+          <Section title="Phân phối token" count={data.launchpool.length} items={data.launchpool} />
+          <Section title="Mở bán token" count={data.launchpad.length} items={data.launchpad} />
+          <Section title="Niêm yết mới" count={data.listings.length} items={data.listings} />
+          <Section title="Hủy niêm yết" count={data.delistings.length} items={data.delistings} />
         </>
       )}
 
       {!loading && data && !data.available && (
         <div className="panel p-8 text-center text-slate-500">
-          Không lấy được dữ liệu Launchpad (CMS có thể bị chặn).
+          Không tải được dữ liệu Launchpad.
           {data.errors.length > 0 && (
             <div className="mt-2 text-[10px] text-slate-600">{data.errors.join(" · ")}</div>
           )}
         </div>
       )}
 
-      <p className="text-[10px] text-slate-600">
-        Binance không cung cấp REST API chính thức cho Launchpad/Launchpool. Orca tổng hợp từ
-        public CMS announcements (catalog New Cryptocurrency Listing). Không phải lời khuyên đầu tư.
-      </p>
     </div>
   );
 }

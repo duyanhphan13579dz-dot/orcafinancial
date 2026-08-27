@@ -8,11 +8,11 @@ import { useToast } from "./Toast";
 const FAQ = [
   {
     q: "Dữ liệu giá cổ phiếu lấy từ đâu?",
-    a: "ORCA lấy dữ liệu thật từ VNDirect dchart (nguồn chính) với Yahoo Finance làm nguồn dự phòng, thông qua Data Engine có circuit breaker và retry tự động. Hệ thống không bao giờ tạo dữ liệu giả.",
+    a: "ORCA tổng hợp dữ liệu từ các nguồn thị trường đã kiểm chứng và có cơ chế dự phòng khi nguồn chính gián đoạn.",
   },
   {
-    q: "Báo cáo Morning Brief và Market Summary phát hành lúc nào?",
-    a: "Morning Brief phát hành 07:30 và Market Summary 15:15 giờ Việt Nam vào các ngày giao dịch. Nếu lần tạo đầu thất bại, hệ thống tự thử lại mỗi 5 phút cho đến khi thành công.",
+    q: "Bản tin sáng và Tổng kết thị trường phát hành lúc nào?",
+    a: "Bản tin sáng phát hành lúc 07:30 và Tổng kết thị trường lúc 15:15 vào ngày giao dịch.",
   },
   {
     q: "Bộ lọc CANSLIM / Minervini / Wyckoff / Elliott hoạt động thế nào?",
@@ -24,7 +24,7 @@ const FAQ = [
   },
   {
     q: "Dữ liệu của tôi có được bảo vệ không?",
-    a: "Mật khẩu được băm bằng bcrypt, phiên đăng nhập dùng JWT ngắn hạn kèm refresh token httpOnly. Bạn có thể xem nhật ký hoạt động và đăng xuất từ xa bất kỳ thiết bị nào trong mục Bảo mật.",
+    a: "Tài khoản được bảo vệ bằng mật khẩu mã hóa, xác thực hai lớp và quản lý phiên đăng nhập từ xa.",
   },
 ];
 
@@ -40,7 +40,6 @@ export function SupportPanel() {
       return;
     }
     setSending(true);
-    // Local-only: compose a mailto so no new backend surface is required.
     const subject = encodeURIComponent("[ORCA] Phản hồi từ người dùng");
     const body = encodeURIComponent(feedback);
     window.location.href = `mailto:support@orca.finance?subject=${subject}&body=${body}`;
@@ -95,7 +94,6 @@ export function SupportPanel() {
           >
             <div className="text-2xl">🩺</div>
             <div className="text-sm font-semibold text-white mt-2">Trạng thái hệ thống</div>
-            <div className="text-[11px] text-slate-500 mt-1">Kiểm tra tình trạng kết nối dữ liệu.</div>
           </Link>
           <a
             href="mailto:support@orca.finance"

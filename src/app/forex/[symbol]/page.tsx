@@ -234,7 +234,7 @@ export default function ForexDetail() {
           if (active) void loadAnalysis(tf);
         });
       } catch {
-        if (active) setBundleError(error instanceof Error ? error.message : "Biquote OHLC unavailable");
+        if (active) setBundleError(error instanceof Error ? error.message : "Không có dữ liệu OHLC hai chiều");
       } finally {
         if (active) setChartLoading(false);
       }
@@ -497,7 +497,6 @@ export default function ForexDetail() {
 
       <ForexPaperJournal symbol={symbol} candidate={scalpingResult?.bestCandidate} />
 
-      {/* Secondary intel — collapsible on mobile */}
       {(mtf || fx || macro || analyst) && (
         <div className="space-y-3">
           <button
@@ -505,7 +504,7 @@ export default function ForexDetail() {
             className="flex w-full items-center justify-between rounded-lg border border-slate-800 px-3 py-2 text-xs text-slate-300 lg:hidden"
             onClick={() => setMoreOpen((v) => !v)}
           >
-            <span>MTF · Session · Macro · Analyst</span>
+            <span>Khung thời gian · Phiên · Vĩ mô · Phân tích</span>
             <span>{moreOpen ? "▲" : "▼"}</span>
           </button>
 
@@ -516,20 +515,20 @@ export default function ForexDetail() {
           >
             {analyst?.marketSummary && (
               <div className="panel space-y-2 p-3 text-xs text-slate-300 sm:p-4">
-                <h2 className="font-semibold text-white">AI Analyst</h2>
+                <h2 className="font-semibold text-white">Phân tích AI</h2>
                 <p className="line-clamp-4 lg:line-clamp-none">
                   {analyst.marketSummary}
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div className="rounded border border-emerald-900/40 bg-emerald-500/5 p-2">
                     <div className="text-[10px] font-semibold text-emerald-300">
-                      Bull
+                      Kịch bản tăng
                     </div>
                     <p className="mt-1 text-[10px]">{analyst.bullCase}</p>
                   </div>
                   <div className="rounded border border-rose-900/40 bg-rose-500/5 p-2">
                     <div className="text-[10px] font-semibold text-rose-300">
-                      Bear
+                      Kịch bản giảm
                     </div>
                     <p className="mt-1 text-[10px]">{analyst.bearCase}</p>
                   </div>
@@ -539,7 +538,7 @@ export default function ForexDetail() {
 
             {mtf?.frames?.length > 0 && (
               <div className="panel p-3 sm:p-4">
-                <h2 className="mb-1 font-semibold text-white">Multi-Timeframe</h2>
+                <h2 className="mb-1 font-semibold text-white">Nhiều khung thời gian</h2>
                 <p className="mb-2 text-[10px] text-slate-500">{mtf.summary}</p>
                 <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-5 sm:gap-2">
                   {mtf.frames.map((fr: any) => (
@@ -558,12 +557,12 @@ export default function ForexDetail() {
             {fx && (
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3">
                 <div className="panel p-3 text-xs">
-                  <h2 className="mb-0.5 font-semibold text-white">Session</h2>
+                  <h2 className="mb-0.5 font-semibold text-white">Phiên</h2>
                   <div className="text-base text-[#00d4ff] sm:text-lg">
                     {fx.session.label}
                   </div>
                   <div className="text-slate-400">
-                    Vol {fx.session.volatility} · Liq {fx.session.liquidity}
+                    Biến động {fx.session.volatility} · Thanh khoản {fx.session.liquidity}
                   </div>
                 </div>
                 <div className="panel p-3 text-xs">
@@ -571,7 +570,7 @@ export default function ForexDetail() {
                   <div className="text-slate-300">{fx.dxy.note}</div>
                 </div>
                 <div className="panel p-3 text-xs">
-                  <h2 className="mb-0.5 font-semibold text-white">Strength</h2>
+                  <h2 className="mb-0.5 font-semibold text-white">Sức mạnh</h2>
                   <div className="text-slate-300">
                     {fx.pairBiasFromStrength.note}
                   </div>
@@ -582,7 +581,7 @@ export default function ForexDetail() {
             {macro?.upcoming?.length > 0 && (
               <div className="panel p-3 sm:p-4">
                 <div className="mb-2 flex items-center justify-between">
-                  <h2 className="font-semibold text-white">Macro</h2>
+                  <h2 className="font-semibold text-white">Vĩ mô</h2>
                   <span className="text-[10px] text-slate-500">
                     {macro.source}
                   </span>
@@ -605,8 +604,8 @@ export default function ForexDetail() {
                       </div>
                       <div className="mt-1 text-slate-400">
                         {ev.minutesUntil >= 0
-                          ? `in ${ev.minutesUntil < 60 ? `${ev.minutesUntil}m` : `${Math.round(ev.minutesUntil / 60)}h`}`
-                          : `${Math.abs(ev.minutesUntil)}m ago`}
+                          ? `sau ${ev.minutesUntil < 60 ? `${ev.minutesUntil} phút` : `${Math.round(ev.minutesUntil / 60)} giờ`}`
+                          : `${Math.abs(ev.minutesUntil)} phút trước`}
                       </div>
                     </div>
                   ))}

@@ -8,19 +8,19 @@ import { UserMenu } from "@/components/UserMenu";
 
 const PRIMARY = [
   { href: "/", label: "Tổng quan", icon: "📊" },
-  { href: "/heatmap", label: "Heatmap", icon: "🟩" },
+  { href: "/heatmap", label: "Bản đồ nhiệt", icon: "🟩" },
   { href: "/crypto", label: "Crypto", icon: "🪙" },
   { href: "/forex", label: "Forex", icon: "💱" },
   { href: "/commodities", label: "Hàng hóa", icon: "📦" },
 ];
 
 const MORE = [
-  { href: "/sector-board", label: "Market Board", icon: "▦" },
+  { href: "/sector-board", label: "Bảng thị trường", icon: "▦" },
   { href: "/reports", label: "Báo cáo", icon: "📰" },
   { href: "/screener", label: "Bộ lọc", icon: "🔍" },
   { href: "/news", label: "Tin tức", icon: "📡" },
   { href: "/watchlist", label: "Theo dõi", icon: "⭐" },
-  { href: "/agent", label: "AI Agent", icon: "🤖" },
+  { href: "/agent", label: "Trợ lý AI", icon: "🤖" },
   { href: "/system", label: "Hệ thống", icon: "🩺" },
   { href: "/settings", label: "Cài đặt", icon: "⚙️" },
 ];
@@ -31,7 +31,6 @@ export function MobileHeader() {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
-  // Lock body scroll while drawer is open (prevents page scroll under menu)
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -43,7 +42,6 @@ export function MobileHeader() {
 
   return (
     <>
-      {/* Phone + tablet (< lg): sticky header with hamburger */}
       <div className="lg:hidden sticky top-0 z-50 border-b border-[#1a3558] bg-[#0A2540]/98 backdrop-blur safe-area-pt">
         <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5">
           <Link href="/" className="flex items-center gap-2 shrink-0 min-w-0">
@@ -74,7 +72,6 @@ export function MobileHeader() {
         </div>
       </div>
 
-      {/* Full-screen drawer + backdrop */}
       {open && (
         <>
           <button
@@ -89,7 +86,7 @@ export function MobileHeader() {
             aria-modal="true"
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a3558]">
-              <span className="font-display font-bold text-white text-sm">Menu</span>
+              <span className="font-display font-bold text-white text-sm">Điều hướng</span>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -136,7 +133,6 @@ export function MobileHeader() {
 
 export function MobileBottomNav() {
   const pathname = usePathname();
-  // 4 primary + "More" opens path to settings via hamburger; keep bottom bar light
   const items = [
     ...PRIMARY.slice(0, 4),
     { href: "/settings", label: "Cài đặt", icon: "⚙️" },

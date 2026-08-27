@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 
 import {
@@ -491,12 +492,13 @@ export function SecurityPanel() {
 
               <div className="flex justify-center">
                 <div className="bg-white rounded-xl p-3">
-                  <img
-                    src={
-                      twoFASetup.qrCodeDataUrl
-                    }
+                  <Image
+                    src={twoFASetup.qrCodeDataUrl}
                     alt="QR Code thiết lập 2FA"
-                    className="w-64 h-64"
+                    width={256}
+                    height={256}
+                    unoptimized
+                    className="h-64 w-64"
                   />
                 </div>
               </div>

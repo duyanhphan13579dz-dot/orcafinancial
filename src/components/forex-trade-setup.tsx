@@ -115,10 +115,10 @@ export function ForexTradeSetupPanel({
       >
         <span>
           <span className="block text-[10px] uppercase tracking-wide text-slate-500">
-            Trade Setup · Recommendation 2.0
+            Thiết lập giao dịch · Khuyến nghị 2.0
           </span>
           <span className="mt-0.5 block text-sm font-semibold text-white">
-            Grade {setup.setupQuality} · Confidence {setup.confidenceBreakdown.total}%
+            Mức {setup.setupQuality} · Độ tin cậy {setup.confidenceBreakdown.total}%
           </span>
         </span>
         <span className="text-xs text-slate-500">{open ? "▾" : "▸"}</span>
@@ -126,20 +126,19 @@ export function ForexTradeSetupPanel({
 
       {open && (
         <div className="space-y-4">
-          {/* Setup quality + confidence breakdown */}
           <div className="panel p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-semibold text-white">Trade Setup · Recommendation 2.0</h2>
+          <h2 className="font-semibold text-white">Thiết lập giao dịch · Khuyến nghị 2.0</h2>
           <span
             className={`rounded border px-2 py-0.5 text-sm font-black ${gradeColor(setup.setupQuality)}`}
           >
-            Grade {setup.setupQuality}
+            Mức {setup.setupQuality}
           </span>
         </div>
         <p className="mb-3 text-[10px] text-slate-500">{setup.setupNote}</p>
 
         <div className="mb-2 flex items-end justify-between">
-          <div className="text-xs text-slate-400">Confidence explained</div>
+          <div className="text-xs text-slate-400">Phân tích độ tin cậy</div>
           <div className="text-2xl font-black text-white">{conf.total}%</div>
         </div>
         <div className="mb-3 h-2 overflow-hidden rounded-full bg-slate-800">
@@ -174,18 +173,17 @@ export function ForexTradeSetupPanel({
         </ul>
       </div>
 
-      {/* Risk metrics */}
       <div className="panel p-4">
-        <h2 className="mb-3 font-semibold text-white">Risk Engine</h2>
+        <h2 className="mb-3 font-semibold text-white">Bộ máy rủi ro</h2>
         <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
           <div className="rounded bg-slate-900/40 p-2">
-            <div className="text-slate-500">Risk</div>
+            <div className="text-slate-500">Rủi ro</div>
             <div className="font-mono text-white">
               {setup.risk.riskPips != null ? `${setup.risk.riskPips} pips` : "—"}
             </div>
           </div>
           <div className="rounded bg-slate-900/40 p-2">
-            <div className="text-slate-500">Reward TP1</div>
+            <div className="text-slate-500">Lợi nhuận TP1</div>
             <div className="font-mono text-white">
               {setup.risk.rewardPips != null ? `${setup.risk.rewardPips} pips` : "—"}
             </div>
@@ -204,14 +202,14 @@ export function ForexTradeSetupPanel({
           </div>
         </div>
         <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] text-slate-400">
-          <div>Entry {fmt(setup.risk.entry)}</div>
+          <div>Điểm vào {fmt(setup.risk.entry)}</div>
           <div className="text-rose-400">SL {fmt(setup.risk.stopLoss)}</div>
           <div className="text-emerald-400">TP1 {fmt(setup.risk.takeProfit)}</div>
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-3">
           <label className="text-xs text-slate-400">
-            Capital ($)
+            Vốn ($)
             <input
               type="number"
               min={100}
@@ -222,7 +220,7 @@ export function ForexTradeSetupPanel({
             />
           </label>
           <label className="text-xs text-slate-400">
-            Risk %
+            Rủi ro %
             <input
               type="number"
               min={0.1}
@@ -238,13 +236,13 @@ export function ForexTradeSetupPanel({
           <div className="text-slate-500">{live.position.note}</div>
           <div className="mt-2 grid grid-cols-2 gap-2">
             <div>
-              Max loss:{" "}
+              Lỗ tối đa: {" "}
               <span className="font-mono text-rose-300">
                 ${live.position.maxLossMoney.toLocaleString()}
               </span>
             </div>
             <div>
-              Units:{" "}
+              Số đơn vị: {" "}
               <span className="font-mono text-white">
                 {live.position.positionUnits != null
                   ? live.position.positionUnits.toLocaleString()
@@ -252,7 +250,7 @@ export function ForexTradeSetupPanel({
               </span>
             </div>
             <div className="col-span-2">
-              Notional:{" "}
+              Giá trị danh nghĩa: {" "}
               <span className="font-mono text-[#00d4ff]">
                 {live.position.notional != null
                   ? `$${live.position.notional.toLocaleString()}`
@@ -263,17 +261,16 @@ export function ForexTradeSetupPanel({
         </div>
       </div>
 
-      {/* Leverage simulator */}
       <div className="panel p-4">
-        <h2 className="mb-1 font-semibold text-white">Leverage & Scenario Simulator</h2>
+        <h2 className="mb-1 font-semibold text-white">Mô phỏng đòn bẩy và kịch bản</h2>
         <p className="mb-3 text-[10px] text-slate-500">
-          Minh họa P/L theo đòn bẩy — không phải liquidation thực của broker. Wipe % chỉ là ước
-          lượng 1/leverage.
+          Minh họa lãi/lỗ theo đòn bẩy — không phải thanh lý thực tế. Tỷ lệ mất vốn chỉ là ước lượng
+          theo mức đòn bẩy.
         </p>
 
         <div className="mb-3">
           <div className="mb-1 flex justify-between text-xs text-slate-400">
-            <span>Leverage</span>
+            <span>Đòn bẩy</span>
             <span className="font-mono text-white">{leverage}x</span>
           </div>
           <input
@@ -306,21 +303,21 @@ export function ForexTradeSetupPanel({
         {activeLev && (
           <div className="mb-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
             <div className="rounded bg-slate-900/40 p-2">
-              <div className="text-slate-500">Notional</div>
+              <div className="text-slate-500">Giá trị danh nghĩa</div>
               <div className="font-mono text-white">
                 ${activeLev.notional.toLocaleString()}
               </div>
             </div>
             <div className="rounded bg-slate-900/40 p-2">
-              <div className="text-slate-500">TP P/L</div>
+              <div className="text-slate-500">Lợi nhuận TP</div>
               <div className="font-mono text-emerald-400">{money(activeLev.tpPnl)}</div>
             </div>
             <div className="rounded bg-slate-900/40 p-2">
-              <div className="text-slate-500">SL P/L</div>
+              <div className="text-slate-500">Lỗ SL</div>
               <div className="font-mono text-rose-400">{money(activeLev.slPnl)}</div>
             </div>
             <div className="rounded bg-slate-900/40 p-2">
-              <div className="text-slate-500">Risk tier</div>
+              <div className="text-slate-500">Mức rủi ro</div>
               <div className={`font-semibold ${tierColor(activeLev.riskTier)}`}>
                 {activeLev.riskTier}
               </div>
@@ -333,7 +330,7 @@ export function ForexTradeSetupPanel({
             {activeLev.warning}
             {activeLev.illustrativeWipeMovePct != null && (
               <span className="ml-1 text-amber-400/80">
-                · ~{activeLev.illustrativeWipeMovePct}% adverse move ≈ capital risk (illustrative)
+                · ~{activeLev.illustrativeWipeMovePct}% biến động ngược chiều ≈ rủi ro vốn (minh họa)
               </span>
             )}
           </div>
@@ -343,11 +340,11 @@ export function ForexTradeSetupPanel({
           <table className="w-full text-left text-[10px]">
             <thead className="text-slate-500">
               <tr>
-                <th className="py-1 pr-2">Lev</th>
+                <th className="py-1 pr-2">Đòn bẩy</th>
                 <th className="py-1 pr-2">Notional</th>
                 <th className="py-1 pr-2">TP</th>
                 <th className="py-1 pr-2">SL</th>
-                <th className="py-1">Tier</th>
+                <th className="py-1">Mức</th>
               </tr>
             </thead>
             <tbody>

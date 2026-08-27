@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 
 export function SettingsSection({
   title,
-  description,
   children,
   footer,
 }: {
@@ -17,7 +16,6 @@ export function SettingsSection({
     <section className="panel p-5 md:p-6">
       <header className="mb-4">
         <h2 className="font-display text-lg md:text-xl font-bold text-white">{title}</h2>
-        {description && <p className="text-xs md:text-sm text-slate-400 mt-1 leading-relaxed">{description}</p>}
       </header>
       <div className="space-y-4">{children}</div>
       {footer && <div className="mt-5 pt-4 border-t border-[#1a3558]/70">{footer}</div>}
@@ -27,7 +25,6 @@ export function SettingsSection({
 
 export function Row({
   label,
-  hint,
   children,
 }: {
   label: string;
@@ -38,7 +35,6 @@ export function Row({
     <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 py-2">
       <div className="sm:w-1/3 min-w-0">
         <div className="text-sm text-slate-200 font-medium">{label}</div>
-        {hint && <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">{hint}</div>}
       </div>
       <div className="sm:flex-1 min-w-0">{children}</div>
     </div>

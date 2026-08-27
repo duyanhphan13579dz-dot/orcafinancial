@@ -11,6 +11,12 @@ function severityClass(s: string): string {
   return "border-slate-700/50 bg-slate-900/40 text-slate-300";
 }
 
+function sentimentLabel(l: string): string {
+  if (l === "BULLISH") return "Tăng";
+  if (l === "BEARISH") return "Giảm";
+  return "Trung tính";
+}
+
 function labelClass(l: string): string {
   if (l === "BULLISH") return "text-emerald-400";
   if (l === "BEARISH") return "text-rose-400";
@@ -19,7 +25,6 @@ function labelClass(l: string): string {
 
 export function CryptoSentimentPanel({ symbol }: { symbol: string }) {
   const [data, setData] = useState<CryptoSentimentIntelligence | null>(null);
-  // Keep the data request independent, but avoid mounting the long body on first paint.
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -35,7 +40,6 @@ export function CryptoSentimentPanel({ symbol }: { symbol: string }) {
         })
         .catch(() => undefined);
     };
-    // Defer first fetch slightly so chart/bundle paint first
     const t = setTimeout(load, 400);
     const id = setInterval(load, 120_000);
     const off = whenVisible(load);
@@ -50,7 +54,7 @@ export function CryptoSentimentPanel({ symbol }: { symbol: string }) {
   if (!data) {
     return (
       <section className="panel overflow-hidden">
-        <div className="px-4 py-2.5 text-xs text-slate-500">Social Sentiment · …</div>
+        <div className="px-4 py-2.5 text-xs text-slate-500">Cảm xúc thị trường · …</div>
       </section>
     );
   }
@@ -58,7 +62,7 @@ export function CryptoSentimentPanel({ symbol }: { symbol: string }) {
   if (!data.available) {
     return (
       <section className="panel overflow-hidden">
-        <div className="px-4 py-2.5 text-xs text-slate-500">Sentiment · không có tin</div>
+        <div className="px-4 py-2.5 text-xs text-slate-500">Cảm xúc · không có tin</div>
       </section>
     );
   }
@@ -73,10 +77,10 @@ export function CryptoSentimentPanel({ symbol }: { symbol: string }) {
         className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-white/[0.02]"
       >
         <div className="flex min-w-0 items-center gap-2">
-          <span className="text-sm font-semibold text-white">Social Sentiment</span>
-          <span className={`text-xs font-bold ${labelClass(data.label)}`}>{data.label}</span>
+          <span className="text-sm font-semibold text-white">Cảm xúc thị trường</span>
+          <span className={`text-xs font-bold ${labelClass(data.label)}`}>{sentimentLabel(data.label)}</span>
           <span className="rounded-full bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
-            {d.sampleSize} news
+            {d.sampleSize} tin
           </span>
         </div>
         <span className="text-xs text-slate-500">{open ? "▾" : "▸"}</span>
@@ -85,9 +89,9 @@ export function CryptoSentimentPanel({ symbol }: { symbol: string }) {
       {open && (
         <div className="border-t border-slate-800/80 px-3 pb-3 pt-2.5">
           <div className="mb-1.5 flex items-baseline gap-2">
-            <span className={`text-xl font-black ${labelClass(data.label)}`}>{data.label}</span>
+            <span className={`text-xl font-black ${labelClass(data.label)}`}>{sentimentLabel(data.label)}</span>
             <span className="text-[11px] text-slate-500">
-              {data.score.toFixed(2)} · {Math.round(data.confidence * 100)}% conf
+              {data.score.toFixed(2)} · {Math.round(data.confidence * 100)}% tin cậy
             </span>
           </div>
 

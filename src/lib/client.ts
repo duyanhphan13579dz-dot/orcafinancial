@@ -17,7 +17,6 @@ interface CacheEntry {
 const DEFAULT_SOFT_TTL_MS = 15_000;
 const DEFAULT_HARD_TTL_MS = 5 * 60_000;
 const MAX_CACHE_ENTRIES = 80;
-/** Agent chat can take up to ~50s server-side; client must wait longer than that. */
 const DEFAULT_FETCH_TIMEOUT_MS = 55_000;
 
 const responseCache = new Map<string, CacheEntry>();
@@ -64,7 +63,7 @@ function mapNetworkError(err: unknown, status?: number): Error {
   }
   if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg)) {
     return new Error(
-      "Không nhận được phản hồi từ server (Failed to fetch). Thường do timeout/deploy hoặc mất kết nối. Thử lại sau 5–10 giây.",
+      "Không nhận được phản hồi từ máy chủ. Có thể do quá thời gian chờ, triển khai hoặc mất kết nối. Thử lại sau 5–10 giây.",
     );
   }
   if (status === 504 || status === 502) {
@@ -78,7 +77,7 @@ async function readEnvelope<T>(res: Response): Promise<Envelope<T>> {
   const trimmed = text.trim();
 
   if (!trimmed) {
-    throw new Error(res.ok ? "Empty response" : `HTTP ${res.status}`);
+    throw new Error(res.ok ? "Phản hồi trống" : `HTTP ${res.status}`);
   }
 
   try {
@@ -154,8 +153,8 @@ export async function api<T>(
 export type UsePollOptions = {
   softTtlMs?: number;
   hardTtlMs?: number;
-  timeoutMs?: number;
   enabled?: boolean;
+  timeoutMs?: number;
 };
 
 export function usePoll<T>(
@@ -166,7 +165,6 @@ export function usePoll<T>(
   const softTtl = options.softTtlMs ?? Math.min(intervalMs, DEFAULT_SOFT_TTL_MS);
   const hardTtl = options.hardTtlMs ?? DEFAULT_HARD_TTL_MS;
   const enabled = options.enabled !== false;
-  const timeoutMs = options.timeoutMs ?? (intervalMs > 0 ? Math.min(intervalMs - 200, 8_000) : 8_000);
 
   const cached = path ? readCache(path, hardTtl) : null;
 
@@ -193,7 +191,7 @@ export function usePoll<T>(
       else if (!readCache(p, hardTtl)) setLoading(true);
 
       try {
-        const env = await api<T>(p, { timeoutMs });
+        const env = await api<T>(p, options.timeoutMs ? { timeoutMs: options.timeoutMs } : undefined);
         if (pathRef.current !== p) return;
         setData(env.data);
         setMeta(env.meta ?? null);
@@ -208,16 +206,18 @@ export function usePoll<T>(
         }
       }
     },
-    [hardTtl, timeoutMs],
+    [hardTtl, options.timeoutMs],
   );
 
   useEffect(() => {
-    if (!path || !enabled) return;
+    if (!path || !enabled) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLoading(false);
+      return;
+    }
 
     const hit = readCache(path, hardTtl);
     if (hit) {
-      // Cache hydration is an intentional synchronization from the external cache store.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setData(hit.data as T);
       setMeta(hit.meta);
       setLoading(false);
@@ -227,7 +227,6 @@ export function usePoll<T>(
         void load({ background: true });
       }
     } else {
-      // Reset state before loading a new external resource.
       setData(null);
       setMeta(null);
       setLoading(true);
@@ -248,7 +247,7 @@ export function usePoll<T>(
     data,
     meta,
     error,
-    loading: Boolean(path && enabled && loading),
+    loading,
     isValidating,
     refresh: () => load({ background: !!data }),
   };

@@ -27,7 +27,8 @@ function tone(bias: string): string {
 }
 
 function prettyBias(bias: string): string {
-  return bias.replace(/_/g, " ");
+  const labels: Record<string, string> = { LONG: "Mua", SHORT: "Bán", BUY: "Mua", SELL: "Bán", BULLISH: "Tăng", BEARISH: "Giảm", ACCUMULATION: "Tích lũy", DISTRIBUTION: "Phân phối", NEUTRAL: "Trung tính" };
+  return labels[bias] ?? bias.replace(/_/g, " ");
 }
 
 function PanelShell({
@@ -92,13 +93,13 @@ export function FuturesPanel({ data }: { data: FuturesIntelligence }) {
 
   return (
     <PanelShell
-      title="Futures Intelligence"
+      title="Phân tích futures"
       badge={data.binanceFuturesSymbol}
       defaultOpen={false}
     >
       <div className="grid grid-cols-3 gap-2">
         <MetricTile
-          label="Funding"
+          label="Phí funding"
           value={
             f.ratePct != null
               ? `${f.ratePct >= 0 ? "+" : ""}${f.ratePct.toFixed(4)}%`
@@ -114,11 +115,11 @@ export function FuturesPanel({ data }: { data: FuturesIntelligence }) {
               ? `${ls.longAccountPct.toFixed(0)}/${ls.shortAccountPct.toFixed(0)}`
               : "—"
           }
-          sub={ls.ratio != null ? `ratio ${ls.ratio.toFixed(2)}` : prettyBias(ls.bias)}
+          sub={ls.ratio != null ? `tỷ lệ ${ls.ratio.toFixed(2)}` : prettyBias(ls.bias)}
           subClass={tone(ls.bias)}
         />
         <MetricTile
-          label="Open Interest"
+          label="Vị thế mở"
           value={fmtUsd(oi.openInterestUsd)}
           sub={
             oi.changePct != null
@@ -141,25 +142,25 @@ export function WhalePanel({ data }: { data: WhaleLiquidationIntelligence }) {
 
   return (
     <PanelShell
-      title="Whale Liquidations"
+      title="Thanh lý lớn"
       defaultOpen={false}
       badge={`${w.windowMinutes}m · ≥${fmtUsd(data.whaleThresholdUsd)}`}
     >
       <div className="grid grid-cols-3 gap-2">
         <MetricTile
-          label="Whale Buy"
+          label="Cá voi mua"
           value={fmtUsd(w.buyNotional)}
-          sub={`${w.buyCount} orders`}
+          sub={`${w.buyCount} lệnh`}
           subClass="text-emerald-400/80"
         />
         <MetricTile
-          label="Whale Sell"
+          label="Cá voi bán"
           value={fmtUsd(w.sellNotional)}
-          sub={`${w.sellCount} orders`}
+          sub={`${w.sellCount} lệnh`}
           subClass="text-rose-400/80"
         />
         <MetricTile
-          label="Net flow"
+          label="Dòng tiền ròng"
           value={`${w.netFlow >= 0 ? "+" : ""}${fmtUsd(w.netFlow)}`}
           sub={prettyBias(w.bias)}
           subClass={tone(w.bias)}
@@ -169,9 +170,9 @@ export function WhalePanel({ data }: { data: WhaleLiquidationIntelligence }) {
       {zones.length > 0 && (
         <div className="mt-3">
           <div className="mb-1.5 flex items-center justify-between text-[10px] text-slate-500">
-            <span>Liq. zones (est.)</span>
+            <span>Vùng thanh lý (ước tính)</span>
             {data.liquidation.markPrice != null && (
-              <span>mark ${data.liquidation.markPrice.toFixed(0)}</span>
+              <span>giá tham chiếu ${data.liquidation.markPrice.toFixed(0)}</span>
             )}
           </div>
           <div className="space-y-1">
@@ -188,7 +189,7 @@ export function WhalePanel({ data }: { data: WhaleLiquidationIntelligence }) {
                 <span
                   className={`relative z-10 ${z.side === "SHORT" ? "text-rose-400" : "text-emerald-400"}`}
                 >
-                  {z.side === "SHORT" ? "shorts" : "longs"} {fmtUsd(z.notionalEstimate)}
+                  {z.side === "SHORT" ? "bên bán" : "bên mua"} {fmtUsd(z.notionalEstimate)}
                 </span>
                 <span className="relative z-10 text-slate-500">
                   {z.distancePct >= 0 ? "↑" : "↓"}
@@ -205,7 +206,7 @@ export function WhalePanel({ data }: { data: WhaleLiquidationIntelligence }) {
           {w.events.slice(0, 8).map((e, i) => (
             <div key={`${e.time}-${i}`} className="flex justify-between gap-2 text-slate-400">
               <span className={e.side === "BUY" ? "text-emerald-400" : "text-rose-400"}>
-                {e.kind === "WHALE" ? "🐋" : e.kind === "ORDER_WALL" ? "🧱" : "·"} {e.side}
+                {e.kind === "WHALE" ? "🐋" : e.kind === "ORDER_WALL" ? "🧱" : "·"} {prettyBias(e.side)}
               </span>
               <span className="text-slate-300">${e.price.toFixed(2)}</span>
               <span>{fmtUsd(e.notional)}</span>
@@ -227,15 +228,15 @@ export function OrderFlowPanel({ data }: { data: OrderFlowIntelligence }) {
 
   return (
     <PanelShell
-      title="Order Flow"
+      title="Luồng lệnh"
       defaultOpen={false}
       badge={`spread ${book.spreadBps != null ? `${book.spreadBps.toFixed(1)}bps` : "—"}`}
     >
       <div className="mb-2">
         <div className="mb-1 flex justify-between text-[10px] text-slate-500">
-          <span>Buy {book.imbalance.bidPct.toFixed(0)}%</span>
+          <span>Mua {book.imbalance.bidPct.toFixed(0)}%</span>
           <span className={tone(book.imbalance.bias)}>{prettyBias(book.imbalance.bias)}</span>
-          <span>Sell {book.imbalance.askPct.toFixed(0)}%</span>
+          <span>Bán {book.imbalance.askPct.toFixed(0)}%</span>
         </div>
         <div className="flex h-1.5 overflow-hidden rounded-full bg-slate-800">
           <div className="bg-emerald-500" style={{ width: `${book.imbalance.bidPct}%` }} />
@@ -245,7 +246,8 @@ export function OrderFlowPanel({ data }: { data: OrderFlowIntelligence }) {
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-0.5 font-mono text-[10px]">
-          <div className="text-[10px] font-semibold uppercase text-rose-400/80">Asks</div>
+          <div className="text-[10px] font-semibold uppercase text-rose-400/80">Bên bán
+</div>
           {asks.map((lvl) => (
             <div key={`a-${lvl.price}`} className="relative flex justify-between rounded px-1 py-0.5">
               <div
@@ -257,7 +259,8 @@ export function OrderFlowPanel({ data }: { data: OrderFlowIntelligence }) {
             </div>
           ))}
           <div className="my-1 border-t border-dashed border-slate-700/80" />
-          <div className="text-[10px] font-semibold uppercase text-emerald-400/80">Bids</div>
+          <div className="text-[10px] font-semibold uppercase text-emerald-400/80">Bên mua
+</div>
           {bids.map((lvl) => (
             <div key={`b-${lvl.price}`} className="relative flex justify-between rounded px-1 py-0.5">
               <div

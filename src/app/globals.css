@@ -58,6 +58,23 @@ main > * {
 
 a { color: inherit; }
 
+button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--orca-cyan);
+  outline-offset: 2px;
+}
+button, [role="button"] { min-height: 2.5rem; }
+input, select, textarea { color-scheme: dark; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: #0A2540; }
 ::-webkit-scrollbar-thumb { background: #1a3558; border-radius: 4px; }

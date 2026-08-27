@@ -71,9 +71,9 @@ export function NotificationsPanel() {
         title="Báo cáo qua email"
         description="Chọn bản tin bạn muốn nhận và giờ gửi (giờ Việt Nam)."
       >
-        <Row label="Morning Brief" hint="Bản tin đầu ngày với điểm tin và chiến lược thận trọng.">
+        <Row label="Bản tin sáng" hint="Bản tin đầu ngày.">
           <div className="flex items-center gap-3">
-            <Toggle checked={prefs.emailMorning} onChange={(v) => update({ emailMorning: v })} label="Morning Brief" />
+            <Toggle checked={prefs.emailMorning} onChange={(v) => update({ emailMorning: v })} label="Bản tin sáng" />
             <TextInput
               type="time"
               value={prefs.morningTime}
@@ -83,9 +83,9 @@ export function NotificationsPanel() {
             />
           </div>
         </Row>
-        <Row label="Market Summary" hint="Nhận định cuối phiên và kế hoạch hành động phiên tới.">
+        <Row label="Tổng kết thị trường" hint="Nhận định cuối phiên.">
           <div className="flex items-center gap-3">
-            <Toggle checked={prefs.emailSummary} onChange={(v) => update({ emailSummary: v })} label="Market Summary" />
+            <Toggle checked={prefs.emailSummary} onChange={(v) => update({ emailSummary: v })} label="Tổng kết thị trường" />
             <TextInput
               type="time"
               value={prefs.summaryTime}
@@ -107,23 +107,23 @@ export function NotificationsPanel() {
       </SettingsSection>
 
       <SettingsSection title="Thông báo trình duyệt &amp; ứng dụng">
-        <Row label="Thông báo đẩy (Push)" hint="Hiển thị thông báo ngay cả khi không mở tab ORCA.">
+        <Row label="Thông báo đẩy" hint="">
           <div className="flex items-center gap-3">
             <Toggle
               checked={prefs.pushEnabled}
               onChange={(v) => (v ? requestPush() : update({ pushEnabled: false }))}
-              label="Push"
+              label="Thông báo đẩy"
             />
             <span className="text-[11px] text-slate-500">
               {prefs.pushEnabled ? "Đang bật" : "Cần cấp quyền trình duyệt"}
             </span>
           </div>
         </Row>
-        <Row label="Thông báo trong ứng dụng" hint="Hiện toast khi có tin mới hoặc AI Agent hoàn thành.">
+        <Row label="Thông báo trong ứng dụng" hint="">
           <Toggle
             checked={prefs.inAppNotifications}
             onChange={(v) => update({ inAppNotifications: v })}
-            label="In-app"
+            label="Thông báo trong ứng dụng"
           />
         </Row>
       </SettingsSection>

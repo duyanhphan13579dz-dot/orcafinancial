@@ -31,9 +31,9 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ORCA FINANCIAL — Intelligent Investment Platform",
+  title: "ORCA FINANCIAL — Nền tảng đầu tư thông minh",
   description:
-    "Nền tảng phân tích tài chính AI — dữ liệu thị trường thật (VNDirect, Yahoo, CoinGecko, RSS), phân tích kỹ thuật, fundamental, SWOT và AI Agent.",
+    "Nền tảng phân tích tài chính AI — dữ liệu thị trường thật (VNDirect, Yahoo, CoinGecko, RSS), phân tích kỹ thuật, cơ bản, SWOT và trợ lý AI.",
 };
 
 export const viewport: Viewport = {
@@ -47,7 +47,7 @@ export const viewport: Viewport = {
 
 const NAV = [
   { href: "/", label: "Tổng quan" },
-  { href: "/heatmap", label: "Heatmap" },
+  { href: "/heatmap", label: "Bản đồ nhiệt" },
   { href: "/sector-board", label: "Ngành" },
   { href: "/commodities", label: "Hàng hóa" },
   { href: "/crypto", label: "Crypto" },
@@ -56,7 +56,7 @@ const NAV = [
   { href: "/screener", label: "Bộ lọc" },
   { href: "/news", label: "Tin tức" },
   { href: "/watchlist", label: "Theo dõi" },
-  { href: "/agent", label: "AI Agent" },
+  { href: "/agent", label: "Trợ lý AI" },
   { href: "/system", label: "Hệ thống" },
   { href: "/settings", label: "Cài đặt" },
 ];
@@ -79,7 +79,6 @@ export default function RootLayout({
         />
       </head>
 
-      {/* pb-20 on <lg for bottom nav; overflow-x-hidden stops horizontal bleed */}
       <body className="antialiased min-h-screen overflow-x-hidden pb-20 lg:pb-0">
         <div
           aria-hidden
@@ -94,13 +93,8 @@ export default function RootLayout({
           <AppearanceLoader />
           <MobileHeader />
 
-          {/* Desktop-only chrome (≥ lg / ~1024px)
-              Row 1: logo + search (priority) + user
-              Row 2: nav links (scroll horizontally if needed — never wrap over search)
-           */}
           <header className="hidden lg:block sticky top-0 z-40 border-b border-[#1a3558] bg-[#0A2540]/98 backdrop-blur-md">
             <div className="mx-auto max-w-7xl px-4">
-              {/* Row 1 — brand + search + account */}
               <div className="flex items-center gap-4 py-2.5 min-w-0">
                 <Link
                   href="/"
@@ -116,12 +110,11 @@ export default function RootLayout({
                       <span className="text-[#00d4ff]">FINANCIAL</span>
                     </div>
                     <div className="font-mono text-[9px] tracking-[0.25em] text-[#7aa8d4] uppercase italic">
-                      Intelligent Investment
+                      Đầu tư thông minh
                     </div>
                   </div>
                 </Link>
 
-                {/* Search takes remaining space — always visible & clickable */}
                 <div className="flex-1 min-w-0 max-w-xl mx-auto">
                   <SearchBar />
                 </div>
@@ -131,7 +124,6 @@ export default function RootLayout({
                 </div>
               </div>
 
-              {/* Row 2 — navigation: single line, horizontal scroll on narrow desktop */}
               <nav className="flex items-center gap-1 xl:gap-2 text-sm text-slate-400 font-display border-t border-[#1a3558]/60 -mx-4 px-4 overflow-x-auto scrollbar-hide">
                 {NAV.map((n) => (
                   <Link
@@ -159,15 +151,10 @@ export default function RootLayout({
                 </span>{" "}
                 —{" "}
                 <span className="italic font-mono text-[#7aa8d4]">
-                  Intelligent Investment
+                  Đầu tư thông minh
                 </span>
               </div>
 
-              <div className="max-w-xl">
-                Dữ liệu thật từ VNDirect dchart, Yahoo Finance, CoinGecko và
-                RSS (VnExpress, CafeF, Vietstock) qua Data Engine với circuit
-                breaker & fallback. Không phải lời khuyên đầu tư.
-              </div>
             </div>
           </footer>
 

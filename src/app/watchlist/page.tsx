@@ -30,8 +30,8 @@ export default function WatchlistPage() {
     <ProtectedPage featureName="danh sách theo dõi">
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <h1 className="text-xl font-bold">Watchlist</h1>
-        <span className="text-xs text-slate-500">Giá cập nhật mỗi 15 giây qua Data Engine</span>
+        <h1 className="text-xl font-bold">Danh mục theo dõi</h1>
+        <span className="text-xs text-slate-500">Giá cập nhật mỗi 15 giây</span>
       </div>
 
       {error && <div className="panel border-rose-800 bg-rose-950/30 p-4 text-sm text-rose-300">{error}</div>}
@@ -39,7 +39,7 @@ export default function WatchlistPage() {
 
       {data && data.items.length === 0 && (
         <div className="panel p-8 text-center text-sm text-slate-500">
-          Chưa có mã nào. Tìm một mã (VD: <Link href="/stocks/VNM" className="text-cyan-400">VNM</Link>) và bấm “+ Watchlist”.
+          Chưa có mã nào. Tìm một mã (VD: <Link href="/stocks/VNM" className="text-cyan-400">VNM</Link>) và bấm “+ Theo dõi”.
         </div>
       )}
 
@@ -53,7 +53,7 @@ export default function WatchlistPage() {
                 <th className="text-right">+/- %</th>
                 <th className="text-right">KL</th>
                 <th className="text-right">Nguồn</th>
-                <th className="text-right">Confidence</th>
+                <th className="text-right">Độ tin cậy</th>
                 <th className="text-right"></th>
               </tr>
             </thead>

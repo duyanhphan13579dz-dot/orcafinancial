@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: orca-web
+    metrics_path: /api/metrics
+    static_configs:
+      - targets: ["web:3000"]
+        labels:
+          service: orca-financial
+          env: docker
+
+  - job_name: orca-forex
+    metrics_path: /api/v1/forex/metrics
+    static_configs:
+      - targets: ["web:3000"]
+        labels:
+          service: orca-forex
+          env: docker
+
+  # When scraping a deployed Vercel/production URL, override via
+  # docker-compose extra_hosts or a separate file_sd. Example:
+  # - job_name: orca-prod
+  #   metrics_path: /api/metrics
+  #   scheme: https
+  #   static_configs:
+  #     - targets: ["your-app.vercel.app"]

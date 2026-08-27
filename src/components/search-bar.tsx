@@ -69,7 +69,7 @@ export function SearchBar() {
             }
             if (e.key === "Escape") setOpen(false);
           }}
-          placeholder="Tìm mã CK, công ty… (VNM, HPG, FPT)"
+          placeholder="Tìm mã hoặc tên công ty… (VNM, HPG, FPT)"
           className="w-full min-w-0 bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
           autoComplete="off"
           spellCheck={false}
