@@ -34,8 +34,8 @@ export interface StockAnalysisPdfPayload {
   dataConfidence: number;
 }
 
-const FONT = path.join(process.cwd(), "public/fonts/DejaVuSans.ttf");
-const FONT_BOLD = path.join(process.cwd(), "public/fonts/DejaVuSans-Bold.ttf");
+const FONT = path.join(process.cwd(), "public/fonts/NotoSans-Regular.ttf");
+const FONT_BOLD = path.join(process.cwd(), "public/fonts/NotoSans-SemiBold.ttf");
 const BLUE = "#0A2540";
 const MUTED = "#55718d";
 const LINE = "#d5e0ea";
@@ -100,7 +100,7 @@ function drawPriceSnapshot(doc: PDFKit.PDFDocument, bars: Ohlcv[] = []) {
 }
 
 function regularFont(doc: PDFKit.PDFDocument): string { return (doc as PDFKit.PDFDocument & { _orcaRegular?: string })._orcaRegular ?? "Helvetica"; }
-function paragraphFallback(doc: PDFKit.PDFDocument, text: string) { doc.font(regularFont(doc)).fontSize(8.8).fillColor(MUTED).text(text, { lineGap: 2 }); }
+function paragraphFallback(doc: PDFKit.PDFDocument, text: string) { doc.font(regularFont(doc)).fontSize(8.2).fillColor(MUTED).text(text, { lineGap: 1.2 }); }
 
 function valueChainRows(profile: CompanyProfile): string[][] {
   const chain = generateValueChain(profile.symbol);
@@ -148,7 +148,7 @@ function changeText(current: number | null | undefined, previous: number | null 
 
 export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margins: { top: 54, bottom: 24, left: 48, right: 48 }, bufferPages: true });
+    const doc = new PDFDocument({ size: "A4", margins: { top: 46, bottom: 28, left: 48, right: 48 }, bufferPages: true });
     const chunks: Buffer[] = [];
     doc.on("data", (chunk: Buffer) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -166,22 +166,22 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     } catch {
       // PDFKit's built-in fonts keep report generation alive on restricted runtimes.
     }
-    const title = (text: string) => { if (doc.y > 650) doc.addPage(); doc.x = 48; doc.moveDown(0.5).font(bold).fontSize(15).fillColor(BLUE).text(text, 48, doc.y, { width: 499 }); doc.moveDown(0.18).strokeColor(LINE).moveTo(48, doc.y).lineTo(547, doc.y).stroke(); doc.moveDown(0.35); };
-    const paragraph = (text: string, color = "#172b3f") => { doc.x = 48; return doc.font(regular).fontSize(9.4).fillColor(color).text(safeText(text), 48, doc.y, { width: 499, lineGap: 2.2, paragraphGap: 4 }); };
-    const row = (label: string, value: string, color = "#172b3f") => { if (doc.y > 735) doc.addPage(); doc.x = 48; const y = doc.y; const left = safeText(label); const right = safeText(value); doc.font(regular).fontSize(9); const leftHeight = doc.heightOfString(left, { width: 185, lineGap: 1.5 }); doc.font(bold).fontSize(9); const rightHeight = doc.heightOfString(`  ${right}`, { width: 308, lineGap: 1.5 }); doc.font(regular).fontSize(9).fillColor(MUTED).text(left, 54, y, { width: 185, lineGap: 1.5 }); doc.font(bold).fontSize(9).fillColor(color).text(`  ${right}`, 239, y, { width: 308, lineGap: 1.5 }); doc.y = y + Math.max(leftHeight, rightHeight) + 4; };
-    const bullet = (text: string, color = "#172b3f") => { if (doc.y > 735) doc.addPage(); doc.x = 48; return doc.font(regular).fontSize(9.2).fillColor(color).text(`• ${safeText(text)}`, 54, doc.y, { width: 493, lineGap: 2.5 }); };
+    const title = (text: string) => { if (doc.y > 650) doc.addPage(); doc.x = 48; doc.moveDown(0.2).font(bold).fontSize(13.2).fillColor(BLUE).text(text, 48, doc.y, { width: 499 }); doc.moveDown(0.08).strokeColor(LINE).moveTo(48, doc.y).lineTo(547, doc.y).stroke(); doc.moveDown(0.18); };
+    const paragraph = (text: string, color = "#172b3f") => { doc.x = 48; return doc.font(regular).fontSize(8.7).fillColor(color).text(safeText(text), 48, doc.y, { width: 499, lineGap: 1.15, paragraphGap: 2 }); };
+    const row = (label: string, value: string, color = "#172b3f") => { if (doc.y > 735) doc.addPage(); doc.x = 48; const y = doc.y; const left = safeText(label); const right = safeText(value); doc.font(regular).fontSize(9); const leftHeight = doc.heightOfString(left, { width: 185, lineGap: 1.1 }); doc.font(bold).fontSize(8.2); const rightHeight = doc.heightOfString(`  ${right}`, { width: 308, lineGap: 1.1 }); doc.font(regular).fontSize(8.2).fillColor(MUTED).text(left, 54, y, { width: 185, lineGap: 1.1 }); doc.font(bold).fontSize(8.2).fillColor(color).text(`  ${right}`, 239, y, { width: 308, lineGap: 1.1 }); doc.y = y + Math.max(leftHeight, rightHeight) + 2.5; };
+    const bullet = (text: string, color = "#172b3f") => { if (doc.y > 735) doc.addPage(); doc.x = 48; return doc.font(regular).fontSize(8.5).fillColor(color).text(`• ${safeText(text)}`, 54, doc.y, { width: 493, lineGap: 1.2 }); };
     const table = (headers: string[], rows: string[][]) => {
       const firstWidth = headers.length >= 6 ? 72 : headers.length >= 4 ? 105 : 110;
       const widths = headers.map((_, index) => index === 0 ? firstWidth : (499 - firstWidth) / Math.max(1, headers.length - 1));
       const startX = 48; let y = doc.y;
       const draw = (values: string[], header = false) => {
-        const fontSize = header ? 8 : headers.length >= 6 ? 6.9 : 7.5;
+        const fontSize = header ? 7.3 : headers.length >= 6 ? 6.5 : 7.1;
         const heights = values.map((value, index) => { doc.font(header ? bold : regular).fontSize(fontSize); return doc.heightOfString(safeText(value), { width: Math.max(20, widths[index] - 10), lineGap: 1.8 }); });
-        const height = Math.max(header ? 20 : 19, Math.min(58, Math.max(...heights) + 9));
+        const height = Math.max(header ? 17 : 16, Math.min(50, Math.max(...heights) + 7));
         if (y + height > 780) { doc.addPage(); y = doc.y; }
         let x = startX;
         doc.rect(startX, y, 499, height).fill(header ? "#eaf1f7" : "#ffffff").stroke(LINE);
-        values.forEach((value, index) => { doc.font(header ? bold : regular).fontSize(fontSize).fillColor(header ? BLUE : "#172b3f").text(safeText(value), x + 5, y + 5, { width: Math.max(20, widths[index] - 10), height: height - 7, lineGap: 1.8 }); x += widths[index]; });
+        values.forEach((value, index) => { doc.font(header ? bold : regular).fontSize(fontSize).fillColor(header ? BLUE : "#172b3f").text(safeText(value), x + 4, y + 4, { width: Math.max(20, widths[index] - 8), height: height - 6, lineGap: 1.1 }); x += widths[index]; });
         y += height;
       };
       draw(headers, true); for (const values of rows) draw(values);
@@ -225,7 +225,6 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
       table(["Năng lực / mảng", "Nhận định", "Độ tin cậy"], payload.business.segments.slice(0, 5).map((segment) => [segment.name, segment.description, `${Math.round(segment.confidence * 100)}%`]));
     }
 
-    doc.addPage();
     title("2. KẾT QUẢ KINH DOANH VÀ XU HƯỚNG");
     paragraph(`Báo cáo sử dụng ${payload.health.dataQuality.periodsUsed} kỳ gần nhất đến ${payload.health.asOfPeriod}. ${dataTierVi(payload.dataConfidence)}; số liệu estimate được trình bày rõ ràng và không được gọi là số liệu đã kiểm toán.`, MUTED);
     table(["Kỳ", "Doanh thu", "Tăng trưởng quý", "EBITDA", "LN ròng", "EPS"], payload.quarters.slice(0, 8).map((quarter, index, rows) => [`${quarter.period} · ước tính`, money(quarter.income.revenue), changeText(quarter.income.revenue, rows[index + 1]?.income.revenue), money(quarter.income.ebitda), money(quarter.income.netIncome), money(quarter.income.eps)]));
@@ -233,7 +232,7 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     const yearAgo = payload.quarters.find((quarter) => latest && quarter.quarter === latest.quarter && quarter.fiscalYear === latest.fiscalYear - 1);
     const revenueChange = changeText(latest?.income.revenue, payload.quarters[1]?.income.revenue);
     const netIncomeChange = changeText(latest?.income.netIncome, payload.quarters[1]?.income.netIncome);
-    paragraph(`NHẬN ĐỊNH ORCA: Kỳ gần nhất ghi nhận doanh thu ${money(latest?.income.revenue)} tỷ VNĐ và lợi nhuận ròng ${money(latest?.income.netIncome)} tỷ VNĐ. So với kỳ trước, doanh thu thay đổi ${revenueChange} và lợi nhuận ròng thay đổi ${netIncomeChange}. ${yearAgo ? `So với cùng kỳ, doanh thu thay đổi ${changeText(latest?.income.revenue, yearAgo.income.revenue)} và lợi nhuận ròng thay đổi ${changeText(latest?.income.netIncome, yearAgo.income.netIncome)}.` : "Chưa có đủ kỳ tương ứng để so sánh cùng kỳ."}`);
+    paragraph(`Kỳ gần nhất ghi nhận doanh thu ${money(latest?.income.revenue)} tỷ VNĐ và lợi nhuận ròng ${money(latest?.income.netIncome)} tỷ VNĐ. So với kỳ trước, doanh thu thay đổi ${revenueChange} và lợi nhuận ròng thay đổi ${netIncomeChange}. ${yearAgo ? `So với cùng kỳ, doanh thu thay đổi ${changeText(latest?.income.revenue, yearAgo.income.revenue)} và lợi nhuận ròng thay đổi ${changeText(latest?.income.netIncome, yearAgo.income.netIncome)}.` : "Chưa có đủ kỳ tương ứng để so sánh cùng kỳ."}`);
     paragraph("Ý nghĩa đầu tư: cần xác định biến động lợi nhuận đến từ tăng trưởng hoạt động, thay đổi biên, chi phí tài chính hay khoản thu nhập bất thường. Một quý tăng trưởng đơn lẻ chưa đủ để kết luận xu hướng bền vững.", MUTED);
     table(["Chỉ tiêu", "Hiện tại", "So với kỳ trước", "Diễn giải"], [
       ["Doanh thu", money(latest?.income.revenue), revenueChange, "Quy mô hoạt động trong kỳ báo cáo."],
@@ -242,7 +241,6 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
       ["ROA / ROE / ROS", `${pct(indicatorValue(payload.health, "roa"))} / ${pct(indicatorValue(payload.health, "roe"))} / ${pct(indicatorValue(payload.health, "netMargin"))}`, "—", "Đọc cùng biên lợi nhuận, vòng quay tài sản và đòn bẩy."],
     ]);
 
-    doc.addPage();
     title("3. SỨC KHỎE TÀI CHÍNH VÀ DÒNG TIỀN");
     const healthNarrative = payload.health.groups.map((group) => `${group.label}: ${group.narrative}`).join(" ");
     paragraph(`Điểm sức khỏe tài chính ${payload.health.overall}/100, xếp loại ${ratingVi(payload.health.rating)}. ${healthNarrative}`);
@@ -262,9 +260,8 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
       ["Hệ số nhân vốn chủ", dupontLeverage == null ? "Chưa có dữ liệu" : `${money(1 + dupontLeverage)} lần`, "Mức độ khuếch đại ROE từ đòn bẩy."],
       ["ROE", pct(indicatorValue(payload.health, "roe")), "Kết quả cần được giải thích bởi ba thành phần trên."],
     ]);
-    paragraph("NHẬN ĐỊNH ORCA: sức khỏe tài chính chỉ có ý nghĩa đầu tư khi kết nối được với khả năng duy trì lợi nhuận và dòng tiền. Điểm số là tín hiệu tóm tắt, không thay thế việc đọc xu hướng từng kỳ.", MUTED);
+    paragraph("Sức khỏe tài chính chỉ có ý nghĩa đầu tư khi kết nối được với khả năng duy trì lợi nhuận và dòng tiền. Điểm số là tín hiệu tóm tắt, không thay thế việc đọc xu hướng từng kỳ.", MUTED);
 
-    doc.addPage();
     title("4. PHÂN TÍCH KỸ THUẬT VÀ THIẾT LẬP GIAO DỊCH");
     paragraph("Biểu đồ dưới đây là snapshot giá của 90 phiên gần nhất. Phần này phục vụ góc nhìn giao dịch ngắn và trung hạn, không phải bằng chứng thay thế cho luận điểm đầu tư dài hạn.", MUTED);
     drawPriceSnapshot(doc, payload.priceHistory);
@@ -281,7 +278,6 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
       paragraph(`Vùng quan sát ${money(payload.risk.tradePlan.entryLow)}–${money(payload.risk.tradePlan.entryHigh)}, dừng lỗ ${money(payload.risk.tradePlan.stopLoss)}, mục tiêu ${money(payload.risk.tradePlan.takeProfit1)} và ${money(payload.risk.tradePlan.takeProfit2)}. Đây là thiết lập kỹ thuật độc lập, không phải xác nhận rằng định giá cơ bản đang hấp dẫn.`, MUTED);
     }
 
-    doc.addPage();
     title("5. ĐỊNH GIÁ VÀ DỰ PHÓNG");
     const currentPrice = payload.technical.lastClose;
     const latestEps = latest?.income.eps ?? null;
@@ -298,7 +294,6 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     table(["Kỳ dự phóng", "Doanh thu", "EBITDA", "LN ròng", "EPS"], payload.forecast.forecast.map((point) => [point.period, money(point.revenue), money(point.ebitda), money(point.netIncome), money(point.eps)]));
     payload.forecast.assumptionBridge.slice(0, 3).forEach((assumption) => bullet(`Giả định cần kiểm chứng: ${assumption}`, MUTED));
 
-    doc.addPage();
     title("6. LUẬN ĐIỂM ĐẦU TƯ");
     if (payload.thesis) {
       row("Quan điểm hiện tại", `${thesisStanceVi(payload.thesis.stance)}${payload.thesis.score == null ? "" : ` · điểm tổng hợp ${payload.thesis.score}/100`}`);
@@ -322,11 +317,10 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     if (payload.thesis?.monitoring.length) payload.thesis.monitoring.slice(0, 3).forEach((item) => bullet(`Cần theo dõi: ${item}`));
     paragraph(`Chu kỳ hiện tại: ${payload.crossModule ? regimeVi(payload.crossModule.market.regimeLabel) : "chưa đủ dữ liệu"}. Đây là bối cảnh tham khảo, không thay thế phân tích mô hình lợi nhuận.`, MUTED);
 
-    doc.addPage();
-    title("8. GÓC NHÌN ORCA — NHẬN ĐỊNH TỔNG QUAN");
+    title("8. NHẬN ĐỊNH TỔNG QUAN");
     const recommendation = recommendationVi(payload.technical.recommendation);
     const valuationSentence = payload.forecast.expectedValue != null && payload.forecast.valuationConfidence >= 0.6 ? `Giá trị kỳ vọng theo các kịch bản là ${money(payload.forecast.expectedValue)} nghìn VNĐ.` : "Định giá chưa đủ độ tin cậy để đưa ra mức giá mục tiêu kết luận.";
-    paragraph(`Góc nhìn Orca: ${payload.profile.name} đang được đánh giá theo hướng ${thesisStanceVi(payload.thesis?.stance ?? "insufficient_data")}. Giá hiện tại là ${money(currentPrice)} nghìn VNĐ và trạng thái kỹ thuật là ${recommendation}. ${valuationSentence}`);
+    paragraph(`${payload.profile.name} đang được đánh giá theo hướng ${thesisStanceVi(payload.thesis?.stance ?? "insufficient_data")}. Giá hiện tại là ${money(currentPrice)} nghìn VNĐ và trạng thái kỹ thuật là ${recommendation}. ${valuationSentence}`);
     paragraph(`Luận điểm tích cực phụ thuộc vào khả năng duy trì tăng trưởng hoạt động, cải thiện chất lượng lợi nhuận và chuyển hóa thành dòng tiền. Ngược lại, quan điểm cần được hạ xuống nếu lợi nhuận suy yếu qua nhiều kỳ, đòn bẩy hoặc rủi ro tăng lên, hoặc vùng hỗ trợ kỹ thuật bị phá vỡ với thanh khoản bất thường.`);
     if (payload.thesis?.monitoring.length) {
       title("Ba đến năm biến số cần theo dõi");
@@ -338,7 +332,7 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     doc.moveDown(0.8);
     doc.font(regular).fontSize(8).fillColor(MUTED).text("Báo cáo phục vụ mục đích nghiên cứu; không phải khuyến nghị đầu tư cá nhân.");
     const range = doc.bufferedPageRange();
-    for (let i = range.start; i < range.start + range.count; i += 1) { doc.switchToPage(i); doc.font(regular).fontSize(7.5).fillColor(MUTED).text(`ORCA FINANCIAL · ${payload.symbol} · BÁO CÁO PHÂN TÍCH`, 48, 805, { width: 350, lineBreak: false }); doc.text(`Trang ${i + 1}/${range.count}`, 430, 805, { width: 117, align: "right", lineBreak: false }); }
+    for (let i = range.start; i < range.start + range.count; i += 1) { doc.switchToPage(i); doc.font(regular).fontSize(7).fillColor(MUTED).text(`ORCA FINANCIAL · ${payload.symbol} · BÁO CÁO PHÂN TÍCH`, 48, 790, { width: 350, height: 10, lineBreak: false }); doc.font(regular).fontSize(7).text(`Trang ${i + 1}/${range.count}`, 430, 790, { width: 117, height: 10, align: "right", lineBreak: false }); }
     doc.end();
   });
 }
