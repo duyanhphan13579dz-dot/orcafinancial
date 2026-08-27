@@ -83,9 +83,18 @@ function normalizeConnectionString(raw: string): string {
     if (requiresSsl(raw) || isSupabaseHost(raw)) {
       u.searchParams.set("sslmode", "no-verify");
     }
-    // Prefer short connect timeout for serverless login UX (overridable via URL)
+    // Keep connection establishment bounded in serverless runtimes.
     if (!u.searchParams.has("connect_timeout")) {
-      u.searchParams.set("connect_timeout", "10");
+      u.searchParams.set("connect_timeout", String(envInt("DATABASE_CONNECT_TIMEOUT_SECONDS", 8)));
+    }
+    // Abort runaway statements and idle transactions at the database session level.
+    // Preserve an explicitly supplied options string while appending our safeguards.
+    const options = u.searchParams.get("options") ?? "";
+    const statementTimeout = envInt("DATABASE_STATEMENT_TIMEOUT_MS", 15_000);
+    const idleTransactionTimeout = envInt("DATABASE_IDLE_TRANSACTION_TIMEOUT_MS", 30_000);
+    const safeguards = `-c statement_timeout=${statementTimeout} -c idle_in_transaction_session_timeout=${idleTransactionTimeout}`;
+    if (!options.includes("statement_timeout") && !options.includes("idle_in_transaction_session_timeout")) {
+      u.searchParams.set("options", `${options} ${safeguards}`.trim());
     }
     return u.toString();
   } catch {
@@ -100,11 +109,18 @@ function envInt(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-// Serverless + PgBouncer: keep pool tiny to avoid exhausting Supabase pooler slots
-const DEFAULT_POOL_MAX = isPgBouncerUrl(databaseUrl) ? 3 : 10;
-const POOL_MAX = envInt("DATABASE_POOL_MAX", DEFAULT_POOL_MAX);
-const POOL_IDLE_TIMEOUT_MS = envInt("DATABASE_POOL_IDLE_TIMEOUT_MS", 20_000);
-const POOL_CONNECT_TIMEOUT_MS = envInt("DATABASE_POOL_TIMEOUT_MS", 10_000);
+// Serverless creates many short-lived instances. Keep the default deliberately small,
+// especially for Supabase direct connections, to avoid exhausting database slots.
+const DEFAULT_POOL_MAX = isSupabaseHost(databaseUrl) || isPgBouncerUrl(databaseUrl)
+  ? 2
+  : process.env.NODE_ENV === "production"
+    ? 3
+    : 6;
+const POOL_MAX = Math.max(1, envInt("DATABASE_POOL_MAX", DEFAULT_POOL_MAX));
+const POOL_IDLE_TIMEOUT_MS = Math.max(5_000, envInt("DATABASE_POOL_IDLE_TIMEOUT_MS", 15_000));
+const POOL_CONNECT_TIMEOUT_MS = Math.max(2_000, envInt("DATABASE_POOL_TIMEOUT_MS", 8_000));
+const POOL_MAX_USES = Math.max(0, envInt("DATABASE_POOL_MAX_USES", 500));
+const POOL_MAX_LIFETIME_SECONDS = Math.max(0, envInt("DATABASE_POOL_MAX_LIFETIME_SECONDS", 300));
 const STARTUP_RETRY_MAX = envInt("DATABASE_STARTUP_RETRIES", 5);
 const STARTUP_RETRY_DELAY_MS = envInt("DATABASE_STARTUP_RETRY_DELAY_MS", 1_500);
 const SELF_PING_INTERVAL_MS = envInt("DATABASE_SELF_PING_INTERVAL_MS", 45_000);
@@ -168,7 +184,10 @@ function createPool(): Pool {
     max: POOL_MAX,
     idleTimeoutMillis: POOL_IDLE_TIMEOUT_MS,
     connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS,
+    maxUses: POOL_MAX_USES || undefined,
+    maxLifetimeSeconds: POOL_MAX_LIFETIME_SECONDS || undefined,
     keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
     allowExitOnIdle: true,
     ssl: useSsl
       ? {
@@ -184,6 +203,8 @@ function createPool(): Pool {
     mode: hint.pooler ? "pgbouncer-pooled" : "direct",
     poolMax: POOL_MAX,
     connectTimeoutMs: POOL_CONNECT_TIMEOUT_MS,
+    maxUses: POOL_MAX_USES || null,
+    maxLifetimeSeconds: POOL_MAX_LIFETIME_SECONDS || null,
     ssl: useSsl,
     hasDatabaseUrl: Boolean(databaseUrl),
   });
@@ -318,7 +339,10 @@ export async function pingDb(opts: { attempts?: number; timeoutMs?: number } = {
   health.lastCheckAt = new Date().toISOString();
   if (!health.firstFailureAt) health.firstFailureAt = health.lastCheckAt;
   health.status = health.consecutiveFailures >= 3 ? "down" : "degraded";
-  log("warn", "ping_failed_after_retries", {
+    log("warn", "ping_failed_after_retries", {
+      waitingCount: pool.waitingCount,
+      idleCount: pool.idleCount,
+      totalCount: pool.totalCount,
     attempts,
     error: health.lastError,
     consecutiveFailures: health.consecutiveFailures,
@@ -331,13 +355,21 @@ export async function pingDb(opts: { attempts?: number; timeoutMs?: number } = {
 export function getDbHealth(): DbHealthState & {
   downForMs: number | null;
   endpoint: ReturnType<typeof getDatabaseEndpointHint>;
+  pool: { totalCount: number; idleCount: number; waitingCount: number; max: number };
 } {
+  const currentPool = getPool();
   return {
     ...health,
     downForMs: health.firstFailureAt
       ? Date.now() - new Date(health.firstFailureAt).getTime()
       : null,
     endpoint: getDatabaseEndpointHint(),
+    pool: {
+      totalCount: currentPool.totalCount,
+      idleCount: currentPool.idleCount,
+      waitingCount: currentPool.waitingCount,
+      max: POOL_MAX,
+    },
   };
 }
 
@@ -400,7 +432,7 @@ export async function safeDbQuery<T>(
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
       const transient =
-        /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|connection terminated|Connection terminated|timeout|SELF_SIGNED|CERT|P1001|P1002|password authentication|ENOTFOUND/i.test(
+        /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|connection terminated|Connection terminated|pooled[_ -]?timeout|pool[_ -]?exhaust|too many clients|53300|timeout|SELF_SIGNED|CERT|P1001|P1002|password authentication|ENOTFOUND/i.test(
           msg,
         );
       if (!transient || i === attempts - 1) {

@@ -18,6 +18,7 @@ export async function GET() {
     consecutiveFailures: number;
     downForMs: number | null;
     lastSuccessAt: string | null;
+    pool: { totalCount: number; idleCount: number; waitingCount: number; max: number };
   } | null = null;
 
   try {
@@ -33,6 +34,7 @@ export async function GET() {
       consecutiveFailures: snap.consecutiveFailures,
       downForMs: snap.downForMs,
       lastSuccessAt: snap.lastSuccessAt,
+      pool: snap.pool,
     };
   } catch (err) {
     dbError = err instanceof Error ? err.message : String(err);

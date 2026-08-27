@@ -724,3 +724,25 @@ MIT. Xem [`LICENSE`](./LICENSE).
 The deployment includes a protected endpoint at `/api/internal/financial-period-audit`. Vercel Cron runs it daily at 02:00 UTC during days 1–20 of January, April, July, October and December (`0 2 1-20 1,4,7,10,12 *`). This gives the audit a 20-day publication window around each expected reporting update rather than relying on one single run. The job checks the last completed quarter, rejects future-dated actual records, verifies that persisted rows do not contain future quarters, and records the result in `job_logs`.
 
 Set `CRON_SECRET` in the production environment so the platform cron request is authenticated. An optional `FINANCIAL_AUDIT_SECRET` can be used for a separate scheduler. `FINANCIAL_AUDIT_SYMBOLS` controls the comma-separated audit universe and defaults to `VNM,HPG,FPT,VCB`. A successful run returns HTTP 200; a detected period-integrity error returns HTTP 409 and records the offending symbols and periods. Provider-unavailable data is reported as estimate/degraded rather than being promoted to audited actual.
+
+
+### Supabase/PostgreSQL connection hardening
+
+The database layer is configured for serverless-safe connection usage. For Supabase production, prefer the transaction pooler connection string on port `6543` with `pgbouncer=true`; keep `DATABASE_POOL_MAX` small (default `2`) and do not create a new `Pool` per request. Connections are recycled after a bounded number of uses/lifetime, idle connections are closed promptly, and TCP keep-alive is enabled.
+
+The following environment variables control the safeguards:
+
+```env
+DATABASE_POOL_MAX=2
+DATABASE_POOL_TIMEOUT_MS=8000
+DATABASE_POOL_IDLE_TIMEOUT_MS=15000
+DATABASE_POOL_MAX_USES=500
+DATABASE_POOL_MAX_LIFETIME_SECONDS=300
+DATABASE_CONNECT_TIMEOUT_SECONDS=8
+DATABASE_STATEMENT_TIMEOUT_MS=15000
+DATABASE_IDLE_TRANSACTION_TIMEOUT_MS=30000
+```
+
+The shared query wrapper retries transient PostgreSQL/Supabase failures such as connection reset, `53300` too many clients, pool exhaustion and pooled timeout, using capped exponential backoff with jitter. The `/api/health` response exposes only safe pool counters (`totalCount`, `idleCount`, `waitingCount`, `max`) and database latency; it never exposes credentials. A sustained non-zero `waitingCount` should be treated as a capacity signal: reduce request fan-out, use cached reads, or increase Supabase pooler capacity rather than blindly increasing per-instance pool size.
+
+The Supabase project should be monitored through Database Advisors and logs. Unused-index notices are informational and should not be removed solely because of a short observation window. Schema changes must be applied through reviewed migrations; this hardening change does not delete data or disable the existing financial-period safeguards.

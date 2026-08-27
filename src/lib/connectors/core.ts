@@ -492,7 +492,7 @@ export async function readTextSafe(res: Response, provider: string, url: string)
 function isTransientDbError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   const code = (err as { code?: string })?.code ?? "";
-  if (/P1001|P1002|P1008|P1009|P1017|connection terminated|connection refused|connection reset|timeout/i.test(msg))
+  if (/P1001|P1002|P1008|P1009|P1017|53300|connection terminated|connection refused|connection reset|pooled[_ -]?timeout|pool[_ -]?exhaust|too many clients|timeout/i.test(msg))
     return true;
   if (/P1001|P1002|P1008/.test(code)) return true;
   return false;
@@ -527,7 +527,9 @@ export async function safeDbQuery<T>(
         attempt: i + 1,
         error: err instanceof Error ? err.message : String(err),
       });
-      await new Promise((r) => setTimeout(r, baseMs * Math.pow(2, i)));
+      const backoffMs = Math.min(baseMs * Math.pow(2, i), 5_000);
+      const jitterMs = Math.floor(Math.random() * Math.min(250, Math.max(25, backoffMs / 4)));
+      await new Promise((r) => setTimeout(r, backoffMs + jitterMs));
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));

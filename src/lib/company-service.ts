@@ -33,11 +33,13 @@ export async function ensureQuarterlyFinancials(symbol: string, numQuarters = 4)
   // Check if we already have enough persisted
   let existing: Array<typeof financialStatements.$inferSelect> = [];
   try {
-    existing = await db
-      .select()
-      .from(financialStatements)
-      .where(eq(financialStatements.symbol, symbol))
-      .orderBy(desc(financialStatements.fiscalYear), desc(financialStatements.period));
+    existing = await safeDbQuery("financial_statements_read", () =>
+      db
+        .select()
+        .from(financialStatements)
+        .where(eq(financialStatements.symbol, symbol))
+        .orderBy(desc(financialStatements.fiscalYear), desc(financialStatements.period)),
+    );
   } catch (err) {
     // A missing/unavailable DB must not prevent degraded, clearly disclosed reports.
     logger.warn("financial_statements_db_unavailable_using_market_fallback", { symbol, error: String(err) });
@@ -103,17 +105,19 @@ export async function ensureQuarterlyFinancials(symbol: string, numQuarters = 4)
 async function persistQuarterlyFinancials(symbol: string, quarters: FinancialQuarter[]) {
   for (const q of quarters) {
     const period = `Q${q.quarter}`;
-    await db
-      .insert(financialStatements)
-      .values([
-        { symbol, type: "income", period, fiscalYear: q.fiscalYear, data: q.income, source: "sector-synthetic-v1", confidence: 0.75 },
-        { symbol, type: "balance", period, fiscalYear: q.fiscalYear, data: q.balance, source: "sector-synthetic-v1", confidence: 0.7 },
-        { symbol, type: "cashflow", period, fiscalYear: q.fiscalYear, data: q.cashflow, source: "sector-synthetic-v1", confidence: 0.72 },
-      ])
-      .onConflictDoUpdate({
-        target: [financialStatements.symbol, financialStatements.type, financialStatements.period, financialStatements.fiscalYear],
-        set: { data: sql`excluded.data`, updatedAt: new Date(), source: "sector-synthetic-v1" },
-      });
+    await safeDbQuery("financial_statements_upsert", () =>
+      db
+        .insert(financialStatements)
+        .values([
+          { symbol, type: "income", period, fiscalYear: q.fiscalYear, data: q.income, source: "sector-synthetic-v1", confidence: 0.75 },
+          { symbol, type: "balance", period, fiscalYear: q.fiscalYear, data: q.balance, source: "sector-synthetic-v1", confidence: 0.7 },
+          { symbol, type: "cashflow", period, fiscalYear: q.fiscalYear, data: q.cashflow, source: "sector-synthetic-v1", confidence: 0.72 },
+        ])
+        .onConflictDoUpdate({
+          target: [financialStatements.symbol, financialStatements.type, financialStatements.period, financialStatements.fiscalYear],
+          set: { data: sql`excluded.data`, updatedAt: new Date(), source: "sector-synthetic-v1" },
+        }),
+    );
   }
 }
 
