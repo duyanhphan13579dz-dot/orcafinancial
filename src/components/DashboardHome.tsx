@@ -5,11 +5,9 @@ import Link from "next/link";
 import { api, changeColor, fmtNum, fmtPct, fmtVol, timeAgo, usePoll } from "@/lib/client";
 import type { MarketIndex, MarketQuote, MarketNewsItem, MarketSnapshot } from "@/types/market";
 import { OvernightMarkets } from "@/components/market/OvernightMarkets";
-import { SectorBoard } from "@/components/market/SectorBoard";
 
 const QUICK_LINKS = [
   { href: "/heatmap", label: "Heatmap", desc: "Bản đồ sức mạnh thị trường" },
-  { href: "/sector-board", label: "Sector Board", desc: "Sức mạnh và xoay vòng theo ngành" },
   { href: "/screener", label: "Bộ lọc", desc: "CANSLIM · Minervini · Wyckoff" },
   { href: "/reports", label: "Báo cáo", desc: "Morning Brief · Market Summary" },
   { href: "/agent", label: "AI Agent", desc: "Phân tích từ dữ liệu thật" },
@@ -101,12 +99,6 @@ export function DashboardHome() {
       <section><SectionHeader eyebrow="MARKET HEADER" title="Chỉ số thị trường" action={<span className="text-[10px] text-slate-500">VN-Index là chỉ số chính</span>} /><div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">{snapshot.indices.map((index) => <IndexCard key={index.code} index={index} primary={index.code === "VNINDEX"} />)}{snapshot.crypto.slice(0, 2).map((crypto) => <div key={crypto.symbol} className="panel p-3"><div className="flex items-center justify-between text-xs font-semibold text-slate-300"><span>{crypto.symbol}</span><span className="text-[10px] text-slate-500">CRYPTO</span></div><div className="mt-3 font-mono text-xl font-bold text-white">${crypto.priceUsd.toLocaleString()}</div><div className={`mt-1 font-mono text-xs ${tone(crypto.change24hPct)}`}>{fmtPct(crypto.change24hPct)}</div><div className="mt-3 text-[10px] text-slate-500">{crypto.source}</div></div>)}</div></section>
       <Pulse snapshot={snapshot} />
       <section className="grid gap-3 md:grid-cols-2"><BreadthMeter title="Market breadth" breadth={snapshot.marketBreadth} /><BreadthMeter title="Large-cap / tracked breadth" breadth={snapshot.largeCapBreadth} /></section>
-      <section>
-        <SectionHeader eyebrow="SECTOR BOARD" title="Market Board theo ngành" action={<div className="flex items-center gap-3 text-xs"><span className="hidden text-slate-500 sm:inline">{snapshot.sectors.length} nhóm · tối thiểu 6 mã/nhóm</span><Link href="/sector-board" className="text-cyan-400 hover:underline">Mở toàn bộ board →</Link></div>} />
-        <div className="grid gap-3 overflow-x-auto sm:grid-cols-2 xl:grid-cols-3">
-          {snapshot.sectors.slice(0, 6).map((sector) => <SectorBoard key={sector.id} sector={sector} onSelect={setSelected} />)}
-        </div>
-      </section>
       <OvernightMarkets snapshot={snapshot.overnight} />
       <section className="grid gap-4 lg:grid-cols-[1.65fr_1fr]"><div className="panel p-4"><SectionHeader eyebrow="MARKET HEATMAP" title="Sức mạnh nhóm theo dõi" action={<span className="text-[10px] text-slate-500">Click mã để xem nhanh</span>} /><Heatmap quotes={snapshot.quotes} onSelect={setSelected} /><div className="mt-3 flex gap-3 text-[10px] text-slate-500"><span><i className="mr-1 inline-block h-2 w-2 rounded bg-emerald-500" />Tăng</span><span><i className="mr-1 inline-block h-2 w-2 rounded bg-amber-500" />Đi ngang</span><span><i className="mr-1 inline-block h-2 w-2 rounded bg-rose-500" />Giảm</span></div></div><AIInsight snapshot={snapshot} onSelect={setSelected} /></section>
       <WatchlistPanel items={watchlist.data?.items ?? []} onSelect={setSelected} onRemove={(symbol) => void toggleWatch(symbol)} />
