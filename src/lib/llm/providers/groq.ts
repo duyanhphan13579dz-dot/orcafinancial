@@ -17,6 +17,8 @@ import type {
  * Env:
  * - GROQ_API_KEY
  * - GROQ_MODEL
+ * - GROQ_FINANCE_MODEL
+ * - GROQ_FALLBACK_MODELS (comma-separated model IDs)
  */
 
 function resolveApiKey(): string | undefined {
@@ -27,22 +29,34 @@ function resolveApiKey(): string | undefined {
   );
 }
 
-function modelCandidates(): string[] {
-  const primary =
-    process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-120b";
+function modelCandidates(opts: LlmChatOptions): string[] {
+  const purpose = opts.purpose === "finance" ? "analysis" : (opts.purpose ?? "agent");
+  const configuredFallbacks = (process.env.GROQ_FALLBACK_MODELS ?? "")
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean);
 
-  /*
-   * Prefer smaller / higher-quota models after the primary so a 429 on
-   * gpt-oss-120b does not waste the whole request.
-   */
-  const list = [
-    primary,
-    "openai/gpt-oss-20b",
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-  ];
-
-  return [...new Set(list)];
+  const laneDefaults: Record<"analysis" | "report" | "agent", { primary: string; fallback: string[] }> = {
+    analysis: {
+      primary: process.env.GROQ_ANALYSIS_MODEL?.trim() || process.env.GROQ_FINANCE_MODEL?.trim() || "qwen/qwen3.8-27b",
+      fallback: ["openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+    },
+    report: {
+      primary: process.env.GROQ_REPORT_MODEL?.trim() || "openai/gpt-oss-120b",
+      fallback: ["openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+    },
+    agent: {
+      primary: process.env.GROQ_AGENT_MODEL?.trim() || process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-120b",
+      fallback: ["openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+    },
+  };
+  const lane = laneDefaults[purpose];
+  const laneFallbacks = (process.env[`GROQ_${purpose.toUpperCase()}_FALLBACK_MODELS`] ?? "")
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean);
+  const primary = opts.modelOverride?.trim() || lane.primary;
+  return [...new Set([primary, ...laneFallbacks, ...configuredFallbacks, ...lane.fallback])];
 }
 
 function isConfigured(): boolean {
@@ -51,6 +65,15 @@ function isConfigured(): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryable(message: string): boolean {
+  return /\b(408|409|425|429|500|502|503|504)\b|rate.?limit|timeout|abort|ECONNRESET|ETIMEDOUT|fetch failed|network|overloaded|capacity|temporarily unavailable/i.test(message);
+}
+
+function retryDelayMs(attempt: number): number {
+  const base = Math.min(2_000, 350 * 2 ** attempt);
+  return base + Math.floor(Math.random() * 180);
 }
 
 function isGptOssModel(model: string): boolean {
@@ -142,8 +165,15 @@ async function chatOne(
     };
 
     if (isGptOss) {
-      body.reasoning_effort = "low";
+      body.reasoning_effort = opts.reasoningEffort && opts.reasoningEffort !== "default" ? opts.reasoningEffort : "low";
       body.reasoning_format = "hidden";
+    } else if (opts.reasoningEffort) {
+      body.reasoning_effort = opts.reasoningEffort;
+      body.reasoning_format = "hidden";
+    }
+
+    if (opts.responseFormat === "json_object") {
+      body.response_format = { type: "json_object" };
     }
 
     const res = await fetch(
@@ -165,11 +195,6 @@ async function chatOne(
      */
     if (res.status === 429 || res.status === 503) {
       const errText = await res.text().catch(() => "");
-
-      if (attempt === 0 && res.status === 503) {
-        await sleep(350);
-        return chatOne(apiKey, model, messages, opts, 1);
-      }
 
       const kind = isRateLimitError(res.status, errText)
         ? "rate_limited"
@@ -262,18 +287,36 @@ async function chat(
   const errors: string[] = [];
   let hitRateLimit = false;
 
-  for (const model of modelCandidates()) {
-    try {
-      return await chatOne(apiKey, model, messages, opts, 0);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : String(error);
+  const maxRetries = Math.min(2, Math.max(0, opts.maxRetries ?? 1));
+  const deadline = Date.now() + (opts.overallTimeoutMs ?? 45_000);
 
-      if (/rate_limited|HTTP 429/i.test(message)) {
-        hitRateLimit = true;
+  for (const model of modelCandidates(opts)) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("Groq overall timeout");
+      try {
+        return await chatOne(
+          apiKey,
+          model,
+          messages,
+          { ...opts, timeoutMs: Math.min(opts.timeoutMs ?? 14_000, remaining) },
+          attempt,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+
+        if (/rate_limited|HTTP 429/i.test(message)) {
+          hitRateLimit = true;
+        }
+
+        if (attempt < maxRetries && isRetryable(message)) {
+          await sleep(retryDelayMs(attempt));
+          continue;
+        }
+
+        errors.push(message);
+        break;
       }
-
-      errors.push(message);
     }
   }
 

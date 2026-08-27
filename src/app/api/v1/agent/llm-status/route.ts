@@ -25,8 +25,8 @@ export const maxDuration = 45;
  * IMPORTANT:
  * - This endpoint is intentionally PUBLIC.
  * - It does NOT expose API keys.
- * - It only exposes whether keys exist, configured providers,
- *   configured model names, and live provider status.
+ * - It only exposes whether the Groq key exists, configured model names,
+ *   and live provider status.
  * - Rate limiting remains enabled.
  *
  * This is a diagnostic endpoint, not a user-data endpoint,
@@ -60,6 +60,10 @@ export async function GET(
     const ping =
       req.nextUrl.searchParams.get("ping") ===
       "1";
+    const requestedLane = req.nextUrl.searchParams.get("lane");
+    const lane = requestedLane === "analysis" || requestedLane === "report" || requestedLane === "agent"
+      ? requestedLane
+      : "agent";
 
     let live: {
       ok: boolean;
@@ -103,6 +107,7 @@ export async function GET(
             },
           ],
           {
+            purpose: lane,
             maxTokens: 40,
             temperature: 0,
             timeoutMs: 15_000,
@@ -161,19 +166,18 @@ export async function GET(
 
       live,
 
-      meta: {
-        authenticated: false,
-        diagnosticOnly: true,
-        pingRequested: ping,
-      },
+        meta: {
+          authenticated: false,
+          diagnosticOnly: true,
+          pingRequested: ping,
+          lane,
+        },
 
       hint:
-        "ORCA LLM pipeline: Groq → OpenRouter. " +
+        "ORCA LLM pipeline: Groq-only với fallback theo model. " +
         "keysPresent=true chỉ xác nhận biến môi trường tồn tại, " +
         "không xác nhận API key còn hợp lệ. " +
         "Dùng ?ping=1 để thực hiện live test. " +
-        "401/403 = authentication hoặc permission. " +
-        "402 = OpenRouter thiếu credit. " +
         "404/model_not_found = model không khả dụng cho key/project. " +
         "429/5xx/timeout = lỗi tạm thời hoặc rate limit.",
     });

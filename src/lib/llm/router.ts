@@ -1,6 +1,5 @@
 import { logger } from "@/lib/logger";
 import { groqProvider } from "./providers/groq";
-import { openrouterProvider } from "./providers/openrouter";
 import type {
   LlmChatOptions,
   LlmMessage,
@@ -10,10 +9,8 @@ import type {
 } from "./types";
 
 /**
- * Provider order:
- *
- * 1. Groq
- * 2. OpenRouter
+ * Groq-only router. The Groq provider owns model-level fallback;
+ * the router keeps a single provider boundary for predictable diagnostics.
  *
  * The router is sequential on purpose:
  * - predictable
@@ -22,37 +19,10 @@ import type {
  * - easier to diagnose
  */
 
-const ALL: LlmProvider[] = [
-  groqProvider,
-  openrouterProvider,
-];
+const ALL: LlmProvider[] = [groqProvider];
 
 function getProviderOrder(): LlmProviderId[] {
-  const raw =
-    process.env.LLM_PROVIDER_ORDER ??
-    "groq,openrouter";
-
-  const parsed = raw
-    .split(",")
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean) as LlmProviderId[];
-
-  const valid: LlmProviderId[] = [];
-
-  for (const id of parsed) {
-    if (
-      (id === "groq" || id === "openrouter") &&
-      !valid.includes(id)
-    ) {
-      valid.push(id);
-    }
-  }
-
-  if (valid.length === 0) {
-    return ["groq", "openrouter"];
-  }
-
-  return valid;
+  return ["groq"];
 }
 
 function orderedProviders(
@@ -111,7 +81,8 @@ export function llmEnvDiagnostics(): {
   order: LlmProviderId[];
   models: {
     GROQ_MODEL: string;
-    OPENROUTER_MODEL: string;
+    GROQ_FINANCE_MODEL: string;
+    GROQ_FALLBACK_MODELS: string[];
   };
 } {
   const keysPresent = {
@@ -120,10 +91,6 @@ export function llmEnvDiagnostics(): {
         process.env.GROQ_KEY?.trim(),
     ),
 
-    OPENROUTER_API_KEY: Boolean(
-      process.env.OPENROUTER_API_KEY?.trim() ||
-        process.env.OPENROUTES_API_KEY?.trim(),
-    ),
   };
 
   const configured =
@@ -141,10 +108,13 @@ export function llmEnvDiagnostics(): {
       GROQ_MODEL:
         process.env.GROQ_MODEL?.trim() ||
         "openai/gpt-oss-120b",
-
-      OPENROUTER_MODEL:
-        process.env.OPENROUTER_MODEL?.trim() ||
-        "meta-llama/llama-3.3-70b-instruct",
+      GROQ_FINANCE_MODEL:
+        process.env.GROQ_FINANCE_MODEL?.trim() ||
+        "qwen/qwen3.8-27b",
+      GROQ_FALLBACK_MODELS: (process.env.GROQ_FALLBACK_MODELS ?? "")
+        .split(",")
+        .map((model) => model.trim())
+        .filter(Boolean),
     },
   };
 }
@@ -196,9 +166,9 @@ export type ChatWithFallbackResult = {
 /**
  * Sequential provider fallback:
  *
- * Groq
+ * Groq primary model
  *   ↓ fail
- * OpenRouter
+ * Groq fallback models
  *   ↓ fail
  * final error
  *
@@ -215,7 +185,7 @@ export async function chatWithFallbackDetailed(
     return {
       result: null,
       errors: [
-        "No LLM provider configured. Set GROQ_API_KEY and/or OPENROUTER_API_KEY on Vercel Production.",
+        "No Groq LLM provider configured. Set GROQ_API_KEY on Vercel Production.",
       ],
       attempted: [],
       transient: false,
@@ -225,8 +195,9 @@ export async function chatWithFallbackDetailed(
   const errors: string[] = [];
   const attempted: LlmProviderId[] = [];
 
-  const baseTimeout =
-    opts.timeoutMs ?? 16_000;
+  const baseTimeout = opts.timeoutMs ?? 12_000;
+  const overallTimeout = opts.overallTimeoutMs ?? 45_000;
+  const deadline = Date.now() + overallTimeout;
 
   for (
     let index = 0;
@@ -242,19 +213,28 @@ export async function chatWithFallbackDetailed(
      * Give later fallbacks a slightly smaller timeout
      * so the overall request does not become excessively slow.
      */
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      errors.push("LLM overall timeout");
+      break;
+    }
+
     const providerTimeout = Math.max(
-      8_000,
-      baseTimeout - index * 2_000,
+      4_000,
+      Math.min(remaining, baseTimeout - index * 1_000),
     );
 
     try {
-      const result = await provider.chat(
-        messages,
-        {
+      const result = await Promise.race([
+        provider.chat(messages, {
           ...opts,
           timeoutMs: providerTimeout,
-        },
-      );
+          overallTimeoutMs: remaining,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`LLM overall timeout (${provider.id})`)), remaining),
+        ),
+      ]);
 
       logger.info("llm_ok", {
         provider: provider.id,

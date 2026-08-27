@@ -374,8 +374,12 @@ export async function generateReportNarrative(
       ],
       {
         maxTokens: kind === "morning" ? 3200 : 3600,
-        temperature: 0.28,
+        temperature: 0.7,
         timeoutMs: 45_000,
+        overallTimeoutMs: 55_000,
+        purpose: "report",
+        responseFormat: "json_object",
+        reasoningEffort: "medium",
       },
     );
     if (!llm) {

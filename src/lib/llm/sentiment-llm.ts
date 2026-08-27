@@ -148,7 +148,7 @@ function buildUserPrompt(
   ].join("\n");
 }
 
-/** One sequential pass Groq → OpenRouter (no long rescue) to avoid gateway kill. */
+/** One sequential Groq pass with model fallback to avoid gateway overload. */
 export async function agentNarrativeDetailed(
   userQuestion: string,
   contextBlock: string,
@@ -166,6 +166,7 @@ export async function agentNarrativeDetailed(
       },
     ],
     {
+      purpose: "agent",
       maxTokens: followUp ? 1000 : 1400,
       temperature: 0.5,
       timeoutMs: followUp ? 12_000 : 14_000,

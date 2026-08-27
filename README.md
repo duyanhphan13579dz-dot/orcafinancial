@@ -14,6 +14,7 @@
 - [Dashboard tổng quan](#dashboard-tổng-quan)
 - [MarketSnapshot và Data Engine](#marketsnapshot-và-data-engine)
 - [Các module nghiệp vụ](#các-module-nghiệp-vụ)
+- [Kiến trúc LLM Groq-only](#kiến-trúc-llm-groq-only)
 - [Luồng dữ liệu](#luồng-dữ-liệu)
 - [Cấu trúc repository](#cấu-trúc-repository)
 - [API](#api)
@@ -109,7 +110,7 @@ Module `/commodities` hỗ trợ danh sách mặt hàng, giá quy đổi VND, l�
 
 ### AI Agent và RAG
 
-`/agent` là workspace hội thoại tài chính. Agent có history, response cache, crypto enrichment, prompt/routing layer, formatter và các provider LLM như Groq/OpenRouter. RAG layer chứa các playbook về doanh nghiệp, personal finance, money general và wealth; agent có thể kết hợp dữ liệu thị trường với context domain trước khi tạo câu trả lời.
+`/agent` là workspace hội thoại tài chính. Agent có history, response cache, crypto enrichment, prompt/routing layer, formatter và router LLM Groq-only. RAG layer chứa các playbook về doanh nghiệp, personal finance, money general và wealth; agent có thể kết hợp dữ liệu thị trường với context domain trước khi tạo câu trả lời.
 
 LLM không được xem là nguồn dữ liệu giá. Pipeline khuyến nghị là:
 
@@ -122,6 +123,28 @@ MarketSnapshot / structured analysis
         ↓
 AI explanation, report narrative hoặc agent answer
 ```
+
+### Kiến trúc LLM Groq-only
+
+ORCA chỉ gọi Groq cho các tác vụ LLM. Fallback được thực hiện ở cấp model trong cùng provider. Điều này giúp giảm khác biệt về API, format output và chẩn đoán lỗi, nhưng không tạo provider-level failover khi Groq gặp sự cố diện rộng.
+
+```text
+AI Agent chat
+    └── GROQ_MODEL
+
+Financial analysis and reports
+    └── GROQ_FINANCE_MODEL (qwen/qwen3.8-27b)
+
+Nếu model chính lỗi, timeout, HTTP 429 hoặc 5xx:
+    └── GROQ_FALLBACK_MODELS theo thứ tự
+            └── rule/template fallback nếu toàn bộ model thất bại
+```
+
+`src/lib/llm/providers/groq.ts` chịu trách nhiệm retry có giới hạn, exponential backoff kèm jitter, timeout, model fallback và structured JSON output. `src/lib/llm/router.ts` chỉ expose provider `groq`; `LlmProviderId` cũng chỉ nhận giá trị `groq`.
+
+Model tài chính Qwen được dùng riêng khi request đặt `purpose: "finance"`, đặc biệt trong pipeline Morning Brief, Market Summary và các narrative phân tích tài chính. Chat thông thường vẫn ưu tiên `GROQ_MODEL`, không bị thay đổi bởi `GROQ_FINANCE_MODEL`.
+
+Endpoint chẩn đoán công khai `/api/v1/agent/llm-status` chỉ hiển thị sự tồn tại của `GROQ_API_KEY`, model đã cấu hình và kết quả live ping; endpoint không trả API key. Dùng `?ping=1` để kiểm tra thật và lưu ý rằng live ping mặc định kiểm tra model chat chung, không thay thế finance-specific test.
 
 ### Watchlist, account và finance workspace
 
@@ -171,7 +194,7 @@ Watchlist hiện lưu theo `vnstock_session` cookie để hỗ trợ trải nghi
 | Auth | JWT access token, httpOnly refresh token, bcryptjs, jose, 2FA/TOTP helpers, Google OAuth helpers |
 | External market data | VNDirect dchart, Yahoo Finance, CoinGecko, Binance Vision |
 | News | VnExpress RSS, CafeF RSS, Vietstock RSS |
-| LLM | Groq/OpenRouter routing layer |
+| LLM | Groq-only routing layer với fallback theo model |
 | Deployment | Docker Compose, Vercel-compatible configuration và Supabase/PostgreSQL option |
 
 ## MarketSnapshot và Data Engine
@@ -184,8 +207,7 @@ MarketSnapshot
 ├── breadth
 ├── marketBreadth
 ├── largeCapBreadth
-├── sectors                 # dữ liệu ngành Việt Nam
-├── overnight               # chỉ số/futures/hàng hóa/FX qua đêm
+├── sectors
 ├── pulse
 ├── liquidity
 ├── foreignFlow
@@ -202,14 +224,6 @@ MarketSnapshot
 ### Market Header và Pulse
 
 VN-Index được đánh dấu `primary`. Các index cards có quote, change percentage, volume, source và OHLC range. Crypto được đưa vào cùng vùng header để người dùng nhìn thấy bức tranh multi-asset nhưng vẫn giữ visual weight chính cho VN-Index.
-
-### Sector Board và Overnight Markets
-
-`SectorBoard` đã được tách thành component dùng chung tại `src/components/market/SectorBoard.tsx`. `SectorBoardModule` tại `src/components/market/SectorBoardModule.tsx` cung cấp workspace độc lập ở `/sector-board`, hiển thị toàn bộ nhóm ngành, sector strength, số mã tăng/giảm, volume và drill-down sang phân tích cổ phiếu. Dashboard tổng quan chỉ giữ liên kết đến workspace này, không còn tải toàn bộ board inline.
-
-Vùng hiển thị được giải phóng trên overview hiện dành cho `OvernightMarkets` tại `src/components/market/OvernightMarkets.tsx`. Module này trình bày các nhóm `Global indices`, `Commodities`, `FX` và `Rates & risk`, gồm S&P 500, Nasdaq 100, Dow Jones, Nikkei 225, Hang Seng, VIX, Gold/Brent/WTI/Copper futures, USD Index, EUR/USD, USD/JPY và US 10Y. Dữ liệu lấy qua Yahoo chart thật, hiển thị timestamp và trạng thái `DELAYED`, `STALE` hoặc `N/A`; không coi giá đóng cửa hoặc giá delayed là realtime.
-
-Hai module vẫn nằm trong một `MarketSnapshot` tổng hợp nhưng có **loader, cache TTL và deadline riêng**. Overnight loader chạy song song với breadth/news, có timeout mặc định 1,2 giây, circuit breaker và stale fallback; lỗi Yahoo hoặc một mã riêng lẻ chỉ làm item đó `unavailable/partial`, không làm mất quote và sector data trong overview.
 
 Market Pulse là quantitative engine. Nó kết hợp index change, breadth ratio, sector average và liquidity availability để tạo:
 
@@ -231,8 +245,6 @@ Foreign flow hiện có contract trong snapshot nhưng có thể trả `unknown`
 | Quote service cache | 20 giây | Giảm lặp gọi quote |
 | Daily history cache | 120 giây | Phục vụ chart ngày |
 | Intraday history cache | 30 giây | Phục vụ chart trong phiên |
-| Overnight market cache | 45 giây | Giảm lặp gọi Yahoo cho chỉ số/futures/FX/rates |
-| Overnight hard deadline | 1,2 giây | Cô lập nguồn quốc tế chậm khỏi overview |
 | DB fresh snapshot | 45 giây | Ưu tiên dữ liệu gần đây trước khi gọi provider |
 | RSS provider cache | 5 phút | Giảm áp lực lên RSS feeds |
 
@@ -241,10 +253,9 @@ Foreign flow hiện có contract trong snapshot nhưng có thể trả `unknown`
 | Dữ liệu | Primary | Fallback |
 |---|---|---|
 | Equity quote/history/index | VNDirect dchart | Yahoo Finance |
-| International indices/futures/FX/rates | Yahoo Finance | Snapshot stale/unavailable theo từng mã |
 | Crypto price | CoinGecko | Binance Vision |
 | News | VnExpress, CafeF, Vietstock | Feed nào còn sống sẽ được dùng; nếu toàn bộ lỗi thì đánh dấu stale |
-| LLM | Theo `LLM_PROVIDER_ORDER` | Provider tiếp theo trong routing order |
+| LLM | Groq model chính | Các model trong `GROQ_FALLBACK_MODELS` theo thứ tự cấu hình |
 
 `DataValidator` từ chối OHLCV có price không hợp lệ, quan hệ high/low sai, volume âm, timestamp sai hoặc field bắt buộc thiếu. Quote và news cũng được validate trước khi sử dụng hoặc insert.
 
@@ -253,8 +264,6 @@ Foreign flow hiện có contract trong snapshot nhưng có thể trả `unknown`
 | Module | Files chính | Trách nhiệm |
 |---|---|---|
 | Market | `src/lib/market.ts` | Overview, search, quote, history, news sync/list, sentiment tổng hợp |
-| Sector Board | `src/components/market/SectorBoard.tsx`, `SectorBoardModule.tsx` | Workspace ngành độc lập tại `/sector-board`, strength, breadth và drill-down |
-| Overnight Markets | `src/components/market/OvernightMarkets.tsx`, `getOvernightMarketSnapshot()` | Chỉ số quốc tế, futures, hàng hóa, FX, US 10Y và degraded states |
 | Stock analysis | `src/lib/analysis.ts`, `fundamental.ts`, `technical-patterns.ts` | Technical, fundamental, valuation, pattern và recommendation |
 | Financial health | `src/lib/financial-health-detail.ts`, `src/lib/industry-benchmarks.ts` | Scoring theo nhóm chỉ số, breakdown và industry comparison |
 | Company intelligence | `company-profile.ts`, `company-service.ts`, `value-chain.ts` | Profile, SWOT, value chain và company context |
@@ -439,13 +448,12 @@ ORCA coi upstream failure là trạng thái sản phẩm cần quan sát, không
 
 - Exponential backoff có jitter cho HTTP connector.
 - Timeout riêng cho từng request.
-- Circuit breaker theo provider với các trạng thái `closed`, `open`, `half-open`; half-open chỉ cho phép một probe để tránh thundering herd.
+- Circuit breaker theo provider với các trạng thái `closed`, `open`, `half-open`.
 - Fallback chain theo loại dữ liệu.
 - Data validation trước khi insert hoặc trả về frontend.
 - `safeDbQuery` retry cho transient database errors.
 - Shared cache, inflight dedupe và stale-while-revalidate để chống request storm và giữ snapshot cũ khi refresh lỗi.
 - Hard deadline cho Market Overview: trả partial/stale fallback trong khoảng mục tiêu thay vì chờ provider/DB vô hạn.
-- Database fail-fast khi thiếu cấu hình, bảo vệ late `pool.connect()` khỏi connection leak và chống gọi `pool.end()` lặp khi shutdown.
 - Fast-fail quote path riêng cho overview; chart/detail vẫn giữ timeout đầy đủ.
 - Concurrency-limited `mapPool` cho quote/search/news workers.
 - Background scheduler là opt-in qua `RUN_BACKGROUND_SCHEDULERS=1`, tránh mỗi web/serverless instance tự chạy duplicate workers.
@@ -479,9 +487,9 @@ Trong production/serverless, không nên chạy scheduler trên mọi web instan
 |---|---:|---|
 | `CIRCUIT_BREAKER_THRESHOLD` | `5` | Số lỗi liên tiếp trước khi mở circuit |
 | `CIRCUIT_BREAKER_TIMEOUT` | `60000` | Cooldown circuit, ms |
-| `CONNECTOR_RETRY_ATTEMPTS` | `2` | Số retry mỗi HTTP call; lớp fetch áp trần an toàn 5 lần |
+| `CONNECTOR_RETRY_ATTEMPTS` | `2` | Số retry mỗi HTTP call |
 | `CONNECTOR_RETRY_BASE_MS` | `700` | Base delay backoff |
-| `CONNECTOR_FETCH_TIMEOUT_MS` | `8000` | HTTP timeout; lớp fetch áp trần 250 ms–30 giây |
+| `CONNECTOR_FETCH_TIMEOUT_MS` | `8000` | HTTP timeout |
 | `CONNECTOR_STALE_AFTER_MS` | `900000` | Thời gian coi connector là stale/down |
 | `CONNECTOR_DEGRADED_AFTER_MS` | `300000` | Thời gian chuyển degraded |
 | `CONNECTOR_QUOTE_CONCURRENCY` | `5` | Số quote fetch song song |
@@ -546,8 +554,6 @@ Sau đó mở `http://localhost:3000`. Người dùng chưa đăng nhập sẽ t
 | `npm run db:push` | Push schema hiện tại vào database |
 | `npm run typecheck` | TypeScript check không emit |
 | `npm run lint` | ESLint toàn repository |
-| `npm test` | Chạy unit/resilience tests bằng Vitest |
-| `npm run test:watch` | Chạy Vitest ở chế độ watch |
 
 ## Chạy bằng Docker
 
@@ -601,9 +607,6 @@ MARKET_HIST_D_TTL_MS=120000
 MARKET_HIST_INTRA_TTL_MS=30000
 MARKET_OVERVIEW_AUX_TIMEOUT_MS=450
 MARKET_OVERVIEW_TOTAL_TIMEOUT_MS=2500
-OVERNIGHT_MARKET_TTL_MS=45000
-OVERNIGHT_MARKET_TIMEOUT_MS=1200
-CACHE_REFRESH_BACKOFF_MS=15000
 ```
 
 ### Connector
@@ -627,9 +630,9 @@ CONNECTOR_NEWS_INSERT_CONCURRENCY=8
 ```dotenv
 GROQ_API_KEY=
 GROQ_MODEL=llama-3.3-70b-versatile
-OPENROUTER_API_KEY=
-OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
-LLM_PROVIDER_ORDER=groq,openrouter
+GROQ_FINANCE_MODEL=qwen/qwen3.8-27b
+# Comma-separated Groq model IDs tried after the primary model.
+GROQ_FALLBACK_MODELS=openai/gpt-oss-20b,llama-3.3-70b-versatile,llama-3.1-8b-instant
 LLM_STRICT=1
 AGENT_RESPONSE_TTL_MS=180000
 ```
@@ -654,14 +657,9 @@ Trước mỗi commit nên chạy:
 
 ```bash
 npm run typecheck
-npm test
 npm run lint
 git diff --check
 ```
-
-Repository sử dụng **Vitest** cho unit và resilience tests. Bộ test trong `tests/` không yêu cầu database, Redis hoặc upstream thật; các boundary được mock để kiểm thử timeout, abort, circuit breaker, stale cache, single-flight, DB fail-fast, Redis L1 fallback và cô lập module phụ.
-
-Các kịch bản bắt buộc của Market Overview gồm provider timeout không chặn provider khỏe; crypto/news degraded không làm mất quote; circuit mở sau lỗi liên tiếp và chỉ cho một half-open probe; cache stale trả ngay trong khi refresh nền lỗi; Redis thiếu vẫn dùng L1; database thiếu cấu hình fail-fast.
 
 Khi kiểm tra riêng dashboard/data contract, có thể chạy:
 
@@ -671,6 +669,16 @@ npx eslint src/components/DashboardHome.tsx src/lib/market.ts src/types/market.t
 
 Cần kiểm tra cả happy path và degraded path: database down, provider timeout, provider trả payload sai, Redis unavailable, quote partial, news feed empty và cold start. UI phải thể hiện loading, empty, error, partial và stale state một cách rõ ràng.
 
+Health check Groq tự động được cung cấp tại `scripts/health-check-groq.mjs`. Script kiểm tra độc lập tuyến chat và finance, probe model chính cùng các fallback, đo latency, không in API key và trả mã thoát khác 0 nếu không còn model khả dụng. Chạy local hoặc trong CI:
+
+```bash
+GROQ_API_KEY=... npm run health:groq
+GROQ_API_KEY=... npm run health:groq:json
+GROQ_API_KEY=... npm run health:groq -- --require-all
+```
+
+`--require-all` chỉ nên dùng trong kiểm tra khả dụng nghiêm ngặt; mặc định script chấp nhận một fallback khỏe nếu model chính tạm thời lỗi.
+
 ## Deployment
 
 ### Vercel hoặc serverless
@@ -678,11 +686,13 @@ Cần kiểm tra cả happy path và degraded path: database down, provider time
 - Cấu hình `DATABASE_URL` tới Supabase hoặc managed PostgreSQL.
 - Dùng PgBouncer/pooler và giữ `DATABASE_POOL_MAX` nhỏ phù hợp serverless.
 - Cấu hình Redis shared cache trong production nhiều instance.
-- Kiểm tra outbound firewall/DNS tới VNDirect, Yahoo, CoinGecko, Binance Vision và RSS.
+- Kiểm tra outbound firewall/DNS tới VNDirect, Yahoo, CoinGecko, Binance Vision, RSS và `api.groq.com`.
+- Đặt `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_FINANCE_MODEL` và `GROQ_FALLBACK_MODELS` trong Vercel Production.
+- Sau khi thay đổi environment variables, phải redeploy để serverless functions nhận cấu hình mới.
 - Đặt `JWT_SECRET` dài tối thiểu 32 ký tự.
 - Cấu hình `SLACK_WEBHOOK_URL` nếu cần alert connector.
 - Kiểm tra `maxDuration` cho agent/report endpoints.
-- Kiểm tra `/api/health` sau deploy và xác nhận schema đã được apply.
+- Kiểm tra `/api/health` sau deploy, gọi `/api/v1/agent/llm-status?ping=1` và xác nhận schema đã được apply.
 
 ### Docker
 
@@ -717,32 +727,3 @@ README này phản ánh implementation hiện tại, nhưng một số dữ li�
 ## License
 
 MIT. Xem [`LICENSE`](./LICENSE).
-
-
-### Quarterly financial-period audit
-
-The deployment includes a protected endpoint at `/api/internal/financial-period-audit`. Vercel Cron runs it daily at 02:00 UTC during days 1–20 of January, April, July, October and December (`0 2 1-20 1,4,7,10,12 *`). This gives the audit a 20-day publication window around each expected reporting update rather than relying on one single run. The job checks the last completed quarter, rejects future-dated actual records, verifies that persisted rows do not contain future quarters, and records the result in `job_logs`.
-
-Set `CRON_SECRET` in the production environment so the platform cron request is authenticated. An optional `FINANCIAL_AUDIT_SECRET` can be used for a separate scheduler. `FINANCIAL_AUDIT_SYMBOLS` controls the comma-separated audit universe and defaults to `VNM,HPG,FPT,VCB`. A successful run returns HTTP 200; a detected period-integrity error returns HTTP 409 and records the offending symbols and periods. Provider-unavailable data is reported as estimate/degraded rather than being promoted to audited actual.
-
-
-### Supabase/PostgreSQL connection hardening
-
-The database layer is configured for serverless-safe connection usage. For Supabase production, prefer the transaction pooler connection string on port `6543` with `pgbouncer=true`; keep `DATABASE_POOL_MAX` small (default `2`) and do not create a new `Pool` per request. Connections are recycled after a bounded number of uses/lifetime, idle connections are closed promptly, and TCP keep-alive is enabled.
-
-The following environment variables control the safeguards:
-
-```env
-DATABASE_POOL_MAX=2
-DATABASE_POOL_TIMEOUT_MS=8000
-DATABASE_POOL_IDLE_TIMEOUT_MS=15000
-DATABASE_POOL_MAX_USES=500
-DATABASE_POOL_MAX_LIFETIME_SECONDS=300
-DATABASE_CONNECT_TIMEOUT_SECONDS=8
-DATABASE_STATEMENT_TIMEOUT_MS=15000
-DATABASE_IDLE_TRANSACTION_TIMEOUT_MS=30000
-```
-
-The shared query wrapper retries transient PostgreSQL/Supabase failures such as connection reset, `53300` too many clients, pool exhaustion and pooled timeout, using capped exponential backoff with jitter. The `/api/health` response exposes only safe pool counters (`totalCount`, `idleCount`, `waitingCount`, `max`) and database latency; it never exposes credentials. A sustained non-zero `waitingCount` should be treated as a capacity signal: reduce request fan-out, use cached reads, or increase Supabase pooler capacity rather than blindly increasing per-instance pool size.
-
-The Supabase project should be monitored through Database Advisors and logs. Unused-index notices are informational and should not be removed solely because of a short observation window. Schema changes must be applied through reviewed migrations; this hardening change does not delete data or disable the existing financial-period safeguards.

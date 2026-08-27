@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { ok } from "@/lib/api";
 import { allBreakerStatuses } from "@/lib/connectors/core";
+import { externalSourceStatuses } from "@/lib/connectors/external-sources";
 
 export const dynamic = "force-dynamic";
 
@@ -69,6 +70,25 @@ export async function GET(_req: NextRequest) {
       status: "down",
       latencyMs: null,
       error: `Connector registry unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  // ── External market sources (disabled-safe) ──
+  try {
+    const statuses = await externalSourceStatuses();
+    for (const source of statuses) {
+      upstream[`source_${source.id}`] = {
+        status: source.state === "enabled" ? "up" : source.state === "degraded" ? "degraded" : "down",
+        latencyMs: source.latencyMs,
+        error: source.error,
+        lastSuccessAt: source.lastCheckedAt,
+      };
+    }
+  } catch (err) {
+    upstream.external_sources = {
+      status: "degraded",
+      latencyMs: null,
+      error: `External source registry unavailable: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 

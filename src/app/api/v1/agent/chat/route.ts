@@ -26,6 +26,7 @@ import { buildPersonalFinanceContext } from "@/lib/personal-finance/context";
 import { buildCorporateFinanceContext } from "@/lib/corporate-finance/context";
 import { retrievePlaybookContext } from "@/lib/rag";
 import { appendChatTurn } from "@/lib/agent/history";
+import { loadPreferredQuarterlyFinancials } from "@/lib/financial-ingestion";
 import {
   getCachedAgentAnswer,
   setCachedAgentAnswer,
@@ -112,6 +113,7 @@ interface SymbolContext {
   quote: Quote;
   analysis: AnalysisResult;
   fundamental: FundamentalReport | null;
+  reportedFinancials: Awaited<ReturnType<typeof loadPreferredQuarterlyFinancials>>["quarters"][number] | null;
   sentimentScore: number;
   sentimentLabel: string;
   headlines: string[];
@@ -204,6 +206,7 @@ async function buildSymbolContext(symbol: string): Promise<SymbolContext | null>
   const bars = histRes.value?.bars ?? [];
   const analysis = bars.length >= 20 ? analyze(symbol, bars) : minimalAnalysis(symbol, quote);
   const fundamental = bars.length >= 60 ? generateFundamentalReport(symbol, bars) : null;
+  const reportedFinancials = (await loadPreferredQuarterlyFinancials(symbol, 1).catch(() => ({ quarters: [] })) ).quarters[0] ?? null;
   const items = newsRes.value?.items ?? [];
   const headlineText = items.map((n) => n.title).join(" ");
   const sScore = analyzeSentiment(headlineText);
@@ -217,6 +220,7 @@ async function buildSymbolContext(symbol: string): Promise<SymbolContext | null>
     quote,
     analysis,
     fundamental,
+    reportedFinancials,
     sentimentScore: sScore,
     sentimentLabel: sentimentLabel(sScore),
     headlines: items.map((n) => `${n.title} (${n.sourceName})`),
@@ -226,6 +230,10 @@ async function buildSymbolContext(symbol: string): Promise<SymbolContext | null>
 
 function fmt(n: number | null | undefined, digits = 2): string {
   return n === null || n === undefined || !Number.isFinite(n) ? "n/a" : n.toFixed(digits);
+}
+
+function isFinancialClaimQuestion(message: string): boolean {
+  return /\b(doanh thu|doanh số|lợi nhuận|lãi ròng|gross profit|ebitda|ebit|eps|tài sản|tổng tài sản|nợ|vốn chủ|vốn lưu động|biên lợi nhuận|roe|roa|cfo|cfi|cff|fcf|cash ?flow|dòng tiền|lưu chuyển tiền|bctc|báo cáo tài chính|kết quả kinh doanh|sức khỏe tài chính|định giá|giá trị nội tại|pe|p\/e|p\/b|ev\/ebitda)\b/i.test(message);
 }
 
 function composeHumanDataSummary(contexts: SymbolContext[]): string {
@@ -259,7 +267,9 @@ function composeDataContext(
   cryptoBlock?: string,
 ): string {
   const parts: string[] = [];
+  const financialClaim = isFinancialClaimQuestion(message);
   parts.push(`intent: ${intent}`);
+  parts.push(`data_policy=verify_source_then_rank_relevance; financial_claim=${financialClaim ? "true" : "false"}`);
   parts.push(`question: ${message}`);
 
   const failed = sourceReports.filter((s) => s.status === "timeout" || s.status === "error");
@@ -284,8 +294,9 @@ function composeDataContext(
   if (headlines.length > 0) parts.push(`news: ${headlines.slice(0, 4).join(" | ")}`);
   for (const c of contexts) {
     const a = c.analysis;
+    const quoteAgeSeconds = Math.max(0, Math.floor(Date.now() / 1000) - c.quote.time);
     parts.push(
-      `symbol=${c.symbol} rec=${a.recommendation} conf=${(a.confidence * 100).toFixed(0)}% price=${fmt(a.lastClose)} d1=${fmt(a.changePct1d)}% m1=${fmt(a.changePct1m)}% src=${c.quote.source}`,
+      `symbol=${c.symbol} rec=${a.recommendation} conf=${(a.confidence * 100).toFixed(0)}% price=${fmt(a.lastClose)} d1=${fmt(a.changePct1d)}% m1=${fmt(a.changePct1m)}% src=${c.quote.source} quote_as_of=${new Date(c.quote.time * 1000).toISOString()} quote_age_seconds=${quoteAgeSeconds}`,
     );
     parts.push(
       `tech rsi14=${fmt(a.rsi14, 1)} macd_hist=${fmt(a.macd?.histogram, 3)} sma20=${fmt(a.sma20)} sma50=${fmt(a.sma50)}`,
@@ -296,11 +307,23 @@ function composeDataContext(
       );
     }
     if (a.reasons?.length) parts.push(`reasons: ${a.reasons.slice(0, 3).join("; ")}`);
-    if (c.fundamental) {
+    if (c.fundamental && (!financialClaim || c.reportedFinancials)) {
       const f = c.fundamental;
       parts.push(
-        `fund health=${f.financialHealth.rating} score=${f.financialHealth.overallScore} pe=${fmt(f.valuation.pe, 1)}`,
+        `market_proxy_fundamental health=${f.financialHealth.rating} score=${f.financialHealth.overallScore} pe=${fmt(f.valuation.pe, 1)} source=ohlcv-derived; not_reported_financials=true`,
       );
+    } else if (c.fundamental) {
+      parts.push(
+        "market_proxy_fundamental=excluded_for_financial_claim; không dùng proxy OHLCV để khẳng định doanh thu, lợi nhuận, tài sản, nợ, dòng tiền hoặc định giá doanh nghiệp",
+      );
+    }
+    if (c.reportedFinancials) {
+      const q = c.reportedFinancials;
+      parts.push(
+        `reported_period=${q.period} reported_source=financial-ingestion reported_cashflow CFO=${fmt(q.cashflow.operatingCashFlow)} CFI=${fmt(q.cashflow.investingCashFlow)} CFF=${fmt(q.cashflow.financingCashFlow)} FCF=${fmt(q.cashflow.freeCashFlow)}`,
+      );
+    } else {
+      parts.push("reported_cashflow=unavailable; không có CFO/CFI/CFF được xác minh cho mã này");
     }
     parts.push(`sentiment=${c.sentimentLabel} score=${c.sentimentScore.toFixed(2)}`);
   }
@@ -327,7 +350,7 @@ function publicLlmHint(errors: string[] | undefined, transient: boolean): string
   }
   const raw = errors?.[0] ?? "";
   if (/api.?key|not configured|missing/i.test(raw)) {
-    return "Chưa cấu hình hoặc khóa API LLM không hợp lệ. Kiểm tra GROQ_API_KEY / OPENROUTER_API_KEY trên Vercel.";
+    return "Chưa cấu hình hoặc khóa API Groq không hợp lệ. Kiểm tra GROQ_API_KEY trên Vercel.";
   }
   return "Không kết nối được mô hình AI lúc này. Vui lòng thử lại sau ít phút.";
 }
@@ -364,7 +387,7 @@ export async function POST(req: NextRequest) {
 
     if (providers.length === 0) {
       return fail(
-        "Chưa cấu hình LLM. Thêm GROQ_API_KEY và/hoặc OPENROUTER_API_KEY trên Vercel Production rồi redeploy.",
+        "Chưa cấu hình LLM. Thêm GROQ_API_KEY trên Vercel Production rồi redeploy.",
         503,
         { code: "LLM_NOT_CONFIGURED", keysPresent: envDiag.keysPresent, requestId },
       );
@@ -552,7 +575,26 @@ export async function POST(req: NextRequest) {
     });
 
     const llmStarted = Date.now();
+    const asksForCashflow = /\b(cfo|cfi|cff|cash ?flow|dòng tiền|lưu chuyển tiền|hoạt động kinh doanh|chi đầu tư|dòng tiền tài chính)\b/i.test(message);
+    const asksForReportedFinancials = isFinancialClaimQuestion(message) && responseSymbols.length > 0;
+    const hasReportedFinancials = contexts.length > 0 && contexts.every((c) => Boolean(c.reportedFinancials));
     const produced = await withAgentSingleFlight(message, responseSymbols, async () => {
+      if (asksForReportedFinancials && !hasReportedFinancials) {
+        return {
+          answer: asksForCashflow
+            ? "Mình chưa có báo cáo lưu chuyển tiền tệ thật đã xác minh cho mã này, nên không thể cung cấp hoặc ước lượng CFO, CFI hay CFF. Bạn hãy import BCTC quý tương ứng rồi mình sẽ tính và phân tích từ số liệu nguồn."
+            : "Mình chưa có BCTC thật đã xác minh cho mã này, nên không thể kết luận chính xác về doanh thu, lợi nhuận, tài sản, nợ, sức khỏe tài chính hoặc định giá. Bạn hãy import báo cáo đúng kỳ; hiện mình chỉ có thể cung cấp góc nhìn thị trường/proxy và không dùng proxy đó để thay thế BCTC.",
+          model: "rule-engine/no-reported-financials",
+          intent,
+          symbols: responseSymbols,
+          cachedAt: Date.now(),
+          _llmAttempted: [],
+          _llmProvider: "rule-engine",
+          _llmMs: Date.now() - llmStarted,
+          _soft: true,
+        } as const;
+      }
+
       const narrative = await agentNarrativeDetailed(message, dataContext, {
         followUp: isFollowUp,
       });
