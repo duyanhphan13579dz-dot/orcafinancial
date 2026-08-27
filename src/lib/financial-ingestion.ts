@@ -282,3 +282,37 @@ export async function loadPreferredFinancialRecords(symbol: string, statementTyp
   }
   return { records: [], source: "synthetic", providerBacked: false };
 }
+
+export async function getFinancialSourceEvidence(symbol: string, limit = 12) {
+  await ensureFinancialIngestionTables();
+  const documents = await db.select({
+    id: financialSourceDocuments.id,
+    source: financialSourceDocuments.source,
+    documentType: financialSourceDocuments.documentType,
+    documentUrl: financialSourceDocuments.documentUrl,
+    reportType: financialSourceDocuments.reportType,
+    period: financialSourceDocuments.period,
+    fiscalYear: financialSourceDocuments.fiscalYear,
+    filingDate: financialSourceDocuments.filingDate,
+    retrievedAt: financialSourceDocuments.retrievedAt,
+    contentType: financialSourceDocuments.contentType,
+    parserVersion: financialSourceDocuments.parserVersion,
+    status: financialSourceDocuments.status,
+    documentHash: financialSourceDocuments.documentHash,
+  }).from(financialSourceDocuments).where(eq(financialSourceDocuments.symbol, symbol)).orderBy(desc(financialSourceDocuments.retrievedAt)).limit(Math.min(24, Math.max(1, limit)));
+  const facts = await db.select({ documentId: financialNormalizedFacts.documentId, qualityStatus: financialNormalizedFacts.qualityStatus }).from(financialNormalizedFacts).where(eq(financialNormalizedFacts.symbol, symbol)).limit(100);
+  const factsByDocument = new Map<number, { total: number; accepted: number }>();
+  for (const fact of facts) {
+    if (fact.documentId == null) continue;
+    const current = factsByDocument.get(fact.documentId) ?? { total: 0, accepted: 0 };
+    current.total += 1;
+    if (fact.qualityStatus === "accepted") current.accepted += 1;
+    factsByDocument.set(fact.documentId, current);
+  }
+  return documents.map((document) => ({
+    ...document,
+    factCount: factsByDocument.get(document.id)?.total ?? 0,
+    acceptedFactCount: factsByDocument.get(document.id)?.accepted ?? 0,
+    evidence: document.documentUrl ? "document-url" : "metadata-only",
+  }));
+}

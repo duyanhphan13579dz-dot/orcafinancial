@@ -6,11 +6,30 @@ import { api } from "@/lib/client";
 type StatementType = "income" | "balance" | "cashflow";
 type PeriodType = "quarterly" | "yearly";
 
+interface FinancialSourceEvidence {
+  id: number;
+  source: string;
+  documentType: string;
+  documentUrl: string;
+  reportType?: string | null;
+  period?: string | null;
+  fiscalYear?: number | null;
+  filingDate?: string | null;
+  retrievedAt: string | Date;
+  contentType?: string | null;
+  parserVersion: string;
+  status: string;
+  factCount: number;
+  acceptedFactCount: number;
+  evidence: "document-url" | "metadata-only";
+}
+
 interface FinancialsResponse {
   symbol: string;
   type: StatementType;
   periods: Array<{ period: string; fiscalYear: number; data: Record<string, number> }>;
   fields: string[];
+  sourceEvidence?: FinancialSourceEvidence[];
 }
 
 const FIELD_LABELS: Record<StatementType, Record<string, { label: string; unit: string; highlight?: boolean; indent?: boolean; subtotal?: boolean }>> = {
@@ -71,6 +90,18 @@ function fmtValue(v: number, unit: string): string {
   if (unit === "") return v.toFixed(2);
   if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(2)}N`;
   return `${v.toFixed(0)}`;
+}
+
+function sourceName(source: string): string {
+  if (source === "vietstock") return "Vietstock";
+  if (source === "cafef") return "CafeF";
+  return source;
+}
+
+function dateLabel(value: string | Date | null | undefined): string {
+  if (!value) return "Chưa có";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString("vi-VN");
 }
 
 export function FinancialStatements({ symbol }: { symbol: string }) {
@@ -191,8 +222,51 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
           </div>
         )}
 
+        {data?.sourceEvidence && data.sourceEvidence.length > 0 && (
+          <div className="mt-4 rounded-xl border border-cyan-900/60 bg-cyan-950/10 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-semibold text-cyan-200">Nguồn báo cáo tài chính</div>
+                <div className="mt-0.5 text-[10px] text-slate-500">Tài liệu được dùng để chuẩn hóa bảng số liệu hiện tại</div>
+              </div>
+              <span className="rounded-full border border-slate-700 bg-slate-950/40 px-2 py-1 text-[10px] text-slate-400">
+                {data.sourceEvidence.length} tài liệu
+              </span>
+            </div>
+            <div className="space-y-2">
+              {data.sourceEvidence.map((source) => (
+                <div key={source.id} className="rounded-lg border border-slate-800/80 bg-slate-950/30 px-3 py-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-200">
+                        <span>{sourceName(source.source)}</span>
+                        <span className="text-slate-500">•</span>
+                        <span>{source.period ?? "Chưa xác định kỳ"}</span>
+                        {source.reportType && <span className="text-slate-400">• {source.reportType}</span>}
+                      </div>
+                      <div className="mt-1 grid gap-x-4 gap-y-0.5 text-[10px] text-slate-500 sm:grid-cols-2">
+                        <span>Ngày công bố: <b className="font-normal text-slate-300">{dateLabel(source.filingDate)}</b></span>
+                        <span>Ngày lấy dữ liệu: <b className="font-normal text-slate-300">{dateLabel(source.retrievedAt)}</b></span>
+                        <span>Facts đạt chuẩn: <b className="font-normal text-emerald-300">{source.acceptedFactCount}/{source.factCount}</b></span>
+                        <span>Parser: <b className="font-normal text-slate-300">{source.parserVersion}</b></span>
+                      </div>
+                    </div>
+                    {source.documentUrl ? (
+                      <a href={source.documentUrl} target="_blank" rel="noreferrer" className="shrink-0 rounded-md border border-cyan-700/60 px-2 py-1 text-[10px] text-cyan-300 hover:bg-cyan-500/10">
+                        Mở tài liệu gốc ↗
+                      </a>
+                    ) : (
+                      <span className="shrink-0 rounded-md border border-amber-800/60 px-2 py-1 text-[10px] text-amber-300">Thiếu liên kết gốc</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="mt-4 rounded-lg border border-slate-800/80 bg-slate-950/20 px-3 py-2 text-[10px] text-slate-500 leading-relaxed">
-          Đơn vị: tỷ VND (trừ EPS và BVPS tính bằng nghìn VND/cp). Số liệu được mô hình hóa từ dữ liệu giá/khối lượng thực và benchmark ngành Việt Nam (sẽ được thay thế bằng báo cáo kiểm toán khi connector tài chính hoạt động). Dữ liệu đảm bảo nhất quán giữa 3 báo cáo.
+          Đơn vị: tỷ VND (trừ EPS và BVPS tính bằng nghìn VND/cp). Khi chưa có sourceEvidence, số liệu hiển thị là fallback degraded và không phải báo cáo kiểm toán. Khi có sourceEvidence, bảng được chuẩn hóa từ tài liệu nguồn nhưng vẫn cần phân biệt rõ hợp nhất/công ty mẹ, kiểm toán/soát xét và ngày công bố.
         </div>
       </div>
     </div>

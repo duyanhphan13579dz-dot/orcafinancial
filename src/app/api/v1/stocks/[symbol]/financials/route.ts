@@ -3,7 +3,7 @@ import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { buildFinancialPeriodSet } from "@/lib/stock-intelligence/canonical";
 import { validatePeriods } from "@/lib/stock-intelligence/validation";
 import { ensureQuarterlyFinancials, getStatements } from "@/lib/company-service";
-import { loadPreferredFinancialRecords } from "@/lib/financial-ingestion";
+import { getFinancialSourceEvidence, loadPreferredFinancialRecords } from "@/lib/financial-ingestion";
 import type { StatementType } from "@/lib/financial-statements";
 import { loadCanonicalStatements, NormalizedFinancialAdapter, SyntheticFinancialAdapter } from "@/lib/stock-intelligence/financial-source";
 
@@ -25,17 +25,18 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
     : "income";
 
   try {
-    const [result, preferred, quarters] = await Promise.all([
+    const [result, preferred, quarters, sourceEvidence] = await Promise.all([
       getStatements(symbol, type, period, limit),
       loadPreferredFinancialRecords(symbol, type, limit),
       ensureQuarterlyFinancials(symbol, period === "yearly" ? Math.min(limit * 4, 4) : limit),
+      getFinancialSourceEvidence(symbol, limit),
     ]);
     const canonical = await loadCanonicalStatements(symbol, type, limit, preferred.records.length ? new NormalizedFinancialAdapter(preferred.records, preferred.source) : new SyntheticFinancialAdapter(quarters));
     const periodLabels = canonical.statements.map((statement) => statement.period.label);
     const latestKind = canonical.statements[0]?.provenance.kind ?? "estimate";
     const validation = validatePeriods(periodLabels);
     return ok(
-      { ...result, canonicalStatements: canonical.statements, canonicalQuality: canonical.quality, sourceResult: { source: canonical.source, actual: canonical.actual, confidence: canonical.confidence, warnings: canonical.warnings } },
+      { ...result, canonicalStatements: canonical.statements, canonicalQuality: canonical.quality, sourceResult: { source: canonical.source, actual: canonical.actual, confidence: canonical.confidence, warnings: canonical.warnings }, sourceEvidence },
       {
         source: preferred.providerBacked ? preferred.source : canonical.source,
         providerBacked: preferred.providerBacked,
