@@ -78,3 +78,10 @@ The audit also corrected missing-data behavior, removed the duplicate OCF/net-in
 A period-integrity review found that the synthetic quarterly generator used the in-progress calendar quarter as if it were already reportable. On 27/08/2026 this incorrectly produced Q3/2026, although Vinamilk's official investor-relations calendar lists 30/07/2026 for Q2/2026 and 30/10/2026 for Q3/2026.
 
 The correction anchors fallback quarterly statements to the last completed quarter, filters future-dated actual records in the canonical source loader, and filters persisted future rows in `ensureQuarterlyFinancials`. Q3/2026 may only appear as an explicitly labeled estimate/forecast after a forecast path is requested; it cannot appear as actual reported data before its reporting period is valid. Source verification is recorded in `docs/vnm_reporting_period_source_check_2026-08-27.md`.
+
+
+## Post-cutoff UI and integration verification — 27 August 2026
+
+The stock integration suite was rerun after the reporting-period cutoff change: 6 test files passed with 20 tests passed. TypeScript, ESLint and whitespace checks also passed; the only ESLint finding remains the pre-existing `next/image` warning in `SecurityPanel.tsx`.
+
+The local stock detail route was checked through the browser and correctly enforced authentication. Because the local browser session was unauthenticated, visual data-panel smoke testing could not be completed against a logged-in VNM page; the limitation is recorded in `docs/vnm_ui_period_audit_2026-08-27.md`. Static data-flow review confirms that stock detail uses `ensureQuarterlyFinancials`, which now excludes future persisted rows and generates only the last completed quarter. The repository search found no code path that labels Q3/2026 as actual; remaining Q3/2026 references are historical documentation or source-format examples.
