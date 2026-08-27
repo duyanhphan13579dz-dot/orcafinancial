@@ -22,6 +22,7 @@ interface FinancialSourceEvidence {
   factCount: number;
   acceptedFactCount: number;
   evidence: "document-url" | "metadata-only";
+  verificationStatus: "verified" | "unverified";
 }
 
 interface FinancialsResponse {
@@ -243,11 +244,14 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
                         <span className="text-slate-500">•</span>
                         <span>{source.period ?? "Chưa xác định kỳ"}</span>
                         {source.reportType && <span className="text-slate-400">• {source.reportType}</span>}
+                        <span className={source.verificationStatus === "verified" ? "text-emerald-300" : "text-amber-300"}>
+                          • {source.verificationStatus === "verified" ? "Đã đối soát trực tiếp" : "Chưa đối soát"}
+                        </span>
                       </div>
                       <div className="mt-1 grid gap-x-4 gap-y-0.5 text-[10px] text-slate-500 sm:grid-cols-2">
                         <span>Ngày công bố: <b className="font-normal text-slate-300">{dateLabel(source.filingDate)}</b></span>
                         <span>Ngày lấy dữ liệu: <b className="font-normal text-slate-300">{dateLabel(source.retrievedAt)}</b></span>
-                        <span>Facts đạt chuẩn: <b className="font-normal text-emerald-300">{source.acceptedFactCount}/{source.factCount}</b></span>
+                        <span>Facts đã đối soát: <b className={`font-normal ${source.verificationStatus === "verified" ? "text-emerald-300" : "text-amber-300"}`}>{source.acceptedFactCount}/{source.factCount}</b></span>
                         <span>Parser: <b className="font-normal text-slate-300">{source.parserVersion}</b></span>
                       </div>
                     </div>

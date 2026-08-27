@@ -65,7 +65,7 @@ function assertOutput(type: FinancialAnalysisType, output: Record<string, unknow
 export async function generateFinancialLlmOutput(symbol: string, type: FinancialAnalysisType, limit = 8) {
   await ensureFinancialIngestionTables();
   const facts = await db.select().from(financialNormalizedFacts).where(eq(financialNormalizedFacts.symbol, symbol)).orderBy(desc(financialNormalizedFacts.fiscalYear), desc(financialNormalizedFacts.period)).limit(Math.min(60, Math.max(3, limit * 3)));
-  const accepted = facts.filter((fact) => fact.qualityStatus === "accepted");
+  const accepted = facts.filter((fact) => fact.qualityStatus === "accepted" && fact.verificationStatus === "verified");
   if (!accepted.length) throw new Error(`Chưa có normalized facts đạt quality gate cho ${symbol}.`);
   const inputFingerprint = fingerprint(symbol, type, accepted);
   const previous = await db.select({ output: financialLlmOutputs.output, model: financialLlmOutputs.model, updatedAt: financialLlmOutputs.updatedAt }).from(financialLlmOutputs).where(eq(financialLlmOutputs.inputFingerprint, inputFingerprint)).limit(1);

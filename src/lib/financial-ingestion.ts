@@ -19,6 +19,7 @@ export interface SourceFact {
   periodEnd?: string;
   filingDate?: string;
   data: Record<string, unknown>;
+  evidence?: Record<string, { sourceValue: number | string | null; normalizedValue: number | string | null; label?: string }>;
 }
 
 export interface SourceDocument {
@@ -32,6 +33,7 @@ export interface SourceDocument {
   filingDate?: string;
   contentType?: string;
   payload: unknown;
+  sourceContent?: string;
   facts?: SourceFact[];
 }
 
@@ -112,7 +114,7 @@ function sourceDocuments(payload: unknown, source: IngestionSource, symbol: stri
           const statementType = text(f?.statementType) as StatementType | undefined;
           const factPeriod = normalizedPeriod(text(f?.period), number(f?.fiscalYear));
           if (!f || !statementType || !["income", "balance", "cashflow"].includes(statementType) || !factPeriod) return [];
-          return [{ statementType, period: factPeriod, fiscalYear: Number(factPeriod.slice(-4)), reportScope: (text(f.reportScope) as SourceFact["reportScope"]) ?? "unknown", currency: text(f.currency), unit: text(f.unit), periodEnd: text(f.periodEnd), filingDate: text(f.filingDate), data: asRecord(f.data) ?? {} }];
+          return [{ statementType, period: factPeriod, fiscalYear: Number(factPeriod.slice(-4)), reportScope: (text(f.reportScope) as SourceFact["reportScope"]) ?? "unknown", currency: text(f.currency), unit: text(f.unit), periodEnd: text(f.periodEnd), filingDate: text(f.filingDate), data: asRecord(f.data) ?? {}, evidence: asRecord(f.evidence) as SourceFact["evidence"] | undefined }];
         })
       : undefined;
     return [{
@@ -126,6 +128,7 @@ function sourceDocuments(payload: unknown, source: IngestionSource, symbol: stri
       filingDate: text(record.filingDate) ?? text(record.reportDate),
       contentType: text(record.contentType),
       payload: record,
+      sourceContent: text(record.sourceContent) ?? text(record.content) ?? undefined,
       facts,
     }];
   });
@@ -150,24 +153,35 @@ class ConfiguredJsonAdapter implements SourceAdapter {
   }
 }
 
-function validateFact(document: SourceDocument, fact: SourceFact): { period: string; reason?: string } {
+export function validateFact(document: SourceDocument, fact: SourceFact): { period: string; reason?: string } {
   const period = normalizedPeriod(fact.period, fact.fiscalYear);
   if (!period) return { period: fact.period, reason: "Kỳ báo cáo không hợp lệ." };
   if (periodIsFuture(period)) return { period, reason: "Kỳ báo cáo vượt quá kỳ đã hoàn tất." };
   if (!document.documentUrl) return { period, reason: "Thiếu URL tài liệu nguồn." };
+  if (!document.sourceContent) return { period, reason: "Thiếu nội dung báo cáo gốc để đối soát trực tiếp." };
   if (!fact.data || Object.keys(fact.data).length === 0) return { period, reason: "Không có dữ liệu số liệu sau chuẩn hóa." };
   if (fact.reportScope === "unknown") return { period, reason: "Chưa xác định phạm vi hợp nhất/công ty mẹ." };
+  if (!fact.evidence || Object.keys(fact.evidence).length === 0) return { period, reason: "Thiếu bảng đối soát sourceValue/normalizedValue." };
+  for (const [key, item] of Object.entries(fact.evidence)) {
+    const sourceValue = Number(item.sourceValue);
+    const normalizedValue = Number(item.normalizedValue);
+    if (!Number.isFinite(sourceValue) || !Number.isFinite(normalizedValue)) return { period, reason: `Giá trị đối soát không hợp lệ tại ${key}.` };
+    const tolerance = Math.max(0.5, Math.abs(sourceValue) * 1e-6);
+    if (Math.abs(sourceValue - normalizedValue) > tolerance) return { period, reason: `Sai lệch đối soát tại ${key}: nguồn=${sourceValue}, normalized=${normalizedValue}.` };
+  }
   return { period };
 }
 
 async function persistDocument(document: SourceDocument): Promise<number> {
   const documentHash = stableHash({ source: document.source, url: document.documentUrl, payload: document.payload });
+  const sourceContentHash = document.sourceContent ? stableHash(document.sourceContent) : null;
   const inserted = await db.insert(financialSourceDocuments).values({
     symbol: document.symbol,
     source: document.source,
     documentType: document.documentType,
     documentUrl: document.documentUrl,
     documentHash,
+    sourceContentHash,
     reportType: document.reportType,
     period: document.period,
     fiscalYear: document.fiscalYear,
@@ -220,11 +234,12 @@ export async function ingestFinancialSources(symbols: string[], limit = 8): Prom
               source: document.source,
               sourceUrl: document.documentUrl,
               qualityStatus: "accepted",
+              verificationStatus: "verified",
               qualityIssues: [],
               data: fact.data,
             }).onConflictDoUpdate({
               target: [financialNormalizedFacts.symbol, financialNormalizedFacts.statementType, financialNormalizedFacts.period, financialNormalizedFacts.fiscalYear, financialNormalizedFacts.reportScope, financialNormalizedFacts.source],
-              set: { data: fact.data, documentId: documentId || null, periodEnd: fact.periodEnd, filingDate: fact.filingDate ?? document.filingDate, sourceUrl: document.documentUrl, qualityStatus: "accepted", normalizedAt: new Date() },
+              set: { data: fact.data, documentId: documentId || null, periodEnd: fact.periodEnd, filingDate: fact.filingDate ?? document.filingDate, sourceUrl: document.documentUrl, qualityStatus: "accepted", verificationStatus: "verified", normalizedAt: new Date() },
             });
             acceptedFactCount += 1;
           }
@@ -254,7 +269,7 @@ export async function loadPreferredQuarterlyFinancials(symbol: string, limit = 4
   await ensureFinancialIngestionTables();
   const rows = await db.select().from(financialNormalizedFacts).where(eq(financialNormalizedFacts.symbol, symbol)).orderBy(desc(financialNormalizedFacts.fiscalYear), desc(financialNormalizedFacts.period), desc(financialNormalizedFacts.normalizedAt)).limit(Math.min(120, Math.max(12, limit * 12)));
   const grouped = new Map<string, Partial<import("@/lib/financial-statements").FinancialQuarter> & { sources: string[] }>();
-  for (const row of rows.filter((item) => item.qualityStatus === "accepted" && /^Q[1-4]\/\d{4}$/i.test(item.period))) {
+  for (const row of rows.filter((item) => item.qualityStatus === "accepted" && item.verificationStatus === "verified" && /^Q[1-4]\/\d{4}$/i.test(item.period))) {
     const key = `${row.period}/${row.fiscalYear}`;
     const current = grouped.get(key) ?? { period: row.period, quarter: Number(row.period.slice(1, 2)), fiscalYear: row.fiscalYear, sources: [] };
     if (row.statementType === "income" && !current.income) current.income = row.data as import("@/lib/financial-statements").IncomeData;
@@ -274,7 +289,7 @@ export async function loadPreferredQuarterlyFinancials(symbol: string, limit = 4
 export async function loadPreferredFinancialRecords(symbol: string, statementType: StatementType, limit = 8): Promise<{ records: import("@/lib/stock-intelligence/financial-source").RawFinancialRecord[]; source: "vietstock" | "cafef" | "synthetic"; providerBacked: boolean }> {
   await ensureFinancialIngestionTables();
   const rows = await db.select().from(financialNormalizedFacts).where(eq(financialNormalizedFacts.symbol, symbol)).orderBy(desc(financialNormalizedFacts.fiscalYear), desc(financialNormalizedFacts.period), desc(financialNormalizedFacts.normalizedAt)).limit(Math.min(60, Math.max(3, limit * 3)));
-  const accepted = rows.filter((row) => row.statementType === statementType && row.qualityStatus === "accepted");
+  const accepted = rows.filter((row) => row.statementType === statementType && row.qualityStatus === "accepted" && row.verificationStatus === "verified");
   const records = accepted.slice(0, limit).map((row) => ({ period: row.period, fiscalYear: row.fiscalYear, reportedCurrency: row.currency, data: row.data as Record<string, unknown>, source: row.source, retrievedAt: row.normalizedAt.toISOString(), filingDate: row.filingDate ?? undefined, unit: row.unit }));
   if (records.length) {
     const source = records[0].source === "cafef" ? "cafef" : "vietstock";
@@ -300,19 +315,20 @@ export async function getFinancialSourceEvidence(symbol: string, limit = 12) {
     status: financialSourceDocuments.status,
     documentHash: financialSourceDocuments.documentHash,
   }).from(financialSourceDocuments).where(eq(financialSourceDocuments.symbol, symbol)).orderBy(desc(financialSourceDocuments.retrievedAt)).limit(Math.min(24, Math.max(1, limit)));
-  const facts = await db.select({ documentId: financialNormalizedFacts.documentId, qualityStatus: financialNormalizedFacts.qualityStatus }).from(financialNormalizedFacts).where(eq(financialNormalizedFacts.symbol, symbol)).limit(100);
+  const facts = await db.select({ documentId: financialNormalizedFacts.documentId, qualityStatus: financialNormalizedFacts.qualityStatus, verificationStatus: financialNormalizedFacts.verificationStatus }).from(financialNormalizedFacts).where(eq(financialNormalizedFacts.symbol, symbol)).limit(100);
   const factsByDocument = new Map<number, { total: number; accepted: number }>();
   for (const fact of facts) {
     if (fact.documentId == null) continue;
     const current = factsByDocument.get(fact.documentId) ?? { total: 0, accepted: 0 };
     current.total += 1;
-    if (fact.qualityStatus === "accepted") current.accepted += 1;
+    if (fact.qualityStatus === "accepted" && fact.verificationStatus === "verified") current.accepted += 1;
     factsByDocument.set(fact.documentId, current);
   }
   return documents.map((document) => ({
     ...document,
     factCount: factsByDocument.get(document.id)?.total ?? 0,
     acceptedFactCount: factsByDocument.get(document.id)?.accepted ?? 0,
+    verificationStatus: factsByDocument.get(document.id)?.accepted ? "verified" : "unverified",
     evidence: document.documentUrl ? "document-url" : "metadata-only",
   }));
 }

@@ -16,9 +16,11 @@ Endpoint phải nhận query `symbol` và `limit`, sau đó trả mảng hoặc 
 
 Mỗi fact có `statementType` (`income`, `balance`, `cashflow`), `period` (`Q1/2026` đến `Q4/2026` hoặc `FY/2026`), `fiscalYear`, `reportScope` (`consolidated` hoặc `parent`), `currency`, `unit`, `periodEnd`, `filingDate` và `data`. `data` phải dùng key canonical của hệ thống, ví dụ `revenue`, `ebitda`, `netIncome`, `totalAssets`, `equity`, `operatingCashFlow`.
 
-## Quality gate
+## Quality gate và đối soát trực tiếp
 
-Data-engine từ chối kỳ tương lai, kỳ sai định dạng, tài liệu thiếu URL, fact không có số liệu, phạm vi báo cáo không xác định và dữ liệu không có đủ provenance. Bản raw vẫn được lưu để audit; chỉ fact có `qualityStatus=accepted` mới được đưa cho LLM và các tab stock.
+Data-engine từ chối kỳ tương lai, kỳ sai định dạng, tài liệu thiếu URL, fact không có số liệu, phạm vi báo cáo không xác định và dữ liệu không có đủ provenance. Bản raw vẫn được lưu để audit.
+
+Để được đưa vào Cơ bản, Tài chính hoặc LLM, fact bắt buộc phải có đồng thời `sourceContent`, `sourceContentHash` và bảng `evidence` cho từng giá trị đối soát. Mỗi evidence ghi `sourceValue` và `normalizedValue`; data-engine so sánh hai giá trị với sai số tối đa `max(0.5, abs(sourceValue) * 1e-6)`. Chỉ fact có cả `qualityStatus=accepted` và `verificationStatus=verified` mới được phục vụ downstream. Fact chỉ có URL hoặc timestamp nhưng không có nội dung/từng cặp giá trị đối soát sẽ bị từ chối và không được gửi cho LLM.
 
 Không trộn `consolidated` với `parent`. Không dùng `updated_at` làm ngày công bố. Provenance tối thiểu phải giữ source, source URL, filing date, period end, report type, document hash, retrieved time và parser version.
 

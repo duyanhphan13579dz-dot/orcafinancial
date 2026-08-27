@@ -13,6 +13,7 @@ export function ensureFinancialIngestionTables(): Promise<void> {
         document_type VARCHAR(40) NOT NULL,
         document_url TEXT NOT NULL,
         document_hash VARCHAR(64) NOT NULL UNIQUE,
+        source_content_hash VARCHAR(64),
         report_type VARCHAR(40),
         period VARCHAR(10),
         fiscal_year INTEGER,
@@ -25,6 +26,7 @@ export function ensureFinancialIngestionTables(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS fs_source_doc_symbol_idx ON financial_source_documents(symbol, retrieved_at);
+      ALTER TABLE financial_source_documents ADD COLUMN IF NOT EXISTS source_content_hash VARCHAR(64);
       CREATE TABLE IF NOT EXISTS financial_normalized_facts (
         id SERIAL PRIMARY KEY,
         document_id INTEGER REFERENCES financial_source_documents(id),
@@ -40,12 +42,14 @@ export function ensureFinancialIngestionTables(): Promise<void> {
         source VARCHAR(30) NOT NULL,
         source_url TEXT NOT NULL,
         quality_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        verification_status VARCHAR(20) NOT NULL DEFAULT 'unverified',
         quality_issues JSONB NOT NULL DEFAULT '[]'::jsonb,
         data JSONB NOT NULL,
         normalized_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE(symbol, statement_type, period, fiscal_year, report_scope, source)
       );
       CREATE INDEX IF NOT EXISTS fs_normalized_symbol_idx ON financial_normalized_facts(symbol, fiscal_year, period);
+      ALTER TABLE financial_normalized_facts ADD COLUMN IF NOT EXISTS verification_status VARCHAR(20) NOT NULL DEFAULT 'unverified';
       CREATE TABLE IF NOT EXISTS financial_llm_outputs (
         id SERIAL PRIMARY KEY,
         symbol VARCHAR(20) NOT NULL,
