@@ -108,6 +108,15 @@ export async function loadCanonicalStatements(symbol: string, type: StatementTyp
   let actual = true;
   try {
     records = await primary.fetch(symbol, type, limit);
+    if (records.length > 0) {
+      const fetchedCount = records.length;
+      const today = new Date().toISOString().slice(0, 10);
+      records = records.filter((record) => {
+        const period = parseFinancialPeriod(record.period);
+        return period !== null && period.periodEnd <= today;
+      });
+      if (records.length < fetchedCount) warnings.push(`Đã loại ${fetchedCount - records.length} bản ghi kỳ tương lai từ provider actual.`);
+    }
   } catch (error) {
     warnings.push(error instanceof Error ? error.message : "Primary financial provider failed.");
   }

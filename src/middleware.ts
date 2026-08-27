@@ -34,6 +34,13 @@ function isPublicPath(pathname: string): boolean {
   return false;
 }
 
+function hasAuthorizedCronSecret(req: NextRequest, pathname: string): boolean {
+  if (pathname !== "/api/internal/financial-period-audit") return false;
+  const secret = process.env.FINANCIAL_AUDIT_SECRET ?? process.env.CRON_SECRET;
+  const authorization = req.headers.get("authorization");
+  return Boolean(secret && authorization === `Bearer ${secret}`);
+}
+
 function hasSession(req: NextRequest): boolean {
   const refresh = req.cookies.get("refreshToken")?.value;
   if (refresh && refresh.length > 10) return true;
@@ -47,7 +54,7 @@ function hasSession(req: NextRequest): boolean {
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  if (isPublicPath(pathname)) {
+  if (isPublicPath(pathname) || hasAuthorizedCronSecret(req, pathname)) {
     return NextResponse.next();
   }
 

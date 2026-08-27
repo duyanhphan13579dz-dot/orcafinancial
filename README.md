@@ -717,3 +717,10 @@ README này phản ánh implementation hiện tại, nhưng một số dữ li�
 ## License
 
 MIT. Xem [`LICENSE`](./LICENSE).
+
+
+### Quarterly financial-period audit
+
+The deployment includes a protected endpoint at `/api/internal/financial-period-audit`. Vercel Cron runs it at 02:00 UTC on the first day of February, May, August and November (`0 2 1 2,5,8,11 *`), after each quarter's expected reporting window. The job checks the last completed quarter, rejects future-dated actual records, verifies that persisted rows do not contain future quarters, and records the result in `job_logs`.
+
+Set `CRON_SECRET` in the production environment so the platform cron request is authenticated. An optional `FINANCIAL_AUDIT_SECRET` can be used for a separate scheduler. `FINANCIAL_AUDIT_SYMBOLS` controls the comma-separated audit universe and defaults to `VNM,HPG,FPT,VCB`. A successful run returns HTTP 200; a detected period-integrity error returns HTTP 409 and records the offending symbols and periods. Provider-unavailable data is reported as estimate/degraded rather than being promoted to audited actual.
