@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { ensureFinancialIngestionTables } from "@/db/ensure-financial-ingestion-tables";
 import { financialLlmOutputs, financialNormalizedFacts } from "@/db/schema";
 import { chatWithFallback } from "@/lib/llm";
+import { formatFinancialQualityIssues, validateFinancialLlmOutput, FINANCIAL_LLM_QUALITY_VERSION } from "@/lib/financial-llm-quality";
 
 export type FinancialAnalysisType = "basic" | "financials";
 
@@ -41,7 +42,7 @@ const FINANCIALS_SCHEMA = {
 };
 
 function fingerprint(symbol: string, type: FinancialAnalysisType, facts: unknown): string {
-  return createHash("sha256").update(JSON.stringify({ symbol, type, facts })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ qualityVersion: FINANCIAL_LLM_QUALITY_VERSION, symbol, type, facts })).digest("hex");
 }
 
 function parseJson(text: string): Record<string, unknown> {
@@ -54,7 +55,7 @@ function parseJson(text: string): Record<string, unknown> {
 
 function promptFor(type: FinancialAnalysisType, symbol: string, facts: unknown): string {
   const schema = type === "basic" ? BASIC_SCHEMA : FINANCIALS_SCHEMA;
-  return `Bạn là chuyên gia phân tích báo cáo tài chính Việt Nam. Mã cổ phiếu: ${symbol}. Dữ liệu dưới đây là normalized facts đã qua data-engine quality gate. Chỉ được sao chép đúng số liệu, kỳ, đơn vị và phạm vi báo cáo; không được tự tạo, nội suy, làm tròn hoặc thay đổi số. Nếu thiếu trường, dùng 0 chỉ khi dữ liệu nguồn thực sự ghi nhận 0; nếu không thể xác định, trả về lỗi thay vì đoán. Trả đúng JSON theo schema sau, không markdown. Với mục basic, tạo chuỗi chart theo từng period cho revenue, ebitda, netIncome. Với mục financials, lập ba bảng: kết quả kinh doanh, cân đối kế toán và lưu chuyển tiền tệ. Mọi nhận xét phải nêu rõ kỳ và nguồn, không gọi estimate là actual.\nSCHEMA=${JSON.stringify(schema)}\nFACTS=${JSON.stringify(facts)}`;
+  return `Bạn là chuyên gia phân tích báo cáo tài chính Việt Nam. Mã cổ phiếu: ${symbol}. Dữ liệu dưới đây là normalized facts đã qua data-engine quality gate. Đây là nhiệm vụ sao chép và cấu trúc hóa có kiểm soát, không phải dự báo. Chỉ được sử dụng số liệu, kỳ, đơn vị, phạm vi hợp nhất/công ty mẹ và nguồn có trong FACTS; tuyệt đối không dùng kiến thức bên ngoài, không tự tạo, nội suy, quy đổi, làm tròn hoặc sửa số. Mỗi period trong output phải tồn tại trong FACTS và mỗi giá trị số phải khớp FACTS theo đúng key. Nếu một key không có dữ liệu nguồn, không được điền số đoán; ghi rõ thiếu dữ liệu trong notes/overview và không tạo dòng không có căn cứ. Không gọi dữ liệu estimate/synthetic là actual. Trả đúng JSON theo schema, không markdown, không thêm key. Với mục basic, tạo chart theo từng period cho revenue, ebitda, netIncome. Với mục financials, lập ba bảng: kết quả kinh doanh, cân đối kế toán và lưu chuyển tiền tệ; không trộn consolidated với parent.\nSCHEMA=${JSON.stringify(schema)}\nFACTS=${JSON.stringify(facts)}`;
 }
 
 function assertOutput(type: FinancialAnalysisType, output: Record<string, unknown>): void {
@@ -68,16 +69,34 @@ export async function generateFinancialLlmOutput(symbol: string, type: Financial
   const accepted = facts.filter((fact) => fact.qualityStatus === "accepted" && fact.verificationStatus === "verified");
   if (!accepted.length) throw new Error(`Chưa có normalized facts đạt quality gate cho ${symbol}.`);
   const inputFingerprint = fingerprint(symbol, type, accepted);
-  const previous = await db.select({ output: financialLlmOutputs.output, model: financialLlmOutputs.model, updatedAt: financialLlmOutputs.updatedAt }).from(financialLlmOutputs).where(eq(financialLlmOutputs.inputFingerprint, inputFingerprint)).limit(1);
-  if (previous[0]) return { output: previous[0].output, model: previous[0].model, cached: true, inputFingerprint, factCount: accepted.length };
+  const previous = await db.select({ output: financialLlmOutputs.output, model: financialLlmOutputs.model, status: financialLlmOutputs.status }).from(financialLlmOutputs).where(eq(financialLlmOutputs.inputFingerprint, inputFingerprint)).limit(1);
+  if (previous[0]?.status === "valid") {
+    return { output: previous[0].output, model: previous[0].model, cached: true, inputFingerprint, factCount: accepted.length };
+  }
 
   const result = await chatWithFallback([
     { role: "system", content: "Bạn chỉ trả về JSON hợp lệ theo yêu cầu. Không sử dụng kiến thức bên ngoài dữ liệu được cung cấp." },
     { role: "user", content: promptFor(type, symbol, accepted) },
-  ], { maxTokens: type === "financials" ? 10000 : 6000, temperature: 0.1 });
+  ], {
+    maxTokens: type === "financials" ? 10000 : 6000,
+    temperature: 0.1,
+    purpose: "finance",
+    responseFormat: "json_object",
+    reasoningEffort: "low",
+  });
   if (!result) throw new Error("Chưa cấu hình LLM provider khả dụng.");
   const output = parseJson(result.text);
   assertOutput(type, output);
+  const qualityFacts = accepted.map((fact) => ({
+    period: fact.period,
+    fiscalYear: fact.fiscalYear,
+    statementType: fact.statementType,
+    data: fact.data as Record<string, unknown>,
+  }));
+  const quality = validateFinancialLlmOutput(type, output, qualityFacts);
+  if (!quality.valid) {
+    throw new Error(`Financial LLM quality gate failed (${FINANCIAL_LLM_QUALITY_VERSION}, score=${quality.score}): ${formatFinancialQualityIssues(quality)}`);
+  }
   await db.insert(financialLlmOutputs).values({
     symbol,
     analysisType: type,
