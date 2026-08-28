@@ -14,6 +14,7 @@ import {
   type SymbolInfo,
   type Timeframe,
 } from "@/lib/connectors/core";
+import { isTcbsMockEnabled, tcbsMockQuote } from "@/lib/connectors/tcbs-mock";
 
 /* ═══════════════════════════════════════════════════════════════════════
    VNDirect dchart — PRIMARY (priority 1): history, quotes, indices, search
