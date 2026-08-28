@@ -1,4 +1,5 @@
 import type { TcbsFinancialImport, TcbsFinancialQuarter } from "@/lib/connectors/tcbs-financials";
+import { getBenchmarkForSymbol, getSectorKeyForSymbol } from "@/lib/industry-benchmarks";
 
 const DEFAULT_URL = "https://mcp.tcbs.com.vn/mcp/tcinvest/";
 const PROTOCOL_VERSION = "2025-03-26";
@@ -68,6 +69,25 @@ function toolText(result: Json): unknown {
   return result;
 }
 
+function bankMode(): "bank" | "nonbank" | "auto" {
+  const mode = (process.env.TCBS_MCP_BANK_MODE ?? "false").trim().toLowerCase();
+  if (["true", "1", "yes", "bank"].includes(mode)) return "bank";
+  if (mode === "auto") return "auto";
+  return "nonbank";
+}
+
+function isBankSymbol(symbol: string): boolean {
+  const normalized = symbol.trim().toUpperCase();
+  const overrides = new Set((process.env.TCBS_MCP_BANK_SYMBOLS ?? "").split(",").map((item) => item.trim().toUpperCase()).filter(Boolean));
+  if (overrides.has(normalized)) return true;
+  if (bankMode() === "bank") return true;
+  if (bankMode() === "nonbank") return false;
+  const sectorKey = getSectorKeyForSymbol(normalized);
+  if (sectorKey) return sectorKey === "banking";
+  const benchmark = getBenchmarkForSymbol(normalized);
+  return benchmark.industry.trim().toLowerCase() === "ngân hàng";
+}
+
 function argumentName(tool: Json): string {
   const properties = (((tool.inputSchema as Json | undefined)?.properties ?? {}) as Json);
   const candidates = ["symbol", "ticker", "stockCode", "code", "tickerSymbol"];
@@ -91,7 +111,7 @@ export async function callTcbsMcpTool(name: string, args: Json): Promise<unknown
 export async function fetchTcbsMcpFinancialStatements(symbol: string): Promise<TcbsFinancialImport> {
   if (!envBool("TCBS_MCP_ENABLED")) throw new Error("TCBS_MCP_ENABLED is false");
   const tools = await tcbsMcpTools();
-  const bank = envBool("TCBS_MCP_BANK");
+  const bank = isBankSymbol(symbol);
   const names = bank
     ? { income: process.env.TCBS_MCP_BANK_INCOME_TOOL?.trim() || "getIncomeStatementForBank", balance: process.env.TCBS_MCP_BANK_BALANCE_TOOL?.trim() || "getBalanceSheetForBank", cashflow: process.env.TCBS_MCP_BANK_CASHFLOW_TOOL?.trim() || "getCashFlowForBank" }
     : { income: process.env.TCBS_MCP_INCOME_TOOL?.trim() || "getIncomeStatementForNonBank", balance: process.env.TCBS_MCP_BALANCE_TOOL?.trim() || "getBalanceSheetForNonBank", cashflow: process.env.TCBS_MCP_CASHFLOW_TOOL?.trim() || "getCashFlowForNonBank" };

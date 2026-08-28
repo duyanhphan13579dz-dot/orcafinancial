@@ -300,9 +300,14 @@ export const SYMBOL_SECTOR_MAP: Record<string, string> = {
   MSN: "conglomerate",
 };
 
+export function getSectorKeyForSymbol(symbol: string): string | null {
+  const key = SYMBOL_SECTOR_MAP[symbol.trim().toUpperCase()];
+  return key && SECTOR_BENCHMARKS[key] ? key : null;
+}
+
 export function getBenchmarkForSymbol(symbol: string): SectorBenchmark {
-  const key = SYMBOL_SECTOR_MAP[symbol];
-  if (key && SECTOR_BENCHMARKS[key]) return SECTOR_BENCHMARKS[key];
+  const key = getSectorKeyForSymbol(symbol);
+  if (key) return SECTOR_BENCHMARKS[key];
   // Default to conglomerate for unknown symbols
   return SECTOR_BENCHMARKS.conglomerate;
 }
