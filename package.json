@@ -11,26 +11,28 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tcbs:oauth:refresh": "node scripts/refresh-tcbs-oauth.mjs",
-    "tcbs:crawl:financials": "node scripts/crawl-tcbs-financials.mjs"
+    "tcbs:crawl:financials": "node scripts/crawl-tcbs-financials.mjs",
+    "tcbs:parse:datapack": "node scripts/parse-tcbs-datapack.mjs"
   },
   "dependencies": {
+    "@microsoft/signalr": "^10.0.11",
     "@supabase/supabase-js": "^2.111.0",
     "@types/bcryptjs": "^2.4.6",
     "@upstash/redis": "^1.35.5",
-    "@microsoft/signalr": "^10.0.11",
     "bcryptjs": "^3.0.3",
     "dotenv": "17.3.1",
     "drizzle-orm": "0.45.2",
     "jose": "^6.2.9",
     "lightweight-charts": "^5.2.1",
     "next": "16.2.6",
-    "pg": "8.20.0",
     "pdfkit": "^0.20.1",
+    "pg": "8.20.0",
     "qrcode": "^1.5.4",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "recharts": "^3.10.0",
-    "rss-parser": "^3.13.0"
+    "rss-parser": "^3.13.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.1.17",
