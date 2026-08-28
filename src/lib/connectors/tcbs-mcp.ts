@@ -70,7 +70,8 @@ function toolText(result: Json): unknown {
 }
 
 function bankMode(): "bank" | "nonbank" | "auto" {
-  const mode = (process.env.TCBS_MCP_BANK_MODE ?? "false").trim().toLowerCase();
+  const configuredMode = process.env.TCBS_MCP_BANK_MODE?.trim();
+  const mode = (configuredMode || process.env.TCBS_MCP_BANK || "false").trim().toLowerCase();
   if (["true", "1", "yes", "bank"].includes(mode)) return "bank";
   if (mode === "auto") return "auto";
   return "nonbank";
