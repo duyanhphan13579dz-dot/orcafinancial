@@ -236,6 +236,48 @@ async function persistDocument(document: SourceDocument): Promise<number> {
   return existing[0]?.id ?? 0;
 }
 
+export async function ingestSourceDocuments(documents: SourceDocument[]): Promise<IngestionResult> {
+  await ensureFinancialIngestionTables();
+  const warnings: string[] = [];
+  const rejected: IngestionResult["rejected"] = [];
+  let acceptedFactCount = 0;
+  let normalizedFactCount = 0;
+  for (const document of documents) {
+    const documentId = await persistDocument(document);
+    for (const fact of document.facts ?? []) {
+      normalizedFactCount += 1;
+      const validation = validateFact(document, fact);
+      if (validation.reason) {
+        rejected.push({ symbol: document.symbol, source: document.source, period: validation.period, statementType: fact.statementType, reason: validation.reason });
+        continue;
+      }
+      await db.insert(financialNormalizedFacts).values({
+        documentId: documentId || null,
+        symbol: document.symbol,
+        statementType: fact.statementType,
+        period: validation.period,
+        fiscalYear: fact.fiscalYear,
+        reportScope: fact.reportScope ?? "unknown",
+        currency: fact.currency ?? "VND",
+        unit: fact.unit ?? "reported",
+        periodEnd: fact.periodEnd,
+        filingDate: fact.filingDate ?? document.filingDate,
+        source: document.source,
+        sourceUrl: document.documentUrl,
+        qualityStatus: "accepted",
+        verificationStatus: "verified",
+        qualityIssues: [],
+        data: fact.data,
+      }).onConflictDoUpdate({
+        target: [financialNormalizedFacts.symbol, financialNormalizedFacts.statementType, financialNormalizedFacts.period, financialNormalizedFacts.fiscalYear, financialNormalizedFacts.reportScope, financialNormalizedFacts.source],
+        set: { data: fact.data, documentId: documentId || null, periodEnd: fact.periodEnd, filingDate: fact.filingDate ?? document.filingDate, sourceUrl: document.documentUrl, qualityStatus: "accepted", verificationStatus: "verified", normalizedAt: new Date() },
+      });
+      acceptedFactCount += 1;
+    }
+  }
+  return { ok: rejected.length === 0, checkedAt: new Date().toISOString(), symbols: [...new Set(documents.map((document) => document.symbol))], sources: ["tcbs"], documentCount: documents.length, normalizedFactCount, acceptedFactCount, rejectedFactCount: rejected.length, warnings, rejected };
+}
+
 export async function ingestFinancialSources(symbols: string[], limit = 8): Promise<IngestionResult> {
   await ensureFinancialIngestionTables();
   const normalizedSymbols = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter((s) => /^[A-Z0-9]{1,15}$/.test(s)))].slice(0, 100);

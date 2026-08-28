@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "tcbs:oauth:refresh": "node scripts/refresh-tcbs-oauth.mjs",
     "tcbs:crawl:financials": "node scripts/crawl-tcbs-financials.mjs",
-    "tcbs:parse:datapack": "node scripts/parse-tcbs-datapack.mjs"
+    "tcbs:parse:datapack": "node scripts/parse-tcbs-datapack.mjs",
+    "tcbs:worker:quarterly": "node scripts/tcbs-quarterly-worker.mjs"
   },
   "dependencies": {
     "@microsoft/signalr": "^10.0.11",
