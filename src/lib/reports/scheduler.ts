@@ -1,5 +1,6 @@
 import { generateMarketSummary, generateMorningBrief, getStoredReport, isVnWeekday } from "./generator";
 import { forProvider } from "@/lib/logger";
+import { ingestFinancialSources } from "@/lib/financial-ingestion";
 
 const log = forProvider("reports-scheduler-v4");
 type ReportType = "morning" | "summary";
@@ -9,14 +10,38 @@ const JOBS: JobSpec[] = [
   { type: "summary", targetVn: { hh: 15, mm: 15 }, run: (d) => generateMarketSummary(d) },
 ];
 interface JobRuntime { lastAttemptAt: string | null; lastSuccessAt: string | null; lastError: string | null; attemptsToday: number; successesToday: number; todayKey: string | null; nextRetryAt: number | null; }
-const g = globalThis as typeof globalThis & { __orcaReportsStartedV4?: boolean; __orcaReportsRuntimeV4?: Record<ReportType, JobRuntime>; __orcaReportsLastTickAtV4?: string | null; __orcaReportsTickCountV4?: number; __orcaReportsTickInFlightV4?: boolean; };
+const g = globalThis as typeof globalThis & { __orcaReportsStartedV4?: boolean; __orcaReportsRuntimeV4?: Record<ReportType, JobRuntime>; __orcaReportsLastTickAtV4?: string | null; __orcaReportsTickCountV4?: number; __orcaReportsTickInFlightV4?: boolean; __orcaTcbsQuarterlyKeyV4?: string | null; __orcaTcbsQuarterlyRetryAtV4?: number | null; };
 const emptyRuntime = (): JobRuntime => ({ lastAttemptAt: null, lastSuccessAt: null, lastError: null, attemptsToday: 0, successesToday: 0, todayKey: null, nextRetryAt: null });
 g.__orcaReportsRuntimeV4 ??= { morning: emptyRuntime(), summary: emptyRuntime() };
 g.__orcaReportsTickCountV4 ??= 0;
 g.__orcaReportsLastTickAtV4 ??= null;
+g.__orcaTcbsQuarterlyKeyV4 ??= null;
+g.__orcaTcbsQuarterlyRetryAtV4 ??= null;
 function vnNow() { const d = new Date(); const shifted = new Date(d.getTime() + 7 * 60 * 60_000); return { hh: shifted.getUTCHours(), mm: shifted.getUTCMinutes(), key: `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}-${String(shifted.getUTCDate()).padStart(2, "0")}`, weekday: shifted.getUTCDay() }; }
 const TICK_MS = 60_000;
 const RETRY_DELAY_MS = 5 * 60_000;
+const QUARTER_MONTHS = new Set([1, 4, 7, 10]);
+function quarterlyKey(now: ReturnType<typeof vnNow>): string | null {
+  const month = Number(now.key.slice(5, 7));
+  return QUARTER_MONTHS.has(month) && Number(now.key.slice(8, 10)) <= 10 ? `${now.key.slice(0, 7)}` : null;
+}
+async function refreshTcbsQuarterly(now: ReturnType<typeof vnNow>) {
+  if (process.env.TCBS_ENABLED?.trim().toLowerCase() !== "true" && process.env.TCBS_ENABLED !== "1") return;
+  const key = quarterlyKey(now);
+  if (!key || g.__orcaTcbsQuarterlyKeyV4 === key || (g.__orcaTcbsQuarterlyRetryAtV4 && Date.now() < g.__orcaTcbsQuarterlyRetryAtV4)) return;
+  const symbols = (process.env.FINANCIAL_INGEST_SYMBOLS ?? process.env.TCBS_CRAWL_SYMBOL ?? "TCX").split(",").map((symbol) => symbol.trim().toUpperCase()).filter((symbol) => /^[A-Z0-9]{1,15}$/.test(symbol)).slice(0, 100);
+  if (!symbols.length) return;
+  try {
+    const result = await ingestFinancialSources(symbols, 8);
+    if (!result.ok || result.acceptedFactCount === 0) throw new Error(`TCBS quarterly refresh accepted no facts (${result.rejectedFactCount} rejected)`);
+    g.__orcaTcbsQuarterlyKeyV4 = key;
+    g.__orcaTcbsQuarterlyRetryAtV4 = null;
+    log.info("tcbs_quarterly_refresh_success", { key, symbols, acceptedFactCount: result.acceptedFactCount });
+  } catch (error) {
+    g.__orcaTcbsQuarterlyRetryAtV4 = Date.now() + RETRY_DELAY_MS;
+    log.warn("tcbs_quarterly_refresh_failed", { key, error: error instanceof Error ? error.message : String(error) });
+  }
+}
 async function tick() {
   if (g.__orcaReportsTickInFlightV4) return;
   g.__orcaReportsTickInFlightV4 = true;
@@ -24,6 +49,7 @@ async function tick() {
   g.__orcaReportsTickCountV4 = (g.__orcaReportsTickCountV4 ?? 0) + 1;
   try {
     const now = vnNow(); const runtime = g.__orcaReportsRuntimeV4!;
+    await refreshTcbsQuarterly(now);
     for (const spec of JOBS) { const r = runtime[spec.type]; if (r.todayKey !== now.key) { r.todayKey = now.key; r.attemptsToday = 0; r.successesToday = 0; r.lastError = null; r.nextRetryAt = null; } }
     if (!isVnWeekday()) return;
     const nowMinutes = now.hh * 60 + now.mm;

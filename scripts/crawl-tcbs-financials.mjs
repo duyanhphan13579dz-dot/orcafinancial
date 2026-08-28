@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join, basename } from "node:path";
+import { extractTcbsTables } from "./tcbs-pdf-tables.mjs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -106,7 +107,8 @@ async function main() {
       const text = await pdfText(file);
       const period = periodFromText(`${candidate.label} ${basename(new URL(candidate.url).pathname)} ${text.slice(0, 5000)}`);
       const extractedFacts = extractTextFacts(text);
-      const record = { source: "tcbs", symbol: SYMBOL, documentType: "financial_statement", documentUrl: candidate.url, reportType: "tcbs_investor_relations", period, contentType, payload: { title: candidate.label, file, sha256: hash, extractedFacts }, sourceContent: text };
+      const tables = extractTcbsTables(text);
+      const record = { source: "tcbs", symbol: SYMBOL, documentType: "financial_statement", documentUrl: candidate.url, reportType: "tcbs_investor_relations", period, contentType, payload: { title: candidate.label, file, sha256: hash, extractedFacts, tables }, sourceContent: text };
       documents.push(record);
       await writeFile(join(OUTPUT_DIR, `${hash}.json`), `${JSON.stringify(record, null, 2)}\n`);
     } catch (error) {
