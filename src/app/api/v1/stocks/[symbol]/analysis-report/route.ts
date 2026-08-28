@@ -16,6 +16,8 @@ import { buildInvestmentThesis } from "@/lib/stock-intelligence/investment-thesi
 import { renderStockAnalysisPdf } from "@/lib/stock-intelligence/stock-analysis-pdf";
 import { cachedStockPayload, stockCacheKey } from "@/lib/stock-intelligence/cache";
 import { generateCompanyReportNarrative } from "@/lib/stock-intelligence/company-report-llm";
+import { detectCandlestickPatterns, detectChartPatterns } from "@/lib/technical-patterns";
+import { buildTechnicalSentiment } from "@/lib/stock-intelligence/technical-sentiment";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,6 +45,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
         ]);
         if (history.bars.length < 30) throw new Error(`Insufficient history for ${symbol} (${history.bars.length} bars)`);
         const technical = analyze(symbol, history.bars);
+        const candlestickPatterns = detectCandlestickPatterns(history.bars).filter((item) => item.barIndex >= history.bars.length - 30);
+        const chartPatterns = detectChartPatterns(history.bars);
+        const technicalSentiment = buildTechnicalSentiment(technical, chartPatterns, candlestickPatterns);
         const health = evaluateHealthDetail(symbol, quarters);
         const historical: HistoricalFinancialPoint[] = quarters.map((quarter) => ({ period: quarter.period, fiscalYear: quarter.fiscalYear, revenue: quarter.income.revenue, ebitda: quarter.income.ebitda, netIncome: quarter.income.netIncome, eps: quarter.income.eps, provenance: { source: "sector-synthetic-v1", retrievedAt: new Date().toISOString(), period: quarter.period, kind: "estimate", status: "degraded", confidence: 0.45, currency: "VND", unit: "billion VND" } }));
         const forecast = buildForecastScenarios({ symbol, historical, currentPrice: technical.lastClose, years: 3 });
@@ -63,8 +68,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
           company: { symbol, name: profile.name, exchange: profile.exchange, sector: profile.sector, industry: profile.industry, description: profile.description, marketCapBillionVnd: profile.marketCapBillionVnd },
           dataConfidence,
           historicalFinancials: quarters.slice(0, 8),
-          technical: { recommendation: technical.recommendation, score: technical.score, lastClose: technical.lastClose, rsi14: technical.rsi14, sma20: technical.sma20, sma50: technical.sma50, volatilityPct: technical.volatilityPct, maxDrawdownPct: technical.maxDrawdownPct },
+          technical: { recommendation: technical.recommendation, score: technical.score, lastClose: technical.lastClose, rsi14: technical.rsi14, macd: technical.macd, sma20: technical.sma20, sma50: technical.sma50, bollinger: technical.bollinger, supportResistance: technical.supportResistance, volatilityPct: technical.volatilityPct, maxDrawdownPct: technical.maxDrawdownPct, multiTimeframe: technical.multiTimeframe, volumeVsAvg20: technical.volumeVsAvg20, sentiment: technicalSentiment },
           financialHealth: health,
+          technicalPatterns: { chartPatterns, candlestickPatterns, sentiment: technicalSentiment },
           forecast,
           valuation: { valuationScore, valuationConfidence: forecast.valuationConfidence, expectedValue: forecast.expectedValue, targetPrice: forecast.targetPrice },
           risk,
@@ -72,7 +78,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
           industryAndBusiness: { benchmark, crossModule, business },
           recentNews: rawNews.slice(0, 12),
         });
-        const pdf = await renderStockAnalysisPdf({ symbol, generatedAt, profile, quarters, technical, health, forecast, risk, news, backtest, crossModule, business, thesis, companyNarrative: companyNarrative ?? undefined, priceHistory: history.bars, source: `${history.source} + sector-synthetic-v1 fallback + RSS news`, dataConfidence });
+        const pdf = await renderStockAnalysisPdf({ symbol, generatedAt, profile, quarters, technical, health, forecast, risk, news, backtest, crossModule, business, thesis, companyNarrative: companyNarrative ?? undefined, technicalSentiment, priceHistory: history.bars, source: `${history.source} + sector-synthetic-v1 fallback + RSS news`, dataConfidence });
         return { base64: pdf.toString("base64"), source: history.source };
       },
     });

@@ -6,6 +6,7 @@ export interface CompanyReportLlmNarrative {
   businessModel: string;
   industryCompetitivePositioning: string;
   financialAnalysis: string;
+  technicalAssessment: string;
   forecastAndAssumptions: string;
   valuationView: string;
   catalysts: string[];
@@ -37,6 +38,7 @@ const SCHEMA = {
     businessModel: { type: "string" },
     industryCompetitivePositioning: { type: "string" },
     financialAnalysis: { type: "string" },
+    technicalAssessment: { type: "string" },
     forecastAndAssumptions: { type: "string" },
     valuationView: { type: "string" },
     catalysts: { type: "array", items: { type: "string" } },
@@ -45,7 +47,7 @@ const SCHEMA = {
     conclusion: { type: "string" },
     recommendation: { type: "string" },
   },
-  required: ["executiveSummary", "investmentThesis", "businessModel", "industryCompetitivePositioning", "financialAnalysis", "forecastAndAssumptions", "valuationView", "catalysts", "risksAndInvalidation", "esgAndGovernance", "conclusion", "recommendation"],
+  required: ["executiveSummary", "investmentThesis", "businessModel", "industryCompetitivePositioning", "financialAnalysis", "technicalAssessment", "forecastAndAssumptions", "valuationView", "catalysts", "risksAndInvalidation", "esgAndGovernance", "conclusion", "recommendation"],
   additionalProperties: false,
 };
 
@@ -68,6 +70,7 @@ function parse(raw: string): CompanyReportLlmNarrative | null {
       businessModel: asText(value.businessModel),
       industryCompetitivePositioning: asText(value.industryCompetitivePositioning),
       financialAnalysis: asText(value.financialAnalysis),
+      technicalAssessment: asText(value.technicalAssessment),
       forecastAndAssumptions: asText(value.forecastAndAssumptions),
       valuationView: asText(value.valuationView),
       catalysts: asTextArray(value.catalysts),
@@ -85,7 +88,7 @@ function parse(raw: string): CompanyReportLlmNarrative | null {
 
 export async function generateCompanyReportNarrative(context: Record<string, unknown>): Promise<CompanyReportLlmNarrative | null> {
   const user = [
-    "FORM BÁO CÁO: 1) Tóm tắt điều hành 2) Luận điểm đầu tư 3) Mô hình kinh doanh 4) Ngành và vị thế cạnh tranh 5) Phân tích tài chính 6) Dự phóng và giả định 7) Quan điểm định giá 8) Catalyst 9) Rủi ro và điều kiện vô hiệu hóa 10) ESG và quản trị 11) Kết luận 12) Khuyến nghị nghiên cứu.",
+    "FORM BÁO CÁO: 1) Tóm tắt điều hành 2) Luận điểm đầu tư 3) Mô hình kinh doanh 4) Ngành và vị thế cạnh tranh 5) Phân tích tài chính 6) Đánh giá kỹ thuật: chart, indicator, mẫu hình giá, mẫu hình nến và sentiment đảo chiều/tiếp diễn 7) Dự phóng và giả định 8) Quan điểm định giá 9) Catalyst 10) Rủi ro và điều kiện vô hiệu hóa 11) ESG và quản trị 12) Kết luận 13) Khuyến nghị nghiên cứu.",
     "SCHEMA:",
     JSON.stringify(SCHEMA),
     "DỮ LIỆU ORCA:",

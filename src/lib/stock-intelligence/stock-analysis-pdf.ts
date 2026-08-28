@@ -11,6 +11,7 @@ import type { CrossModuleContext } from "@/lib/stock-intelligence/cross-module-e
 import type { BusinessIntelligence } from "@/lib/stock-intelligence/moat-engine";
 import type { InvestmentThesis } from "@/lib/stock-intelligence/investment-thesis";
 import type { CompanyReportLlmNarrative } from "@/lib/stock-intelligence/company-report-llm";
+import type { TechnicalSentimentResult } from "@/lib/stock-intelligence/technical-sentiment";
 import { generateValueChain } from "@/lib/value-chain";
 import type { Ohlcv } from "@/lib/connectors/core";
 import fs from "node:fs";
@@ -31,6 +32,7 @@ export interface StockAnalysisPdfPayload {
   business?: BusinessIntelligence;
   thesis?: InvestmentThesis;
   companyNarrative?: CompanyReportLlmNarrative;
+  technicalSentiment?: TechnicalSentimentResult;
   priceHistory?: Ohlcv[];
   source: string;
   dataConfidence: number;
@@ -75,28 +77,36 @@ function dataTierVi(confidence: number): string { return confidence >= 0.75 ? "S
 function moatScoreVi(score: number | null, coverage: string): string { return score == null || coverage === "unknown" ? "Chưa xác định" : `${score}/100 · ${coverage === "proxy" ? "proxy ngành" : "bằng chứng trực tiếp"}`; }
 function cleanCausalText(value: string): string { return safeText(value).replace(/commodity/gi, "hàng hóa đầu vào").replace(/EBITDA margin/gi, "biên EBITDA").replace(/fair value/gi, "giá trị hợp lý").replace(/market regime/gi, "trạng thái thị trường").replace(/risk appetite/gi, "khẩu vị rủi ro").replace(/valuation multiple/gi, "hệ số định giá"); }
 
-function drawPriceSnapshot(doc: PDFKit.PDFDocument, bars: Ohlcv[] = []) {
+function drawPriceSnapshot(doc: PDFKit.PDFDocument, bars: Ohlcv[] = [], technical?: AnalysisResult) {
   const points = bars.slice(-90);
   if (points.length < 2) { paragraphFallback(doc, "Không đủ dữ liệu giá để vẽ biểu đồ kỹ thuật."); return; }
   const x = 54; const y = doc.y + 10; const w = 487; const h = 85;
   const closes = points.map((bar) => bar.close).filter(Number.isFinite);
-  const min = Math.min(...closes); const max = Math.max(...closes); const span = Math.max(max - min, 1e-9);
+  const overlaySeries = (period: number): Array<number | null> => points.map((_, index) => { const sourceIndex = bars.length - points.length + index; if (sourceIndex + 1 < period) return null; const values = bars.slice(sourceIndex - period + 1, sourceIndex + 1).map((bar) => bar.close); return values.length === period ? values.reduce((sum, value) => sum + value, 0) / period : null; });
+  const sma20 = overlaySeries(20);
+  const sma50 = overlaySeries(50);
+  const overlayValues = [...closes, ...sma20, ...sma50].filter((value): value is number => value != null && Number.isFinite(value));
+  const min = Math.min(...overlayValues); const max = Math.max(...overlayValues); const span = Math.max(max - min, 1e-9);
   doc.save().rect(x, y, w, h).fillAndStroke("#f8fbfd", LINE);
   for (let i = 0; i <= 4; i += 1) {
     const gy = y + (h * i) / 4;
     doc.strokeColor(GRID).lineWidth(0.5).moveTo(x, gy).lineTo(x + w, gy).stroke();
   }
-  const path = points.map((bar, index) => {
-    const px = x + (w * index) / Math.max(points.length - 1, 1);
-    const py = y + h - ((bar.close - min) / span) * (h - 16) - 8;
-    return [px, py] as const;
-  });
-  doc.strokeColor(BLUE).lineWidth(1.8).moveTo(path[0][0], path[0][1]);
-  path.slice(1).forEach(([px, py]) => doc.lineTo(px, py));
-  doc.stroke();
+  const drawLine = (values: Array<number | null>, color: string, width: number) => {
+    const path = values.map((value, index) => value == null ? null : [x + (w * index) / Math.max(points.length - 1, 1), y + h - ((value - min) / span) * (h - 16) - 8] as const).filter((value): value is readonly [number, number] => value != null);
+    if (path.length < 2) return [] as readonly [number, number][];
+    doc.strokeColor(color).lineWidth(width).moveTo(path[0][0], path[0][1]);
+    path.slice(1).forEach(([px, py]) => doc.lineTo(px, py));
+    doc.stroke();
+    return path;
+  };
+  const path = drawLine(closes, BLUE, 1.8);
+  drawLine(sma20, GREEN, 1.1);
+  drawLine(sma50, RED, 1.1);
   const last = path[path.length - 1];
-  doc.fillColor(BLUE).circle(last[0], last[1], 3).fill();
-  doc.font(regularFont(doc)).fontSize(7.5).fillColor(MUTED).text(`90 phiên gần nhất · thấp ${money(min)} · cao ${money(max)} · cuối ${money(points.at(-1)?.close)}`, x + 8, y + h - 16, { width: w - 16, lineBreak: false });
+  if (last) doc.fillColor(BLUE).circle(last[0], last[1], 3).fill();
+  const legend = technical ? ` · SMA20 ${money(technical.sma20)} · SMA50 ${money(technical.sma50)}` : "";
+  doc.font(regularFont(doc)).fontSize(7.5).fillColor(MUTED).text(`90 phiên gần nhất · thấp ${money(min)} · cao ${money(max)} · cuối ${money(points.at(-1)?.close)}${legend}`, x + 8, y + h - 16, { width: w - 16, lineBreak: false });
   doc.restore();
   doc.y = y + h + 16;
 }
@@ -283,9 +293,29 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     ]);
     paragraph("Sức khỏe tài chính chỉ có ý nghĩa đầu tư khi kết nối được với khả năng duy trì lợi nhuận và dòng tiền. Điểm số là tín hiệu tóm tắt, không thay thế việc đọc xu hướng từng kỳ.", MUTED);
 
-    title("4. PHÂN TÍCH KỸ THUẬT VÀ THIẾT LẬP GIAO DỊCH");
-    paragraph("Biểu đồ dưới đây là snapshot giá của 90 phiên gần nhất. Phần này phục vụ góc nhìn giao dịch ngắn và trung hạn, không phải bằng chứng thay thế cho luận điểm đầu tư dài hạn.", MUTED);
-    drawPriceSnapshot(doc, payload.priceHistory);
+          title("4. PHÂN TÍCH KỸ THUẬT, MẪU HÌNH VÀ SENTIMENT");
+      paragraph("Biểu đồ dưới đây là snapshot giá của 90 phiên gần nhất. Phần này phục vụ góc nhìn giao dịch ngắn và trung hạn, không phải bằng chứng thay thế cho luận điểm đầu tư dài hạn.", MUTED);
+      drawPriceSnapshot(doc, payload.priceHistory, payload.technical);
+      if (payload.companyNarrative?.technicalAssessment) {
+        title("Nhận định kỹ thuật theo LLM");
+        paragraph(payload.companyNarrative.technicalAssessment);
+      }
+      if (payload.technicalSentiment) {
+        row("Sentiment kỹ thuật", `${payload.technicalSentiment.labelVi} · độ tin cậy ${Math.round(payload.technicalSentiment.confidence * 100)}%`);
+        row("Xu hướng đa khung thời gian", payload.technicalSentiment.trend === "BULLISH" ? "Tăng" : payload.technicalSentiment.trend === "BEARISH" ? "Giảm" : "Trung tính");
+        payload.technicalSentiment.indicatorSummary.slice(0, 6).forEach((item) => bullet(item));
+        if (payload.technicalSentiment.chartPatterns.length) {
+          title("Mẫu hình giá");
+          payload.technicalSentiment.chartPatterns.forEach((item) => bullet(`${item.nameVi}: ${item.description}${item.target != null ? ` Mục tiêu tham chiếu ${money(item.target)}.` : ""}`));
+        } else paragraph("Chưa phát hiện mẫu hình giá đủ điều kiện trong cửa sổ dữ liệu hiện tại.", MUTED);
+        if (payload.technicalSentiment.candlestickPatterns.length) {
+          title("Mẫu hình nến gần đây");
+          payload.technicalSentiment.candlestickPatterns.slice(-6).forEach((item) => bullet(`${item.nameVi}: ${item.description}`));
+        } else paragraph("Chưa phát hiện mẫu hình nến nổi bật trong 30 phiên gần nhất.", MUTED);
+        paragraph(`Xác nhận cần theo dõi: ${payload.technicalSentiment.confirmation}`, MUTED);
+        paragraph(`Điều kiện làm suy yếu: ${payload.technicalSentiment.invalidation}`, MUTED);
+      }
+
     table(["Chỉ báo", "Giá trị tại thời điểm lập báo cáo", "Diễn giải"], [
       ["Xu hướng kỹ thuật", `${recommendationVi(payload.technical.recommendation)} · ${payload.technical.score}/100`, "Tín hiệu tổng hợp từ động lượng và xu hướng giá."],
       ["RSI(14)", money(payload.technical.rsi14), "Đo động lượng; cần tránh diễn giải đơn lẻ."],
