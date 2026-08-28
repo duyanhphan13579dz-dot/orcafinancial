@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "tcbs:oauth:refresh": "node scripts/refresh-tcbs-oauth.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0",
