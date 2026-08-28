@@ -1,4 +1,5 @@
 import { externalSourceAdapters, normalizeReportedRecord } from "@/lib/connectors/external-sources";
+import { fetchTcbsMcpFinancialStatements } from "@/lib/connectors/tcbs-mcp";
 
 export interface TcbsFinancialQuarter {
   period: string;
@@ -115,6 +116,9 @@ function normalizeQuarter(row: Json): TcbsFinancialQuarter | null {
 }
 
 export async function fetchTcbsFinancialStatements(symbol: string): Promise<TcbsFinancialImport> {
+  if ((process.env.TCBS_TRANSPORT ?? "rest").trim().toLowerCase() === "mcp") {
+    return fetchTcbsMcpFinancialStatements(symbol);
+  }
   const pathTemplate = process.env.TCBS_FINANCIALS_PATH?.trim();
   if (!pathTemplate) throw new Error("TCBS_FINANCIALS_PATH is required when TCBS financial import is enabled");
   const encoded = encodeURIComponent(symbol.trim().toUpperCase());
