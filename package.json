@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tcbs:oauth:refresh": "node scripts/refresh-tcbs-oauth.mjs"
+    "tcbs:oauth:refresh": "node scripts/refresh-tcbs-oauth.mjs",
+    "tcbs:crawl:financials": "node scripts/crawl-tcbs-financials.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0",
