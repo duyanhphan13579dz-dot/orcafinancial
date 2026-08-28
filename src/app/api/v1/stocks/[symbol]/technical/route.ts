@@ -2,7 +2,9 @@ import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { cached } from "@/lib/connectors/core";
 import { getHistory } from "@/lib/market";
+import { analyze } from "@/lib/analysis";
 import { detectCandlestickPatterns, detectChartPatterns } from "@/lib/technical-patterns";
+import { buildTechnicalSentiment } from "@/lib/stock-intelligence/technical-sentiment";
 
 export const dynamic = "force-dynamic";
 
@@ -26,10 +28,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
     // 20-60s depending on timeframe; cache the (heavier) pattern-detection
     // output on the same key/TTL so it isn't redone per viewer per poll.
     const ttl = tf === "D" ? 60_000 : 20_000;
-    const { candlestick, chart } = await cached(`technical:${symbol}:${tf}`, ttl, async () => ({
-      candlestick: detectCandlestickPatterns(bars),
-      chart: detectChartPatterns(bars),
-    }));
+    const { candlestick, chart, analysis, technicalSentiment } = await cached(`technical:${symbol}:${tf}`, ttl, async () => {
+      const analysis = analyze(symbol, bars);
+      const candlestick = detectCandlestickPatterns(bars);
+      const chart = detectChartPatterns(bars);
+      return { candlestick, chart, analysis, technicalSentiment: buildTechnicalSentiment(analysis, chart, candlestick) };
+    });
 
     // Only return patterns from the last 20 bars for candlestick, all for chart
     const recentCandlestick = candlestick.filter((p) => p.barIndex >= bars.length - 20);
@@ -38,6 +42,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
       {
         symbol,
         timeframe: tf,
+        analysis,
+        technicalSentiment,
         candlestickPatterns: recentCandlestick,
         chartPatterns: chart,
         totalCandlestickDetected: candlestick.length,
