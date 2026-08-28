@@ -13,6 +13,8 @@ import dynamic from "next/dynamic";
 import type { Bar } from "@/components/candle-chart";
 
 import type { HealthDetail } from "@/components/financial-health-detail";
+import { StockMicrostructurePanel } from "@/components/stock-microstructure-panel";
+import type { StockMicrostructureSnapshot } from "@/lib/connectors/tcbs-microstructure";
 
 import {
   SectionTitle,
@@ -624,6 +626,12 @@ export default function StockPage({
     usePoll<Analysis>(
       `/stocks/${symbol}/analysis`,
       60000,
+    );
+  const { data: microstructure } =
+    usePoll<StockMicrostructureSnapshot>(
+      tab === "Tổng quan" ? `/stocks/${symbol}/microstructure` : null,
+      10000,
+      { softTtlMs: 5000, hardTtlMs: 30000, timeoutMs: 7000 },
     );
 
   const {
@@ -1512,8 +1520,13 @@ export default function StockPage({
             </div>
 
             {/* RIGHT COLUMN */}
-
             <div className="space-y-4">
+              {microstructure && (
+                <StockMicrostructurePanel
+                  orderBook={microstructure.orderBook}
+                  foreignFlow={microstructure.foreignFlow}
+                />
+              )}
 
               {/* QUICK ANALYSIS */}
 
