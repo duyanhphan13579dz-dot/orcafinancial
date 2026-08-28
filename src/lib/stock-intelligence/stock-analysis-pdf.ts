@@ -10,6 +10,7 @@ import type { BacktestResult } from "@/lib/stock-intelligence/backtest-engine";
 import type { CrossModuleContext } from "@/lib/stock-intelligence/cross-module-engine";
 import type { BusinessIntelligence } from "@/lib/stock-intelligence/moat-engine";
 import type { InvestmentThesis } from "@/lib/stock-intelligence/investment-thesis";
+import type { CompanyReportLlmNarrative } from "@/lib/stock-intelligence/company-report-llm";
 import { generateValueChain } from "@/lib/value-chain";
 import type { Ohlcv } from "@/lib/connectors/core";
 import fs from "node:fs";
@@ -29,6 +30,7 @@ export interface StockAnalysisPdfPayload {
   crossModule?: CrossModuleContext;
   business?: BusinessIntelligence;
   thesis?: InvestmentThesis;
+  companyNarrative?: CompanyReportLlmNarrative;
   priceHistory?: Ohlcv[];
   source: string;
   dataConfidence: number;
@@ -206,6 +208,25 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     const valuationHeadline = payload.forecast.expectedValue != null && payload.forecast.valuationConfidence >= 0.6 ? `Giá trị kỳ vọng theo các kịch bản là ${money(payload.forecast.expectedValue)} nghìn VNĐ.` : "Định giá chưa đủ độ tin cậy để đưa ra giá trị kỳ vọng kết luận.";
     doc.font(regular).fontSize(9).fillColor("#172b3f").text(`Đánh giá tổng quan: cổ phiếu đang ở trạng thái ${recommendationVi(payload.technical.recommendation)}. ${valuationHeadline}`, 62, doc.y + 30, { width: 470, lineGap: 2.5 });
     doc.y += 104;
+    if (payload.companyNarrative) {
+      doc.addPage();
+      title("TÓM TẮT NGHIÊN CỨU THEO CHUẨN EQUITY RESEARCH");
+      paragraph(payload.companyNarrative.executiveSummary);
+      if (payload.companyNarrative.investmentThesis.length) {
+        title("Luận điểm đầu tư");
+        payload.companyNarrative.investmentThesis.forEach((item) => bullet(item));
+      }
+      title("Mô hình kinh doanh"); paragraph(payload.companyNarrative.businessModel);
+      title("Ngành và vị thế cạnh tranh"); paragraph(payload.companyNarrative.industryCompetitivePositioning);
+      title("Phân tích tài chính"); paragraph(payload.companyNarrative.financialAnalysis);
+      title("Dự phóng và giả định"); paragraph(payload.companyNarrative.forecastAndAssumptions);
+      title("Quan điểm định giá"); paragraph(payload.companyNarrative.valuationView);
+      if (payload.companyNarrative.catalysts.length) { title("Catalyst"); payload.companyNarrative.catalysts.forEach((item) => bullet(item)); }
+      if (payload.companyNarrative.risksAndInvalidation.length) { title("Rủi ro và điều kiện vô hiệu hóa"); payload.companyNarrative.risksAndInvalidation.forEach((item) => bullet(item, RED)); }
+      title("ESG và quản trị"); paragraph(payload.companyNarrative.esgAndGovernance);
+      title("Kết luận và khuyến nghị"); paragraph(`${payload.companyNarrative.conclusion} ${payload.companyNarrative.recommendation}`);
+      if (payload.companyNarrative.model) paragraph(`Narrative được tạo bởi ${payload.companyNarrative.provider ?? "LLM"}/${payload.companyNarrative.model}; các bảng số liệu định lượng bên dưới vẫn là nguồn hiển thị chính.`, MUTED);
+    }
     if (payload.thesis) {
       row("Điểm tích cực", payload.thesis.whyBuy.slice(0, 3).map((item) => item.title).join("; ") || "Chưa xác định");
       row("Rủi ro cần lưu ý", payload.thesis.whyNotBuy.slice(0, 3).map((item) => item.title).join("; ") || payload.risk.mainRisk);
