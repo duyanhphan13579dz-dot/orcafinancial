@@ -240,7 +240,6 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     if (payload.thesis) {
       row("Điểm tích cực", payload.thesis.whyBuy.slice(0, 3).map((item) => item.title).join("; ") || "Chưa xác định");
       row("Rủi ro cần lưu ý", payload.thesis.whyNotBuy.slice(0, 3).map((item) => item.title).join("; ") || payload.risk.mainRisk);
-      row("Biến số cần theo dõi", payload.thesis.monitoring.slice(0, 3).join("; ") || "Kết quả kinh doanh và dòng tiền");
     }
     doc.addPage();
     title("1. DOANH NGHIỆP VÀ MÔ HÌNH KINH DOANH");
@@ -365,7 +364,6 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     if (payload.crossModule?.causalChains.length) payload.crossModule.causalChains.slice(0, 2).forEach((chain) => bullet(reportCausalText(chain.title, chain.impact, chain.links)));
     row("Rủi ro tổng hợp", `${riskVi(payload.risk.level)} · ${payload.risk.overall}/100`);
     row("Rủi ro chính", payload.risk.mainRisk);
-    if (payload.thesis?.monitoring.length) payload.thesis.monitoring.slice(0, 3).forEach((item) => bullet(`Cần theo dõi: ${item}`));
     paragraph(`Chu kỳ hiện tại: ${payload.crossModule ? regimeVi(payload.crossModule.market.regimeLabel) : "chưa đủ dữ liệu"}. Đây là bối cảnh tham khảo, không thay thế phân tích mô hình lợi nhuận.`, MUTED);
 
     title("8. NHẬN ĐỊNH TỔNG QUAN");
@@ -373,13 +371,6 @@ export function renderStockAnalysisPdf(payload: StockAnalysisPdfPayload): Promis
     const valuationSentence = payload.forecast.expectedValue != null && payload.forecast.valuationConfidence >= 0.6 ? `Giá trị kỳ vọng theo các kịch bản là ${money(payload.forecast.expectedValue)} nghìn VNĐ.` : "Định giá chưa đủ độ tin cậy để đưa ra mức giá mục tiêu kết luận.";
     paragraph(`${payload.profile.name} đang được đánh giá theo hướng ${thesisStanceVi(payload.thesis?.stance ?? "insufficient_data")}. Giá hiện tại là ${money(currentPrice)} nghìn VNĐ và trạng thái kỹ thuật là ${recommendation}. ${valuationSentence}`);
     paragraph(`Luận điểm tích cực phụ thuộc vào khả năng duy trì tăng trưởng hoạt động, cải thiện chất lượng lợi nhuận và chuyển hóa thành dòng tiền. Ngược lại, quan điểm cần được hạ xuống nếu lợi nhuận suy yếu qua nhiều kỳ, đòn bẩy hoặc rủi ro tăng lên, hoặc vùng hỗ trợ kỹ thuật bị phá vỡ với thanh khoản bất thường.`);
-    if (payload.thesis?.monitoring.length) {
-      title("Ba đến năm biến số cần theo dõi");
-      payload.thesis.monitoring.slice(0, 5).forEach((item) => bullet(item));
-    }
-    doc.roundedRect(48, doc.y + 8, 499, 66, 4).fillAndStroke("#f2f7fb", LINE);
-    doc.font(bold).fontSize(10).fillColor(BLUE).text(`NHẬN ĐỊNH MỘT DÒNG: ${payload.symbol} — ${thesisStanceVi(payload.thesis?.stance ?? "insufficient_data")}; chỉ nên nâng đánh giá khi kết quả kinh doanh, dòng tiền và các catalyst được xác nhận bằng dữ liệu mới.`, 60, doc.y + 20, { width: 475, lineGap: 2 });
-    doc.y += 72;
     doc.moveDown(0.8);
     doc.font(regular).fontSize(8).fillColor(MUTED).text("Báo cáo phục vụ mục đích nghiên cứu; không phải khuyến nghị đầu tư cá nhân.");
     const range = doc.bufferedPageRange();

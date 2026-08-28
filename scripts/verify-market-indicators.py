@@ -1,7 +1,7 @@
 import json, math
 from pathlib import Path
 
-p = Path('artifacts/vnm-real-market-audit.json')
+p = Path(__import__('sys').argv[1]) if len(__import__('sys').argv) > 1 else Path('artifacts/vnm-real-market-audit.json')
 data = json.loads(p.read_text())
 closes = [float(x['close']) for x in data['bars']]
 volumes = [float(x['volume']) for x in data['bars']]
@@ -47,5 +47,6 @@ for key in ['upper', 'middle', 'lower']:
 for key in ['macd', 'signal', 'histogram']:
     checks[f'macd.{key}'] = {'expected': expected['macd'][key], 'independent': independent['macd'][key], 'match': close(expected['macd'][key], independent['macd'][key])}
 result = {'symbol': data['symbol'], 'source': data['source'], 'retrievedAt': data['retrievedAt'], 'barsAnalyzed': data['barsAnalyzed'], 'allMatch': all(x['match'] for x in checks.values()), 'checks': checks}
-Path('artifacts/vnm-indicator-verification.json').write_text(json.dumps(result, indent=2))
+out = p.with_name(p.stem.replace('-real-market-audit', '-indicator-verification') + '.json')
+out.write_text(json.dumps(result, indent=2))
 print(json.dumps(result, indent=2))
