@@ -5,6 +5,7 @@ import Link from "next/link";
 import { api, fmtNum, fmtPct, fmtVol, timeAgo, usePoll } from "@/lib/client";
 import type { MarketIndex, MarketQuote, MarketNewsItem, MarketSnapshot } from "@/types/market";
 import { OvernightMarkets } from "@/components/market/OvernightMarkets";
+import { IndexDetailModal } from "@/components/index-detail-modal";
 
 const QUICK_LINKS = [
   { href: "/heatmap", label: "Bản đồ nhiệt", desc: "Bản đồ sức mạnh & dòng tiền" },
@@ -57,10 +58,11 @@ function SectionHeader({ eyebrow, title, action }: { eyebrow?: string; title: st
   );
 }
 
-function IndexCard({ index, primary }: { index: MarketIndex; primary?: boolean }) {
+function IndexCard({ index, primary, onClick }: { index: MarketIndex; primary?: boolean; onClick?: () => void }) {
   return (
-    <div
-      className={`relative overflow-hidden rounded-xl border p-3.5 transition-all duration-200 hover:border-cyan-400/40 hover:shadow-lg ${
+    <button
+      onClick={onClick}
+      className={`group relative text-left w-full overflow-hidden rounded-xl border p-3.5 transition-all duration-200 hover:scale-[1.02] hover:border-cyan-400/60 hover:shadow-xl ${
         primary
           ? "border-cyan-400/50 bg-gradient-to-br from-[#0c2a47] via-[#0a2340] to-[#071830] shadow-[0_0_25px_rgba(0,212,255,0.12)]"
           : "border-[#1c375c]/70 bg-[#091f38]/80 hover:bg-[#0c2645]"
@@ -90,9 +92,9 @@ function IndexCard({ index, primary }: { index: MarketIndex; primary?: boolean }
 
       <div className="mt-3 flex items-center justify-between border-t border-white/5 pt-2 font-mono text-[10px] text-slate-400">
         <span>{index.exchange}</span>
-        <span>KLGD: <strong className="text-slate-300">{fmtVol(index.volume)}</strong></span>
+        <span className="text-cyan-400 opacity-90 group-hover:underline">Chi tiết chỉ số →</span>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -449,6 +451,7 @@ export function DashboardHome() {
   });
   const watchlist = usePoll<{ items: Array<{ symbol: string; quote: MarketQuote | null }> }>("/watchlist", 60000);
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedIndexCode, setSelectedIndexCode] = useState<string | null>(null);
   const watchedSymbols = new Set((watchlist.data?.items ?? []).map((item) => item.symbol));
 
   const toggleWatch = async (symbol: string) => {
@@ -531,11 +534,16 @@ export function DashboardHome() {
             <SectionHeader
               eyebrow="CHỈ SỐ CHÍNH"
               title="Chỉ số thị trường Việt Nam"
-              action={<span className="font-mono text-[10px] text-slate-400">VN-Index · VN30 · VN100 · HNX · UPCOM</span>}
+              action={<span className="font-mono text-[10px] text-slate-400">Click chỉ số để xem chi tiết sổ lệnh & dòng tiền</span>}
             />
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
               {snapshot.indices.map((index) => (
-                <IndexCard key={index.code} index={index} primary={index.code === "VNINDEX"} />
+                <IndexCard
+                  key={index.code}
+                  index={index}
+                  primary={index.code === "VNINDEX"}
+                  onClick={() => setSelectedIndexCode(index.code)}
+                />
               ))}
             </div>
           </section>
@@ -596,6 +604,11 @@ export function DashboardHome() {
 
       {/* News Timeline */}
       <NewsTimeline items={snapshot?.news ?? []} />
+
+      {/* Index Microstructure Detail Modal */}
+      {selectedIndexCode && (
+        <IndexDetailModal code={selectedIndexCode} onClose={() => setSelectedIndexCode(null)} />
+      )}
 
       {/* Stock Quick View Drawer */}
       {snapshot && selected && (
