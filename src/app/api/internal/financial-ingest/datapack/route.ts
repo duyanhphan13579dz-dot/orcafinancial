@@ -15,8 +15,8 @@ export async function POST(request: NextRequest) {
   if (!authorized(request)) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const body = await request.json().catch(() => null) as { documents?: SourceDocument[] } | null;
   const documents = body?.documents ?? [];
-  if (!documents.length || documents.some((document) => document.source !== "tcbs" || document.documentType !== "financial_statement" || !document.documentUrl || !document.sourceContent || !Array.isArray(document.facts))) {
-    return NextResponse.json({ ok: false, error: "Only complete TCBS financial-statement documents with source content and facts are accepted." }, { status: 400 });
+  if (!documents.length || documents.some((document) => !["vndirect", "vietstock", "cafef"].includes(document.source) || document.documentType !== "financial_statement" || !document.documentUrl || !document.sourceContent || !Array.isArray(document.facts))) {
+    return NextResponse.json({ ok: false, error: "Only complete financial-statement documents with source content and facts from authorized providers are accepted." }, { status: 400 });
   }
   const result = await ingestSourceDocuments(documents);
   return NextResponse.json(result, { status: result.ok ? 200 : 409 });

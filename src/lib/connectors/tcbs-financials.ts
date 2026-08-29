@@ -1,5 +1,4 @@
 import { externalSourceAdapters, normalizeReportedRecord } from "@/lib/connectors/external-sources";
-import { fetchTcbsMcpFinancialStatements } from "@/lib/connectors/tcbs-mcp";
 
 export interface TcbsFinancialQuarter {
   period: string;
@@ -10,6 +9,8 @@ export interface TcbsFinancialQuarter {
   cashflow: Record<string, number>;
 }
 
+export type VndirectFinancialQuarter = TcbsFinancialQuarter;
+
 export interface TcbsFinancialImport {
   symbol: string;
   source: "reported-api";
@@ -17,6 +18,8 @@ export interface TcbsFinancialImport {
   reportedAt: string;
   quarters: TcbsFinancialQuarter[];
 }
+
+export type VndirectFinancialImport = TcbsFinancialImport;
 
 type Json = Record<string, unknown>;
 
@@ -115,23 +118,20 @@ function normalizeQuarter(row: Json): TcbsFinancialQuarter | null {
   };
 }
 
-export async function fetchTcbsFinancialStatements(symbol: string): Promise<TcbsFinancialImport> {
-  if ((process.env.TCBS_TRANSPORT ?? "rest").trim().toLowerCase() === "mcp") {
-    return fetchTcbsMcpFinancialStatements(symbol);
-  }
-  const pathTemplate = process.env.TCBS_FINANCIALS_PATH?.trim();
-  if (!pathTemplate) throw new Error("TCBS_FINANCIALS_PATH is required when TCBS financial import is enabled");
+export async function fetchVndirectFinancialStatements(symbol: string): Promise<VndirectFinancialImport> {
+  const pathTemplate = process.env.VNDIRECT_FINANCIALS_PATH?.trim() || "v4/financial_statements?q=code:{symbol}~reportType:QUARTER";
   const encoded = encodeURIComponent(symbol.trim().toUpperCase());
   const path = pathTemplate.includes("{symbol}")
     ? pathTemplate.replaceAll("{symbol}", encoded)
     : `${pathTemplate}${pathTemplate.includes("?") ? "&" : "?"}symbol=${encoded}`;
-  const payload = await externalSourceAdapters.tcbs.fetchJson<unknown>(path);
-  const quarters = rowsFromPayload(payload).map(normalizeQuarter).filter((row): row is TcbsFinancialQuarter => Boolean(row));
-  if (!quarters.length) throw new Error(`TCBS returned no valid financial quarters for ${symbol}`);
-  const sourceUrl = `${process.env.TCBS_API_URL!.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+  const payload = await externalSourceAdapters.vndirect.fetchJson<unknown>(path);
+  const quarters = rowsFromPayload(payload).map(normalizeQuarter).filter((row): row is VndirectFinancialQuarter => Boolean(row));
+  if (!quarters.length) throw new Error(`VNDirect returned no valid financial quarters for ${symbol}`);
+  const baseUrl = process.env.VNDIRECT_API_URL?.trim() || "https://finfo-api.vndirect.com.vn";
+  const sourceUrl = `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
   const observedAt = new Date().toISOString();
   const normalized = normalizeReportedRecord({
-    source: "tcbs",
+    source: "vndirect",
     sourceUrl,
     symbol,
     observedAt,
@@ -139,4 +139,8 @@ export async function fetchTcbsFinancialStatements(symbol: string): Promise<Tcbs
     data: { quarterCount: quarters.length },
   });
   return { symbol: normalized.symbol, source: "reported-api", sourceUrl, reportedAt: observedAt, quarters };
+}
+
+export async function fetchTcbsFinancialStatements(symbol: string): Promise<TcbsFinancialImport> {
+  return fetchVndirectFinancialStatements(symbol);
 }

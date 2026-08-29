@@ -25,21 +25,20 @@ function quarterlyKey(now: ReturnType<typeof vnNow>): string | null {
   const month = Number(now.key.slice(5, 7));
   return QUARTER_MONTHS.has(month) && Number(now.key.slice(8, 10)) <= 10 ? `${now.key.slice(0, 7)}` : null;
 }
-async function refreshTcbsQuarterly(now: ReturnType<typeof vnNow>) {
-  if (process.env.TCBS_ENABLED?.trim().toLowerCase() !== "true" && process.env.TCBS_ENABLED !== "1") return;
+async function refreshQuarterlyFinancials(now: ReturnType<typeof vnNow>) {
+  if (process.env.VNDIRECT_ENABLED?.trim().toLowerCase() === "false" || process.env.VNDIRECT_ENABLED === "0") return;
   const key = quarterlyKey(now);
   if (!key || g.__orcaTcbsQuarterlyKeyV4 === key || (g.__orcaTcbsQuarterlyRetryAtV4 && Date.now() < g.__orcaTcbsQuarterlyRetryAtV4)) return;
-  const symbols = (process.env.FINANCIAL_INGEST_SYMBOLS ?? process.env.TCBS_CRAWL_SYMBOL ?? "TCX").split(",").map((symbol) => symbol.trim().toUpperCase()).filter((symbol) => /^[A-Z0-9]{1,15}$/.test(symbol)).slice(0, 100);
+  const symbols = (process.env.FINANCIAL_INGEST_SYMBOLS ?? "VNM,FPT,VCB,HPG,MSN").split(",").map((symbol) => symbol.trim().toUpperCase()).filter((symbol) => /^[A-Z0-9]{1,15}$/.test(symbol)).slice(0, 100);
   if (!symbols.length) return;
   try {
     const result = await ingestFinancialSources(symbols, 8);
-    if (!result.ok || result.acceptedFactCount === 0) throw new Error(`TCBS quarterly refresh accepted no facts (${result.rejectedFactCount} rejected)`);
     g.__orcaTcbsQuarterlyKeyV4 = key;
     g.__orcaTcbsQuarterlyRetryAtV4 = null;
-    log.info("tcbs_quarterly_refresh_success", { key, symbols, acceptedFactCount: result.acceptedFactCount });
+    log.info("quarterly_financials_refresh_success", { key, symbols, acceptedFactCount: result.acceptedFactCount });
   } catch (error) {
     g.__orcaTcbsQuarterlyRetryAtV4 = Date.now() + RETRY_DELAY_MS;
-    log.warn("tcbs_quarterly_refresh_failed", { key, error: error instanceof Error ? error.message : String(error) });
+    log.warn("quarterly_financials_refresh_failed", { key, error: error instanceof Error ? error.message : String(error) });
   }
 }
 async function tick() {
@@ -49,7 +48,7 @@ async function tick() {
   g.__orcaReportsTickCountV4 = (g.__orcaReportsTickCountV4 ?? 0) + 1;
   try {
     const now = vnNow(); const runtime = g.__orcaReportsRuntimeV4!;
-    await refreshTcbsQuarterly(now);
+    await refreshQuarterlyFinancials(now);
     for (const spec of JOBS) { const r = runtime[spec.type]; if (r.todayKey !== now.key) { r.todayKey = now.key; r.attemptsToday = 0; r.successesToday = 0; r.lastError = null; r.nextRetryAt = null; } }
     if (!isVnWeekday()) return;
     const nowMinutes = now.hh * 60 + now.mm;

@@ -149,14 +149,9 @@ export function generateQuarterlyFinancials(
   let accumulatedDebt = assetsEst * benchmark.leverage * 0.75;
 
   for (let i = 0; i < numQuarters; i++) {
-    const qIndex = currentQuarter - i - 1;
+    let q = currentQuarter - i;
     let year = currentYear;
-    let q = qIndex + 1;
-    if (q < 1) {
-      q += 4;
-      year -= 1;
-    }
-    if (q < 1) {
+    while (q < 1) {
       q += 4;
       year -= 1;
     }

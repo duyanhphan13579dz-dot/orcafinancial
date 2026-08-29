@@ -88,7 +88,8 @@ export async function ensureQuarterlyFinancials(symbol: string, numQuarters = 4)
         if (a.fiscalYear !== b.fiscalYear) return b.fiscalYear - a.fiscalYear;
         return b.quarter - a.quarter;
       });
-    if (quarters.length >= numQuarters && quarters.every((q) => q.income && q.balance && q.cashflow)) {
+    const isUpToDate = quarters.length > 0 && quarters[0].fiscalYear === latestCompleted.fiscalYear && quarters[0].quarter === latestCompleted.quarter;
+    if (isUpToDate && quarters.length >= numQuarters && quarters.every((q) => q.income && q.balance && q.cashflow)) {
       return quarters.slice(0, numQuarters);
     }
   }

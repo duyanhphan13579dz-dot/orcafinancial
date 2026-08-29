@@ -7,7 +7,7 @@ import { getLatestCompletedQuarter } from "@/lib/financial-statements";
 import { fetchTcbsFinancialStatements } from "@/lib/connectors/tcbs-financials";
 import { isFuturePeriod } from "@/lib/realtime-time";
 
-export type IngestionSource = "tcbs" | "vietstock" | "cafef";
+export type IngestionSource = "vndirect" | "vietstock" | "cafef";
 export type StatementType = "income" | "balance" | "cashflow";
 export type DocumentType = "financial_statement" | "analysis_report";
 
@@ -58,13 +58,13 @@ export interface IngestionResult {
 }
 
 function endpointFor(source: IngestionSource): string | null {
-  if (source === "tcbs") return null;
+  if (source === "vndirect") return process.env.VNDIRECT_FINANCIAL_URL?.trim() || "https://finfo-api.vndirect.com.vn/v4/financial_statements";
   const raw = source === "vietstock" ? process.env.VIETSTOCK_DATAFEED_URL : process.env.CAFEF_DATA_URL;
   return raw?.trim() || null;
 }
 
 function tokenFor(source: IngestionSource): string | null {
-  if (source === "tcbs") return process.env.TCBS_API_KEY?.trim() || null;
+  if (source === "vndirect") return process.env.VNDIRECT_API_KEY?.trim() || null;
   const raw = source === "vietstock" ? process.env.VIETSTOCK_DATAFEED_TOKEN : process.env.CAFEF_DATA_TOKEN;
   return raw?.trim() || null;
 }
@@ -132,41 +132,27 @@ function sourceDocuments(payload: unknown, source: IngestionSource, symbol: stri
   });
 }
 
-class TcbsFinancialAdapter implements SourceAdapter {
-  source = "tcbs" as const;
+class VndirectFinancialAdapter implements SourceAdapter {
+  source = "vndirect" as const;
 
   async fetch(symbol: string, limit: number): Promise<{ documents: SourceDocument[]; warnings: string[] }> {
-    if (process.env.TCBS_ENABLED?.trim().toLowerCase() !== "true" && process.env.TCBS_ENABLED !== "1") {
-      return { documents: [], warnings: ["tcbs: adapter đang disabled."] };
+    const endpoint = endpointFor("vndirect");
+    if (!endpoint) return { documents: [], warnings: ["vndirect: endpoint chưa được cấu hình."] };
+    try {
+      const url = new URL(endpoint);
+      url.searchParams.set("q", `code:${symbol}~reportType:QUARTER`);
+      url.searchParams.set("size", String(Math.min(20, Math.max(1, limit * 4))));
+      url.searchParams.set("sort", "fiscalDate:desc");
+      const headers: Record<string, string> = { accept: "application/json", "user-agent": "Mozilla/5.0" };
+      const token = tokenFor("vndirect");
+      if (token) headers.authorization = `Bearer ${token}`;
+      const response = await fetch(url.toString(), { headers, cache: "no-store" });
+      if (!response.ok) return { documents: [], warnings: [`vndirect: HTTP ${response.status}`] };
+      const payload: unknown = await response.json();
+      return { documents: sourceDocuments(payload, "vndirect", symbol), warnings: [] };
+    } catch (err) {
+      return { documents: [], warnings: [`vndirect: ${err instanceof Error ? err.message : String(err)}`] };
     }
-    const result = await fetchTcbsFinancialStatements(symbol);
-    const documents = result.quarters.slice(0, limit).map((quarter) => ({
-      source: "tcbs" as const,
-      symbol: result.symbol,
-      documentType: "financial_statement" as const,
-      documentUrl: result.sourceUrl,
-      reportType: "quarterly_financial_statements",
-      period: quarter.period,
-      fiscalYear: quarter.fiscalYear,
-      contentType: "application/json",
-      payload: quarter,
-      sourceContent: JSON.stringify(quarter),
-      facts: ([
-        ["income", quarter.income],
-        ["balance", quarter.balance],
-        ["cashflow", quarter.cashflow],
-      ] as const).map(([statementType, data]) => ({
-        statementType,
-        period: quarter.period,
-        fiscalYear: quarter.fiscalYear,
-        reportScope: "consolidated" as const,
-        currency: "VND",
-        unit: "as_reported",
-        data,
-        evidence: Object.fromEntries(Object.entries(data).map(([key, value]) => [key, { sourceValue: value, normalizedValue: value }])),
-      })),
-    }));
-    return { documents, warnings: [] };
   }
 }
 
@@ -270,13 +256,13 @@ export async function ingestSourceDocuments(documents: SourceDocument[]): Promis
       acceptedFactCount += 1;
     }
   }
-  return { ok: rejected.length === 0, checkedAt: new Date().toISOString(), symbols: [...new Set(documents.map((document) => document.symbol))], sources: ["tcbs"], documentCount: documents.length, normalizedFactCount, acceptedFactCount, rejectedFactCount: rejected.length, warnings, rejected };
+  return { ok: rejected.length === 0, checkedAt: new Date().toISOString(), symbols: [...new Set(documents.map((document) => document.symbol))], sources: ["vndirect"], documentCount: documents.length, normalizedFactCount, acceptedFactCount, rejectedFactCount: rejected.length, warnings, rejected };
 }
 
 export async function ingestFinancialSources(symbols: string[], limit = 8): Promise<IngestionResult> {
   await ensureFinancialIngestionTables();
   const normalizedSymbols = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter((s) => /^[A-Z0-9]{1,15}$/.test(s)))].slice(0, 100);
-  const adapters: SourceAdapter[] = [new TcbsFinancialAdapter(), new ConfiguredJsonAdapter("vietstock"), new ConfiguredJsonAdapter("cafef")];
+  const adapters: SourceAdapter[] = [new VndirectFinancialAdapter(), new ConfiguredJsonAdapter("vietstock"), new ConfiguredJsonAdapter("cafef")];
   const warnings: string[] = [];
   const rejected: IngestionResult["rejected"] = [];
   let documentCount = 0;
@@ -357,20 +343,22 @@ export async function loadPreferredQuarterlyFinancials(symbol: string, limit = 4
     grouped.set(key, current);
   }
   const complete = [...grouped.values()].filter((item): item is import("@/lib/financial-statements").FinancialQuarter & { sources: string[] } => Boolean(item.income && item.balance && item.cashflow && item.fiscalYear && item.quarter)).sort((a, b) => b.fiscalYear - a.fiscalYear || b.quarter - a.quarter).slice(0, limit);
-  if (complete.length >= Math.min(2, limit)) {
+  const expectedLatest = getLatestCompletedQuarter();
+  const isUpToDate = complete.length > 0 && complete[0].fiscalYear === expectedLatest.fiscalYear && complete[0].quarter === expectedLatest.quarter;
+  if (isUpToDate && complete.length >= Math.min(2, limit)) {
     return { quarters: complete, source: [...new Set(complete.flatMap((item) => item.sources))].join(","), providerBacked: true, warnings: [] };
   }
   const fallback = await import("@/lib/company-service").then((module) => module.ensureQuarterlyFinancials(symbol, limit));
-  return { quarters: fallback, source: "synthetic-fallback", providerBacked: false, warnings: ["Chưa có đủ normalized facts từ Vietstock/CafeF; đang dùng fallback degraded."] };
+  return { quarters: fallback, source: "synthetic-fallback", providerBacked: false, warnings: ["Chưa có đủ normalized facts từ VNDirect/Vietstock/CafeF; đang dùng fallback degraded."] };
 }
 
-export async function loadPreferredFinancialRecords(symbol: string, statementType: StatementType, limit = 8): Promise<{ records: import("@/lib/stock-intelligence/financial-source").RawFinancialRecord[]; source: "tcbs" | "vietstock" | "cafef" | "synthetic"; providerBacked: boolean }> {
+export async function loadPreferredFinancialRecords(symbol: string, statementType: StatementType, limit = 8): Promise<{ records: import("@/lib/stock-intelligence/financial-source").RawFinancialRecord[]; source: "vndirect" | "vietstock" | "cafef" | "synthetic"; providerBacked: boolean }> {
   await ensureFinancialIngestionTables();
   const rows = await db.select().from(financialNormalizedFacts).where(eq(financialNormalizedFacts.symbol, symbol)).orderBy(desc(financialNormalizedFacts.fiscalYear), desc(financialNormalizedFacts.period), desc(financialNormalizedFacts.normalizedAt)).limit(Math.min(60, Math.max(3, limit * 3)));
   const accepted = rows.filter((row) => row.statementType === statementType && row.qualityStatus === "accepted" && row.verificationStatus === "verified");
   const records = accepted.slice(0, limit).map((row) => ({ period: row.period, fiscalYear: row.fiscalYear, reportedCurrency: row.currency, data: row.data as Record<string, unknown>, source: row.source, retrievedAt: row.normalizedAt.toISOString(), filingDate: row.filingDate ?? undefined, unit: row.unit }));
   if (records.length) {
-    const source = records[0].source === "tcbs" ? "tcbs" : records[0].source === "cafef" ? "cafef" : "vietstock";
+    const source = records[0].source === "vndirect" ? "vndirect" : records[0].source === "cafef" ? "cafef" : "vietstock";
     return { records, source, providerBacked: true };
   }
   return { records: [], source: "synthetic", providerBacked: false };

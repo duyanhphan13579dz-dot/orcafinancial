@@ -72,4 +72,25 @@ describe("Realtime Time Engine", () => {
     const filtered = filterRealtimeDataUpToCutoff(data, (item) => item.timestamp, cutoff);
     expect(filtered.map((item) => item.id)).toEqual([1, 2, 3]);
   });
+
+  it("ensures quarterly financial generation starts at exact latest completed quarter (Q2/2026 as of Aug 30, 2026)", async () => {
+    const { generateQuarterlyFinancials } = await import("@/lib/financial-statements");
+    const fakeBars = Array.from({ length: 100 }, (_, i) => ({
+      time: 1700000000 + i * 86400,
+      open: 50,
+      high: 52,
+      low: 49,
+      close: 51,
+      volume: 1000000,
+    }));
+
+    const quarters = generateQuarterlyFinancials("VNM", fakeBars, 4);
+    expect(quarters.length).toBe(4);
+    expect(quarters[0].period).toBe("Q2/2026");
+    expect(quarters[0].fiscalYear).toBe(2026);
+    expect(quarters[0].quarter).toBe(2);
+    expect(quarters[1].period).toBe("Q1/2026");
+    expect(quarters[2].period).toBe("Q4/2025");
+    expect(quarters[3].period).toBe("Q3/2025");
+  });
 });
