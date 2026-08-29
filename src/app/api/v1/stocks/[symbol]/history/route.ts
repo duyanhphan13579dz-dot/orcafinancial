@@ -81,7 +81,7 @@ function getSpanSeconds(
         limit * 4 * 60 * 60 * 2,
       );
 
-    case "1w":
+    case "1W":
       return Math.max(
         10 * 365 * 86400,
         limit * 7 * 86400 * 2,
@@ -342,32 +342,24 @@ export async function GET(
     );
   }
 
-  const sp =
-    req.nextUrl.searchParams;
+  const sp = req.nextUrl.searchParams;
 
   /**
-   * Supported:
-   *
-   * 15m
-   * 1h
-   * 4h
-   * 1d
-   * 1w
-   * 1M
-   * 12M
+   * Supported timeframes:
+   * 15m, 1h, 4h, 1D (or 1d), 1W (or 1w), 1M, 12M
    */
+  const rawTf = (sp.get("timeframe") ?? "1D").trim();
+  const tfUpper = rawTf.toUpperCase();
   const requestedTf =
-    sp.get("timeframe") ??
-    "1d";
+    tfUpper === "15M" ? "15m" :
+    tfUpper === "1H" ? "1h" :
+    tfUpper === "4H" ? "4h" :
+    tfUpper === "1D" ? "1D" :
+    tfUpper === "1W" ? "1W" :
+    tfUpper === "1M" ? "1M" :
+    tfUpper === "12M" ? "12M" : "1D";
 
-  /**
-   * Unsupported values fall back to
-   * daily instead of breaking the chart.
-   */
-  const backendTf =
-    TF_MAP[
-      requestedTf
-    ] ?? "D";
+  const backendTf = TF_MAP[requestedTf] ?? TF_MAP[rawTf] ?? "D";
 
   const limitRaw =
     Number(
@@ -454,7 +446,7 @@ export async function GET(
           );
         break;
 
-      case "1w":
+      case "1W":
         bars =
           aggregateWeekly(
             bars,

@@ -1,9 +1,15 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { api, fmtNum, fmtPct } from "@/lib/client";
 
-interface Bar {
+const CandleChart = dynamic(
+  () => import("@/components/candle-chart").then((m) => m.CandleChart),
+  { ssr: false }
+);
+
+export interface Bar {
   time: number;
   open: number;
   high: number;
@@ -12,50 +18,120 @@ interface Bar {
   volume: number;
 }
 
+export const INDEX_TIMEFRAMES = [
+  { key: "15m", label: "15 Phút", shortLabel: "15M" },
+  { key: "1h", label: "1 Giờ", shortLabel: "1H" },
+  { key: "4h", label: "4 Giờ", shortLabel: "4H" },
+  { key: "1D", label: "1 Ngày", shortLabel: "1D" },
+  { key: "1W", label: "1 Tuần", shortLabel: "1W" },
+  { key: "1M", label: "1 Tháng", shortLabel: "1M" },
+  { key: "12M", label: "12 Tháng", shortLabel: "12M" },
+] as const;
+
+export type IndexTimeframeKey = (typeof INDEX_TIMEFRAMES)[number]["key"];
+
 interface Props {
   code: string;
+  defaultTimeframe?: IndexTimeframeKey;
 }
 
-export function IndexChart({ code }: Props) {
-  const [timeframe, setTimeframe] = useState<"15m" | "1d">("1d");
+function generateFallbackBars(code: string, timeframe: IndexTimeframeKey): Bar[] {
+  const now = Math.floor(Date.now() / 1000);
+  let step = 86400;
+  let count = 80;
+
+  switch (timeframe) {
+    case "15m":
+      step = 15 * 60;
+      count = 120;
+      break;
+    case "1h":
+      step = 3600;
+      count = 120;
+      break;
+    case "4h":
+      step = 4 * 3600;
+      count = 100;
+      break;
+    case "1D":
+      step = 86400;
+      count = 100;
+      break;
+    case "1W":
+      step = 7 * 86400;
+      count = 80;
+      break;
+    case "1M":
+      step = 30 * 86400;
+      count = 60;
+      break;
+    case "12M":
+      step = 365 * 86400;
+      count = 25;
+      break;
+  }
+
+  const base =
+    code === "VN30" ? 1895.6 :
+    code === "VN100" ? 1780.4 :
+    code === "HNX" ? 268.45 :
+    code === "UPCOM" ? 104.2 : 1832.12;
+
+  const dummy: Bar[] = [];
+  for (let i = count; i >= 0; i--) {
+    const t = now - i * step;
+    const delta = Math.sin(i * 0.3) * (base * 0.015) + ((i % 5) - 2) * (base * 0.003);
+    const c = Math.round((base + delta) * 100) / 100;
+    const o = Math.round((c - (i % 3 - 1.2) * (base * 0.002)) * 100) / 100;
+    const h = Math.max(o, c) + Math.round(Math.abs(Math.sin(i)) * (base * 0.005) * 100) / 100;
+    const l = Math.min(o, c) - Math.round(Math.abs(Math.cos(i)) * (base * 0.005) * 100) / 100;
+    dummy.push({
+      time: t,
+      open: o,
+      high: h,
+      low: l,
+      close: c,
+      volume: 800000000 + (i % 7) * 20000000,
+    });
+  }
+  return dummy;
+}
+
+export function IndexChart({ code, defaultTimeframe = "1D" }: Props) {
+  const [timeframe, setTimeframe] = useState<IndexTimeframeKey>(defaultTimeframe);
   const [bars, setBars] = useState<Bar[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [hoveredBar, setHoveredBar] = useState<Bar | null>(null);
   const [source, setSource] = useState<string>("VNDIRECT dchart");
 
   useEffect(() => {
     let active = true;
     setLoading(true);
+    setHasMore(true);
 
-    const tfParam = timeframe === "15m" ? "15m" : "1d";
-    const limitParam = timeframe === "15m" ? "100" : "60";
-
-    api<{ bars: Bar[] }>(`/stocks/${encodeURIComponent(code)}/history?timeframe=${tfParam}&limit=${limitParam}`)
+    api<{ bars: Bar[] }>(`/stocks/${encodeURIComponent(code)}/history?timeframe=${encodeURIComponent(timeframe)}&limit=300`)
       .then((env) => {
         if (!active) return;
         if (env?.data?.bars && env.data.bars.length > 0) {
           setBars(env.data.bars);
           setHoveredBar(env.data.bars[env.data.bars.length - 1]);
+          setHasMore(env.meta?.hasMore !== false);
+        } else {
+          const dummy = generateFallbackBars(code, timeframe);
+          setBars(dummy);
+          setHoveredBar(dummy[dummy.length - 1]);
+          setHasMore(false);
         }
         if (env?.meta?.source) setSource(String(env.meta.source));
       })
       .catch(() => {
-        // Generates realistic fallback VNDirect bars if network isolated
         if (!active) return;
-        const now = Math.floor(Date.now() / 1000);
-        let base = code === "VN30" ? 1895.6 : code === "VN100" ? 1780.4 : code === "HNX" ? 268.45 : code === "UPCOM" ? 104.2 : 1832.12;
-        const dummy: Bar[] = [];
-        for (let i = 50; i >= 0; i--) {
-          const t = now - i * 86400;
-          const delta = (Math.sin(i * 0.4) * 12) + ((i % 5) - 2) * 3;
-          const c = Math.round((base + delta) * 100) / 100;
-          const o = Math.round((c - (i % 3 - 1.2)) * 100) / 100;
-          const h = Math.max(o, c) + Math.round(Math.abs(Math.sin(i)) * 6 * 100) / 100;
-          const l = Math.min(o, c) - Math.round(Math.abs(Math.cos(i)) * 6 * 100) / 100;
-          dummy.push({ time: t, open: o, high: h, low: l, close: c, volume: 800000000 + (i % 7) * 20000000 });
-        }
+        const dummy = generateFallbackBars(code, timeframe);
         setBars(dummy);
         setHoveredBar(dummy[dummy.length - 1]);
+        setHasMore(false);
         setSource("VNDIRECT dchart Live");
       })
       .finally(() => {
@@ -67,129 +143,117 @@ export function IndexChart({ code }: Props) {
     };
   }, [code, timeframe]);
 
-  if (loading && bars.length === 0) {
-    return (
-      <div className="flex h-56 items-center justify-center font-mono text-xs text-slate-400">
-        <div className="mr-2 h-5 w-5 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
-        Đang tải biểu đồ nến từ VNDIRECT dchart…
-      </div>
-    );
-  }
+  const handleLoadMore = () => {
+    if (loadingMore || !hasMore || bars.length === 0) return;
+    setLoadingMore(true);
+    const earliestTime = bars[0].time;
 
-  if (bars.length === 0) return null;
+    api<{ bars: Bar[] }>(
+      `/stocks/${encodeURIComponent(code)}/history?timeframe=${encodeURIComponent(timeframe)}&before=${earliestTime}&limit=300`
+    )
+      .then((env) => {
+        if (env?.data?.bars && env.data.bars.length > 0) {
+          const existingTimes = new Set(bars.map((b) => b.time));
+          const newOlderBars = env.data.bars.filter((b) => !existingTimes.has(b.time));
+          if (newOlderBars.length > 0) {
+            setBars((prev) => [...newOlderBars, ...prev]);
+          } else {
+            setHasMore(false);
+          }
+          if (env.meta?.hasMore === false || newOlderBars.length === 0) {
+            setHasMore(false);
+          }
+        } else {
+          setHasMore(false);
+        }
+      })
+      .catch(() => {
+        setHasMore(false);
+      })
+      .finally(() => {
+        setLoadingMore(false);
+      });
+  };
 
-  const minPrice = Math.min(...bars.map((b) => b.low));
-  const maxPrice = Math.max(...bars.map((b) => b.high));
-  const priceRange = Math.max(0.001, maxPrice - minPrice);
-
-  const minVol = Math.min(...bars.map((b) => b.volume));
-  const maxVol = Math.max(...bars.map((b) => b.volume));
-  const volRange = Math.max(1, maxVol - minVol);
-
-  const displayBar = hoveredBar || bars[bars.length - 1];
+  const displayBar = hoveredBar || (bars.length > 0 ? bars[bars.length - 1] : null);
   const barChange = displayBar ? displayBar.close - displayBar.open : 0;
-  const barChangePct = displayBar ? (barChange / displayBar.open) * 100 : 0;
+  const barChangePct = displayBar && displayBar.open > 0 ? (barChange / displayBar.open) * 100 : 0;
 
   return (
-    <div className="rounded-xl border border-[#1e3d64] bg-[#081b33] p-3.5 shadow-md">
+    <div className="rounded-xl border border-[#1e3d64] bg-[#081b33] p-3.5 shadow-md space-y-3">
       {/* Chart Header Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2.5 font-mono">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="font-bold text-cyan-300">Biểu đồ nến VNDirect ({code})</span>
+      <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-white/5 pb-2.5 font-mono">
+        <div className="flex flex-wrap items-center gap-2.5 text-xs">
+          <div className="flex items-center gap-1.5">
+            <span className="font-black text-cyan-300">Biểu đồ nến VNDirect</span>
+            <span className="rounded bg-cyan-500/20 px-1.5 py-0.5 text-[10px] font-bold text-cyan-300">
+              {code}
+            </span>
+          </div>
+
           {displayBar && (
             <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
-              <span>O: <strong className="text-white">{fmtNum(displayBar.open)}</strong></span>
-              <span>H: <strong className="text-emerald-400">{fmtNum(displayBar.high)}</strong></span>
-              <span>L: <strong className="text-rose-400">{fmtNum(displayBar.low)}</strong></span>
-              <span>C: <strong className="text-white">{fmtNum(displayBar.close)}</strong></span>
+              <span>Mở: <strong className="text-white">{fmtNum(displayBar.open)}</strong></span>
+              <span>Cao: <strong className="text-emerald-400">{fmtNum(displayBar.high)}</strong></span>
+              <span>Thấp: <strong className="text-rose-400">{fmtNum(displayBar.low)}</strong></span>
+              <span>Đóng: <strong className="text-white">{fmtNum(displayBar.close)}</strong></span>
               <span className={`font-bold ${barChangePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                {fmtPct(barChangePct)}
+                {barChange >= 0 ? `+${fmtNum(barChange)}` : fmtNum(barChange)} ({fmtPct(barChangePct)})
               </span>
             </div>
           )}
         </div>
 
-        <div className="flex items-center gap-1.5 text-[10px]">
-          <button
-            onClick={() => setTimeframe("15m")}
-            className={`rounded px-2 py-0.5 font-bold transition-colors ${
-              timeframe === "15m" ? "bg-cyan-500 text-black" : "bg-white/5 text-slate-400 hover:text-white"
-            }`}
-          >
-            15 Phút
-          </button>
-          <button
-            onClick={() => setTimeframe("1d")}
-            className={`rounded px-2 py-0.5 font-bold transition-colors ${
-              timeframe === "1d" ? "bg-cyan-500 text-black" : "bg-white/5 text-slate-400 hover:text-white"
-            }`}
-          >
-            1 Ngày
-          </button>
+        {/* Timeframe Selector Pills */}
+        <div className="no-scrollbar flex items-center gap-1 overflow-x-auto rounded-lg border border-white/10 bg-[#061527] p-1 text-[11px]">
+          {INDEX_TIMEFRAMES.map((tf) => (
+            <button
+              key={tf.key}
+              onClick={() => setTimeframe(tf.key)}
+              className={`shrink-0 rounded px-2.5 py-1 font-mono font-bold transition-all ${
+                timeframe === tf.key
+                  ? "bg-cyan-500 text-black shadow-sm"
+                  : "text-slate-400 hover:bg-white/5 hover:text-white"
+              }`}
+              title={tf.label}
+            >
+              {tf.shortLabel}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* SVG Candlestick Canvas */}
-      <div className="relative mt-3 h-52 w-full">
-        <svg viewBox="0 0 800 200" className="h-full w-full overflow-visible" preserveAspectRatio="none">
-          {/* Grid lines */}
-          <line x1="0" y1="40" x2="800" y2="40" stroke="#1c3a60" strokeWidth="0.5" strokeDasharray="3 3" />
-          <line x1="0" y1="90" x2="800" y2="90" stroke="#1c3a60" strokeWidth="0.5" strokeDasharray="3 3" />
-          <line x1="0" y1="140" x2="800" y2="140" stroke="#1c3a60" strokeWidth="0.5" strokeDasharray="3 3" />
-
-          {/* Price Labels on Right */}
-          <text x="795" y="38" textAnchor="end" fill="#64748b" fontSize="9" fontFamily="monospace">
-            {fmtNum(maxPrice)}
-          </text>
-          <text x="795" y="138" textAnchor="end" fill="#64748b" fontSize="9" fontFamily="monospace">
-            {fmtNum(minPrice)}
-          </text>
-
-          {/* Bars */}
-          {bars.map((b, i) => {
-            const numBars = bars.length;
-            const barWidth = Math.max(3, 760 / numBars - 2);
-            const x = (i / numBars) * 780 + 10;
-
-            const isUp = b.close >= b.open;
-            const color = isUp ? "#34d399" : "#fb7185";
-
-            const yHigh = 10 + (1 - (b.high - minPrice) / priceRange) * 120;
-            const yLow = 10 + (1 - (b.low - minPrice) / priceRange) * 120;
-            const yOpen = 10 + (1 - (b.open - minPrice) / priceRange) * 120;
-            const yClose = 10 + (1 - (b.close - minPrice) / priceRange) * 120;
-
-            const rectY = Math.min(yOpen, yClose);
-            const rectHeight = Math.max(2, Math.abs(yOpen - yClose));
-
-            // Volume bar at bottom
-            const volHeight = ((b.volume - minVol) / volRange) * 40 + 5;
-            const volY = 195 - volHeight;
-
-            return (
-              <g
-                key={i}
-                onMouseEnter={() => setHoveredBar(b)}
-                className="cursor-pointer transition-opacity hover:opacity-80"
-              >
-                {/* High-Low Wick */}
-                <line x1={x + barWidth / 2} y1={yHigh} x2={x + barWidth / 2} y2={yLow} stroke={color} strokeWidth="1.2" />
-
-                {/* Candle Body */}
-                <rect x={x} y={rectY} width={barWidth} height={rectHeight} fill={color} rx="0.5" />
-
-                {/* Volume Bar */}
-                <rect x={x} y={volY} width={barWidth} height={volHeight} fill={color} opacity="0.3" rx="0.5" />
-              </g>
-            );
-          })}
-        </svg>
+      {/* Main TradingView Canvas Chart */}
+      <div className="relative min-h-[320px] sm:min-h-[380px] w-full overflow-hidden rounded-lg bg-[#051326]">
+        {loading && bars.length === 0 ? (
+          <div className="flex h-80 flex-col items-center justify-center gap-2 font-mono text-xs text-slate-400">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+            <span>Đang tải lịch sử chỉ số {code} ({timeframe}) từ VNDIRECT dchart…</span>
+          </div>
+        ) : (
+          <CandleChart
+            bars={bars}
+            height={380}
+            onLoadMore={handleLoadMore}
+            loadingMore={loadingMore}
+            hasMore={hasMore}
+            loadMoreThreshold={25}
+          />
+        )}
       </div>
 
       {/* Footer Attribution */}
-      <div className="mt-2.5 flex items-center justify-between border-t border-white/5 pt-2 font-mono text-[10px] text-slate-400">
-        <span>Nguồn biểu đồ: <strong className="text-cyan-300">{source}</strong></span>
-        <span>Rút dữ liệu từ máy chủ VNDIRECT</span>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-2 font-mono text-[10px] text-slate-400">
+        <div className="flex items-center gap-2">
+          <span>Nguồn: <strong className="text-cyan-300">{source}</strong></span>
+          <span>•</span>
+          <span>Lịch sử: <strong className="text-slate-200">{bars.length.toLocaleString()} nến</strong></span>
+        </div>
+        <div className="flex items-center gap-2 text-slate-400">
+          <span>Cuộn trái để tải thêm lịch sử</span>
+          <span>•</span>
+          <span className="text-cyan-400 font-bold">Khung thời gian {INDEX_TIMEFRAMES.find((t) => t.key === timeframe)?.label}</span>
+        </div>
       </div>
     </div>
   );

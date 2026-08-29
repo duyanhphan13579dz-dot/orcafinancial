@@ -296,23 +296,31 @@ interface HistoryResponse {
 const TIMEFRAMES = [
   {
     key: "15m",
-    label: "15 phút",
+    label: "15m",
   },
   {
     key: "1h",
-    label: "1 giờ",
+    label: "1h",
+  },
+  {
+    key: "4h",
+    label: "4h",
   },
   {
     key: "1d",
-    label: "Ngày",
+    label: "1D",
   },
   {
     key: "1w",
-    label: "Tuần",
+    label: "1W",
   },
   {
     key: "1M",
-    label: "Tháng",
+    label: "1M",
+  },
+  {
+    key: "12M",
+    label: "12M",
   },
 ] as const;
 
@@ -340,9 +348,11 @@ const INITIAL_HISTORY_LIMIT: Record<
 > = {
   "15m": 1000,
   "1h": 1000,
+  "4h": 800,
   "1d": 1000,
   "1w": 600,
   "1M": 240,
+  "12M": 50,
 };
 
 const HISTORY_PAGE_SIZE: Record<
@@ -351,9 +361,11 @@ const HISTORY_PAGE_SIZE: Record<
 > = {
   "15m": 1000,
   "1h": 1000,
+  "4h": 800,
   "1d": 1000,
   "1w": 500,
   "1M": 120,
+  "12M": 30,
 };
 
 /* ============================================================
