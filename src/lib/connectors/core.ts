@@ -64,15 +64,15 @@ function envInt(key: string, fallback: number): number {
 export const CONNECTOR_CONFIG = {
   failureThreshold: envInt("CIRCUIT_BREAKER_THRESHOLD", 5),
   cooldownMs: envInt("CIRCUIT_BREAKER_TIMEOUT", 60_000),
-  retryAttempts: envInt("CONNECTOR_RETRY_ATTEMPTS", 2),
-  retryBaseMs: envInt("CONNECTOR_RETRY_BASE_MS", 700),
-  fetchTimeoutMs: envInt("CONNECTOR_FETCH_TIMEOUT_MS", 8_000),
+  retryAttempts: envInt("CONNECTOR_RETRY_ATTEMPTS", 1),
+  retryBaseMs: envInt("CONNECTOR_RETRY_BASE_MS", 300),
+  fetchTimeoutMs: envInt("CONNECTOR_FETCH_TIMEOUT_MS", 4_000),
   staleAfterMs: envInt("CONNECTOR_STALE_AFTER_MS", 15 * 60_000),
   degradedAfterMs: envInt("CONNECTOR_DEGRADED_AFTER_MS", 5 * 60_000),
-  /** Max parallel upstream quote fetches per request (≤8 recommended on serverless). */
-  quoteConcurrency: envInt("CONNECTOR_QUOTE_CONCURRENCY", 5),
+  /** Max parallel upstream quote fetches per request (≤12 recommended on serverless). */
+  quoteConcurrency: envInt("CONNECTOR_QUOTE_CONCURRENCY", 10),
   /** Parallel search / ticker validation (agent). */
-  searchConcurrency: envInt("CONNECTOR_SEARCH_CONCURRENCY", 3),
+  searchConcurrency: envInt("CONNECTOR_SEARCH_CONCURRENCY", 5),
   /** Parallel news insert workers per chunk. */
   newsInsertConcurrency: envInt("CONNECTOR_NEWS_INSERT_CONCURRENCY", 8),
 };
@@ -274,7 +274,6 @@ function shouldLogOhlcvReject(provider: string, symbol: string | undefined): {
     st.lastLogAt = now;
     return { log: true, suppressed: 0 };
   }
-  // Periodically emit a summary every window
   if (now - st.lastLogAt >= OHLCV_REJECT_LOG_WINDOW_MS) {
     const suppressed = st.count - OHLCV_REJECT_LOG_MAX_PER_WINDOW;
     st.lastLogAt = now;
@@ -602,7 +601,6 @@ export async function cachedWithStaleFallback<T>(
   const shadow = staleShadow.get(key);
   const backoffActive = (refreshBackoffUntil.get(key) ?? 0) > Date.now();
   if (shadow !== undefined) {
-    // Serve stale immediately; only the background refresh pays upstream latency.
     if (!backoffActive) {
       void startRefresh().catch((err) => logger.warn("cache_swr_refresh_failed", { key, error: err instanceof Error ? err.message : String(err) }));
     }
@@ -626,7 +624,6 @@ export function rateLimit(key: string, limit = 120, windowMs = 60_000): boolean 
   return true;
 }
 
-/** Limited-concurrency mapper. Default concurrency = CONNECTOR_CONFIG.quoteConcurrency. */
 export async function mapPool<T, R>(
   items: T[],
   concurrencyOrFn: number | ((item: T, index: number) => Promise<R>),

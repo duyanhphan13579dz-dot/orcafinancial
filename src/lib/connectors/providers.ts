@@ -77,7 +77,7 @@ export async function vndirectHistory(
 
 export async function vndirectQuote(symbol: string, options: ProviderFetchOptions = {}): Promise<Quote> {
   const to = Math.floor(Date.now() / 1000);
-  const from = to - 86400 * 14;
+  const from = to - 86400 * 5;
   const bars = await vndirectHistory(symbol, from, to, "D", options);
   const last = bars[bars.length - 1];
   const prev = bars.length > 1 ? bars[bars.length - 2] : null;
@@ -204,7 +204,7 @@ export async function coingeckoPrices(): Promise<CryptoQuote[]> {
   return getBreaker(COINGECKO).exec(async () => {
     const ids = "bitcoin,ethereum,binancecoin,solana";
     const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
-    const res = await fetchWithRetry(url, { provider: COINGECKO });
+    const res = await fetchWithRetry(url, { provider: COINGECKO, timeoutMs: 2_000 });
     const data = await readJsonSafe<Record<string, { usd: number; usd_24h_change: number }>>(res, COINGECKO, url);
     const symbolMap: Record<string, string> = {
       bitcoin: "BTC",
@@ -240,11 +240,10 @@ interface Binance24hr {
 export async function binancePrices(): Promise<CryptoQuote[]> {
   return getBreaker(BINANCE).exec(async () => {
     const symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"];
-    // Binance Vision public endpoint (not geo-blocked like api.binance.com)
     const results = await Promise.all(
       symbols.map(async (sym) => {
         const url = `https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${sym}`;
-        const res = await fetchWithRetry(url, { provider: BINANCE, retries: 1 });
+        const res = await fetchWithRetry(url, { provider: BINANCE, retries: 1, timeoutMs: 1_500 });
         const data = await readJsonSafe<Binance24hr>(res, BINANCE, url);
         const price = parseFloat(data.lastPrice);
         const pct = parseFloat(data.priceChangePercent);
@@ -264,7 +263,6 @@ export async function binancePrices(): Promise<CryptoQuote[]> {
   });
 }
 
-/** Primary + fallback chain for crypto. Marks stale if both fail. */
 export async function cryptoPricesWithFallback(): Promise<CryptoQuote[]> {
   try {
     return await coingeckoPrices();
@@ -347,7 +345,6 @@ function parseRss(xml: string, sourceName: string, provider: string): NewsItem[]
   return items;
 }
 
-/** Per-source 5-minute cache so upstream hiccups do not cascade into the UI. */
 const RSS_CACHE_MS = 5 * 60_000;
 
 export async function fetchAllRssNews(): Promise<{ items: NewsItem[]; errors: string[] }> {
@@ -355,7 +352,7 @@ export async function fetchAllRssNews(): Promise<{ items: NewsItem[]; errors: st
     RSS_SOURCES.map((src) =>
       cached<NewsItem[]>(`rss:${src.provider}`, RSS_CACHE_MS, () =>
         getBreaker(src.provider).exec(async () => {
-          const res = await fetchWithRetry(src.url, { timeoutMs: 15_000, provider: src.provider, retries: 3 });
+          const res = await fetchWithRetry(src.url, { timeoutMs: 4_000, provider: src.provider, retries: 1 });
           const xml = await readTextSafe(res, src.provider, src.url);
           const items = parseRss(xml, src.name, src.provider);
           if (items.length === 0) {
