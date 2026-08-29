@@ -69,7 +69,7 @@ function setLine(
 
 export function ForexProChart({
   bars,
-  height = 520,
+  height,
   levels,
   focusTime,
   showEma = true,
@@ -106,7 +106,8 @@ export function ForexProChart({
   const loadMoreThresholdRef = useRef(loadMoreThreshold);
 
   const paneCount = 1 + (showRsi ? 1 : 0) + (showMacd ? 1 : 0);
-  const mainH = Math.round(height * (paneCount === 1 ? 1 : paneCount === 2 ? 0.68 : 0.55));
+  const effectiveHeight = height ?? 440;
+  const mainH = Math.round(effectiveHeight * (paneCount === 1 ? 1 : paneCount === 2 ? 0.68 : 0.55));
 
   useEffect(() => {
     onLoadMoreRef.current = onLoadMore;
@@ -138,6 +139,9 @@ export function ForexProChart({
     if (!containerRef.current || chartRef.current) return;
     const el = containerRef.current;
 
+    const initialWidth = el.clientWidth || 300;
+    const initialHeight = el.clientHeight || height || 440;
+
     const chart = createChart(el, {
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
@@ -160,8 +164,8 @@ export function ForexProChart({
         secondsVisible: false,
         rightOffset: 6,
       },
-      width: el.clientWidth,
-      height,
+      width: initialWidth,
+      height: initialHeight,
     });
 
     const candle = chart.addSeries(
@@ -298,7 +302,10 @@ export function ForexProChart({
     const ro = new ResizeObserver(() => {
       if (!containerRef.current || !chartRef.current) return;
       const w = containerRef.current.clientWidth;
-      if (w > 0) chartRef.current.applyOptions({ width: w });
+      const h = containerRef.current.clientHeight || height || 440;
+      if (w > 0 && h > 0) {
+        chartRef.current.applyOptions({ width: w, height: h });
+      }
     });
     ro.observe(el);
 
@@ -442,8 +449,7 @@ export function ForexProChart({
   if (!bars.length) {
     return (
       <div
-        className="flex items-center justify-center text-sm text-slate-500"
-        style={{ height }}
+        className="flex items-center justify-center text-sm text-slate-500 h-full min-h-[280px]"
       >
         Không có dữ liệu
       </div>
@@ -451,8 +457,8 @@ export function ForexProChart({
   }
 
   return (
-    <div className="relative w-full" style={{ height }}>
-      <div ref={containerRef} className="absolute inset-0" />
+    <div className="relative h-full w-full min-h-[280px] overflow-hidden" style={height ? { height: `${height}px` } : undefined}>
+      <div ref={containerRef} className="absolute inset-0 h-full w-full" />
       <div className="pointer-events-none absolute left-2 top-2 z-10 flex flex-wrap gap-2 text-[9px] font-mono">
         {showEma && (
           <>

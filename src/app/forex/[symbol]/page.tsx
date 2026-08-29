@@ -29,7 +29,7 @@ import ForexScalpingPanel, {
 import ForexPaperJournal from "@/components/forex-paper-journal";
 
 const ChartSkeleton = () => (
-  <div className="h-[360px] w-full animate-pulse rounded-lg bg-slate-800/40 sm:h-[440px] lg:h-[520px]" />
+  <div className="h-[320px] w-full animate-pulse rounded-lg bg-slate-800/40 sm:h-[400px] lg:h-[500px]" />
 );
 
 const ForexProChart = dynamic(
@@ -410,7 +410,7 @@ export default function ForexDetail() {
           )}
         </div>
 
-        <div className="panel order-2 p-2.5 sm:p-3 lg:order-1 lg:col-span-2">
+        <div className="panel order-2 p-2.5 sm:p-3 lg:order-1 lg:col-span-2 overflow-hidden">
           <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-sm font-semibold text-white sm:text-base">
               Chart
@@ -459,11 +459,10 @@ export default function ForexDetail() {
             <ChartSkeleton />
           ) : bars.length > 0 ? (
             <div className={chartLoading ? "opacity-60" : ""}>
-              {/* CSS-driven height: mobile / tablet / desktop */}
-              <div className="h-[360px] sm:h-[440px] lg:h-[520px]">
+              {/* Responsive chart container: 320px mobile / 400px tablet / 500px desktop */}
+              <div className="relative h-[320px] w-full overflow-hidden sm:h-[400px] lg:h-[500px]">
                 <ForexProChart
                   bars={mergeBars(bars, liveBar ? [liveBar] : [])}
-                  height={520}
                   onLoadMore={loadMoreHistory}
                   loadingMore={historyLoadingMore}
                   hasMore={historyHasMore}
@@ -477,7 +476,7 @@ export default function ForexDetail() {
               </div>
             </div>
           ) : (
-            <div className="flex h-[360px] items-center justify-center text-sm text-rose-400 sm:h-[440px]">
+            <div className="flex h-[320px] items-center justify-center text-sm text-rose-400 sm:h-[400px]">
               {bundleError ?? "Không có dữ liệu OHLCV"}
             </div>
           )}
