@@ -2,7 +2,7 @@
 
 import { use, useState, useEffect } from "react";
 import Link from "next/link";
-import { fmtNum, fmtPct } from "@/lib/client";
+import { api, fmtNum, fmtPct } from "@/lib/client";
 import type { IndexMicrostructureSnapshot } from "@/lib/connectors/index-microstructure";
 
 export default function IndexDetailPage({ params }: { params: Promise<{ code: string }> }) {
@@ -18,18 +18,17 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
     let active = true;
     setLoading(true);
 
-    fetch(`/api/v1/indices/${encodeURIComponent(code)}`)
-      .then((res) => res.json())
-      .then((json) => {
+    api<IndexMicrostructureSnapshot>(`/indices/${encodeURIComponent(code)}`)
+      .then((env) => {
         if (!active) return;
-        if (json.success && json.data) {
-          setData(json.data);
+        if (env && env.data) {
+          setData(env.data);
         } else {
-          setError(json.error?.message || "Không thể tải dữ liệu chỉ số");
+          setError("Không thể tải dữ liệu chỉ số");
         }
       })
       .catch((err) => {
-        if (active) setError(err.message || "Lỗi kết nối");
+        if (active) setError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
         if (active) setLoading(false);

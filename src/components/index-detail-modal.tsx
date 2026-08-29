@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { fmtNum, fmtPct, fmtVol } from "@/lib/client";
+import { api, fmtNum, fmtPct, fmtVol } from "@/lib/client";
 import type { IndexMicrostructureSnapshot } from "@/lib/connectors/index-microstructure";
 
 interface Props {
@@ -21,18 +21,17 @@ export function IndexDetailModal({ code, onClose }: Props) {
     setLoading(true);
     setError(null);
 
-    fetch(`/api/v1/indices/${encodeURIComponent(code)}`)
-      .then((res) => res.json())
-      .then((json) => {
+    api<IndexMicrostructureSnapshot>(`/indices/${encodeURIComponent(code)}`)
+      .then((env) => {
         if (!active) return;
-        if (json.success && json.data) {
-          setData(json.data);
+        if (env && env.data) {
+          setData(env.data);
         } else {
-          setError(json.error?.message || "Không thể tải dữ liệu chỉ số");
+          setError("Không thể tải dữ liệu chỉ số");
         }
       })
       .catch((err) => {
-        if (active) setError(err.message || "Lỗi kết nối");
+        if (active) setError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
         if (active) setLoading(false);

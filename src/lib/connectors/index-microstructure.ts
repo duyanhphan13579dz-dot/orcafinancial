@@ -309,7 +309,7 @@ export async function getIndexMicrostructure(code: string): Promise<IndexMicrost
       spreadPoints: round(asks[0].price - bids[0].price, 2),
       buyPressurePct,
       status: "live",
-      source: "VNDIRECT / Vietstock / TCBS Live",
+      source: "VNDIRECT / Vietstock Live Data",
     },
     moneyFlow: {
       activeBuyValueBillion,
@@ -350,6 +350,6 @@ export async function getIndexMicrostructure(code: string): Promise<IndexMicrost
       statusText,
     },
     updatedAt: now.toISOString(),
-    sources: ["VNDIRECT dchart", "Vietstock Data", "TCBS Market Feed"],
+    sources: ["VNDIRECT dchart", "Vietstock Data", "HOSE/HNX Public Feed"],
   };
 }

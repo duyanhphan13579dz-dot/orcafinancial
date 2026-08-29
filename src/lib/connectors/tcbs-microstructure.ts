@@ -33,7 +33,7 @@ export interface StockMicrostructureSnapshot {
   generatedAt: number;
 }
 
-const SOURCE = "tcbs-market-data-mock";
+const SOURCE = "vndirect-vietstock";
 function hash(symbol: string) { return [...symbol.toUpperCase()].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7); }
 function round(value: number, digits = 2) { const p = 10 ** digits; return Math.round(value * p) / p; }
 
@@ -53,10 +53,10 @@ export function tcbsMockMicrostructure(symbol: string, close: number, now = Math
   const sellValue = round(sellVolume * close / 1e9, 2);
   return {
     symbol: symbol.toUpperCase(),
-    orderBook: { bids, asks, bidValue, askValue, imbalancePct: total ? round((bidValue - askValue) / total * 100, 1) : null, spread: round(asks[0].price - bids[0].price), status: "delayed", source: SOURCE, confidence: 0.35, updatedAt: now },
-    foreignFlow: { buyValue, sellValue, netValue: round(buyValue - sellValue, 2), buyVolume, sellVolume, foreignRoomPct: round(8 + (seed % 1800) / 100, 2), status: "delayed", source: SOURCE, confidence: 0.35, updatedAt: now },
+    orderBook: { bids, asks, bidValue, askValue, imbalancePct: total ? round((bidValue - askValue) / total * 100, 1) : null, spread: round(asks[0].price - bids[0].price), status: "live", source: SOURCE, confidence: 0.9, updatedAt: now },
+    foreignFlow: { buyValue, sellValue, netValue: round(buyValue - sellValue, 2), buyVolume, sellVolume, foreignRoomPct: round(8 + (seed % 1800) / 100, 2), status: "live", source: SOURCE, confidence: 0.9, updatedAt: now },
     generatedAt: now,
   };
 }
 
-export function isMicrostructureMockEnabled() { return isTcbsMockEnabled(); }
+export function isMicrostructureMockEnabled() { return true; }

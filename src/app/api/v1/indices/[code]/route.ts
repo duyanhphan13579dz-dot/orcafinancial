@@ -14,7 +14,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ code: strin
 
   try {
     const data = await getIndexMicrostructure(code);
-    return ok(data, { source: "vndirect-vietstock-tcbs", confidence: 0.95 }, { cacheSeconds: 10 });
+    return ok(data, { source: "vndirect-vietstock", confidence: 0.95 }, { cacheSeconds: 10 });
   } catch (error) {
     return handleError(error, `index_microstructure:${code}`);
   }

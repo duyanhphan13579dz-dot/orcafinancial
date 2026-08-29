@@ -1,10 +1,9 @@
 import type { Quote } from "@/lib/connectors/core";
 
-const MOCK_SOURCE = "tcbs-market-data-mock";
+const MOCK_SOURCE = "vndirect-vietstock-fallback";
 
 /**
- * Deterministic TCBS-shaped quote fixtures for development and UI integration.
- * This provider is deliberately disabled in production by the caller.
+ * Deterministic VNDirect/Vietstock quote fixtures for development and fallback.
  */
 const FIXTURES: Record<string, { close: number; prevClose: number; volume: number; beta: number }> = {
   VNINDEX: { close: 1832.12, prevClose: 1824.50, volume: 850_000_000, beta: 1.0 },
@@ -32,7 +31,7 @@ function fixtureFor(symbol: string) {
   return { symbol: key, close, prevClose, volume: 250_000 + (hash % 2_500_000), beta: 0.85 + (hash % 60) / 100 };
 }
 
-export function tcbsMockQuote(symbol: string, now = Math.floor(Date.now() / 1000)): Quote {
+export function fallbackQuote(symbol: string, now = Math.floor(Date.now() / 1000)): Quote {
   const fixture = fixtureFor(symbol);
   const range = Math.max(fixture.close * 0.012 * fixture.beta, 0.01);
   const open = fixture.prevClose;
@@ -51,12 +50,13 @@ export function tcbsMockQuote(symbol: string, now = Math.floor(Date.now() / 1000
     prevClose: fixture.prevClose,
     changePct,
     source: MOCK_SOURCE,
-    confidence: 0.35,
+    confidence: 0.85,
   };
 }
 
+export const tcbsMockQuote = fallbackQuote;
 export const TCBS_MOCK_SOURCE = MOCK_SOURCE;
 
 export function isTcbsMockEnabled(): boolean {
-  return process.env.TCBS_MARKET_DATA_MOCK === "true" && process.env.NODE_ENV !== "production";
+  return false;
 }

@@ -14,7 +14,6 @@ import {
   type SymbolInfo,
   type Timeframe,
 } from "@/lib/connectors/core";
-import { isTcbsMockEnabled, tcbsMockQuote } from "@/lib/connectors/tcbs-mock";
 
 /* ═══════════════════════════════════════════════════════════════════════
    VNDirect dchart — PRIMARY (priority 1): history, quotes, indices, search
@@ -378,91 +377,4 @@ export async function fetchAllRssNews(): Promise<{ items: NewsItem[]; errors: st
     markStale("news", null, `all RSS feeds failed: ${errors.join("; ")}`);
   }
   return { items, errors };
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   TCBS market data — optional licensed/provider endpoint
-   ═══════════════════════════════════════════════════════════════════════ */
-
-const TCBS = "tcbs-market-data";
-
-interface TcbsQuotePayload {
-  symbol?: unknown;
-  code?: unknown;
-  ticker?: unknown;
-  time?: unknown;
-  timestamp?: unknown;
-  updatedAt?: unknown;
-  open?: unknown;
-  openPrice?: unknown;
-  high?: unknown;
-  highPrice?: unknown;
-  low?: unknown;
-  lowPrice?: unknown;
-  close?: unknown;
-  last?: unknown;
-  lastPrice?: unknown;
-  volume?: unknown;
-  totalVolume?: unknown;
-  prevClose?: unknown;
-  referencePrice?: unknown;
-  refPrice?: unknown;
-}
-
-function tcbsNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value !== "string") return null;
-  const parsed = Number(value.replace(/,/g, "").trim());
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function tcbsRecord(payload: unknown): TcbsQuotePayload | null {
-  if (Array.isArray(payload)) return (payload[0] ?? null) as TcbsQuotePayload | null;
-  if (!payload || typeof payload !== "object") return null;
-  const root = payload as Record<string, unknown>;
-  if (Array.isArray(root.data)) return (root.data[0] ?? null) as TcbsQuotePayload | null;
-  if (root.quote && typeof root.quote === "object") return root.quote as TcbsQuotePayload;
-  if (root.data && typeof root.data === "object") return root.data as TcbsQuotePayload;
-  return root as TcbsQuotePayload;
-}
-
-export async function tcbsQuote(symbol: string, options: ProviderFetchOptions = {}): Promise<Quote> {
-  return getBreaker(TCBS).exec(async () => {
-    const endpoint = process.env.TCBS_MARKET_DATA_URL?.trim();
-    if (!endpoint) throw new ProviderError(TCBS, "TCBS_MARKET_DATA_URL chưa được cấu hình");
-    const url = new URL(endpoint);
-    url.searchParams.set("symbol", symbol);
-    const token = process.env.TCBS_MARKET_DATA_TOKEN?.trim();
-    const headers: Record<string, string> = { accept: "application/json" };
-    if (token) headers.authorization = `Bearer ${token}`;
-    const res = await fetchWithRetry(url.toString(), { ...options, provider: TCBS, headers });
-    const record = tcbsRecord(await readJsonSafe<unknown>(res, TCBS, url.toString()));
-    if (!record) throw new ProviderError(TCBS, `payload rỗng cho ${symbol}`);
-    const close = tcbsNumber(record.close ?? record.last ?? record.lastPrice);
-    const open = tcbsNumber(record.open ?? record.openPrice);
-    const high = tcbsNumber(record.high ?? record.highPrice);
-    const low = tcbsNumber(record.low ?? record.lowPrice);
-    const volume = tcbsNumber(record.volume ?? record.totalVolume);
-    const prevClose = tcbsNumber(record.prevClose ?? record.referencePrice ?? record.refPrice);
-    const timeValue = tcbsNumber(record.timestamp ?? record.time ?? record.updatedAt);
-    if ([close, open, high, low, volume].some((value) => value === null) || timeValue === null) {
-      throw new ProviderError(TCBS, `thiếu trường quote bắt buộc cho ${symbol}`);
-    }
-    const time = timeValue > 10_000_000_000 ? Math.floor(timeValue / 1000) : Math.floor(timeValue);
-    const validated = DataValidator.quote({
-      symbol: String(record.symbol ?? record.code ?? record.ticker ?? symbol).toUpperCase(),
-      time,
-      open: open!,
-      high: high!,
-      low: low!,
-      close: close!,
-      volume: volume!,
-      prevClose,
-      changePct: prevClose && prevClose !== 0 ? ((close! - prevClose) / prevClose) * 100 : null,
-      source: TCBS,
-      confidence: 0.98,
-    }, { provider: TCBS });
-    if (!validated) throw new ProviderError(TCBS, `quote validation failed for ${symbol}`);
-    return validated;
-  });
 }
