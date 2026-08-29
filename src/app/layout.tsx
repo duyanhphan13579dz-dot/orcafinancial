@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Bricolage_Grotesque, Inter, JetBrains_Mono } from "next/font/google";
+import { Be_Vietnam_Pro, Bricolage_Grotesque, JetBrains_Mono } from "next/font/google";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { SearchBar } from "@/components/search-bar";
@@ -17,9 +17,9 @@ const display = Bricolage_Grotesque({
   variable: "--font-display",
 });
 
-const sans = Inter({
-  weight: ["400", "500", "600", "700"],
-  subsets: ["latin"],
+const sans = Be_Vietnam_Pro({
+  weight: ["300", "400", "500", "600", "700", "800"],
+  subsets: ["latin", "vietnamese"],
   display: "swap",
   variable: "--font-sans",
 });
