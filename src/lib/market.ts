@@ -31,10 +31,6 @@ export const FEATURED_SYMBOLS = [
   "SSI", "VND", "MSN", "GAS", "VRE", "MBB", "STB", "HDB", "POW", "GVR",
 ];
 
-/**
- * Expanded sector universe. It is fetched separately from the compact dashboard
- * universe so the richer board does not make the first overview render heavier.
- */
 export const SECTOR_SYMBOLS = [...new Set(SECTOR_DEFINITIONS.flatMap((sector) => sector.symbols))];
 
 export const INDICES = [
@@ -278,13 +274,23 @@ export async function getQuote(symbol: string, options: { persist?: boolean; fas
 export async function getQuotes(symbols: string[], options: { persist?: boolean; fast?: boolean; allowStale?: boolean; concurrency?: number } = {}): Promise<Quote[]> {
   if (symbols.length === 0) return [];
 
-  const snaps = await loadFreshSnapshots(symbols);
-  const missing = symbols.filter((s) => !snaps.has(s));
-  if (options.allowStale && missing.length > 0) {
-    const stale = await loadStaleSnapshots(missing);
-    for (const [symbol, quote] of stale) snaps.set(symbol, quote);
+  const indexCodes = new Set(["VNINDEX", "VN30", "VN100", "HNX", "UPCOM"]);
+  const stockSymbols = symbols.filter((s) => !indexCodes.has(s.toUpperCase().trim()));
+  const snaps = new Map<string, Quote>();
+
+  if (stockSymbols.length > 0) {
+    const freshSnaps = await loadFreshSnapshots(stockSymbols);
+    for (const [s, q] of freshSnaps) snaps.set(s, q);
+
+    const missingStocks = stockSymbols.filter((s) => !snaps.has(s));
+    if (options.allowStale && missingStocks.length > 0) {
+      const staleSnaps = await loadStaleSnapshots(missingStocks);
+      for (const [s, q] of staleSnaps) snaps.set(s, q);
+    }
   }
-  const upstreamMissing = symbols.filter((s) => !snaps.has(s));
+
+  // Indices MUST always be fetched live from VNDirect via getQuote, bypassing stale DB snapshots
+  const upstreamMissing = symbols.filter((s) => !snaps.has(s) || indexCodes.has(s.toUpperCase().trim()));
 
   if (upstreamMissing.length > 0) {
     const settled = await mapPool(
@@ -469,13 +475,13 @@ function emptyOverview(): MarketSnapshot {
 }
 
 export async function getMarketOverview(): Promise<MarketSnapshot> {
-  const refresh = cachedWithStaleFallback<MarketSnapshot>("market:overview:v4", OVERVIEW_TTL_MS, async () => {
+  const refresh = cachedWithStaleFallback<MarketSnapshot>("market:overview:v5", OVERVIEW_TTL_MS, async () => {
     const started = Date.now();
     const indexCodes = INDICES.map((i) => i.code);
     const coreSymbols = [...new Set([...indexCodes, ...FEATURED_SYMBOLS])];
     const requestedSymbols = [...new Set([...coreSymbols, ...SECTOR_SYMBOLS])];
     const [coreQuotes, sectorOnlyQuotes, cryptoResult] = await Promise.all([
-      getQuotes(coreSymbols, { persist: false, allowStale: true, fast: true, concurrency: 8 }),
+      getQuotes(coreSymbols, { persist: false, allowStale: false, fast: true, concurrency: 8 }),
       withDeadline(
         getQuotes(SECTOR_SYMBOLS, { persist: false, allowStale: true, fast: true, concurrency: 12 }),
         SECTOR_QUOTE_TIMEOUT_MS,
