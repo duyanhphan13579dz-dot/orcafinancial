@@ -176,28 +176,33 @@ export async function getHistory(
 }
 
 export async function getQuote(symbol: string, options: { persist?: boolean; fast?: boolean; allowStale?: boolean; concurrency?: number } = {}): Promise<Quote> {
-  const key = `quote:${symbol}`;
+  const normSym = symbol.toUpperCase().trim();
+  const isIndex = ["VNINDEX", "VN30", "VN100", "HNX", "UPCOM"].includes(normSym);
+  const key = `quote:${normSym}`;
+
   const quote = await cached(key, QUOTE_TTL_MS, async () => {
     const providerOptions = options.fast ? { timeoutMs: 1_500, retries: 0 } : undefined;
 
-    const snaps = await loadFreshSnapshots([symbol]);
-    const snap = snaps.get(symbol);
-    if (snap) return snap;
+    if (!isIndex) {
+      const snaps = await loadFreshSnapshots([normSym]);
+      const snap = snaps.get(normSym);
+      if (snap) return snap;
+    }
 
     try {
-      return await vndirectQuote(symbol, providerOptions);
+      return await vndirectQuote(normSym, providerOptions);
     } catch (primaryErr) {
       logger.warn("quote_primary_failed", {
-        symbol,
+        symbol: normSym,
         error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
       });
       try {
         const to = Math.floor(Date.now() / 1000);
-        const bars = await yahooHistory(symbol, to - 86400 * 14, to, "D", providerOptions);
+        const bars = await yahooHistory(normSym, to - 86400 * 14, to, "D", providerOptions);
         const last = bars[bars.length - 1];
         const prev = bars.length > 1 ? bars[bars.length - 2] : null;
         return {
-          symbol,
+          symbol: normSym,
           time: last.time,
           open: last.open,
           high: last.high,
@@ -211,10 +216,10 @@ export async function getQuote(symbol: string, options: { persist?: boolean; fas
         } satisfies Quote;
       } catch (secondaryErr) {
         logger.warn("quote_all_providers_failed_using_fallback", {
-          symbol,
+          symbol: normSym,
           error: secondaryErr instanceof Error ? secondaryErr.message : String(secondaryErr),
         });
-        return fallbackQuote(symbol);
+        return fallbackQuote(normSym);
       }
     }
   });

@@ -4,6 +4,7 @@ import { use, useState, useEffect } from "react";
 import Link from "next/link";
 import { api, fmtNum, fmtPct } from "@/lib/client";
 import type { IndexMicrostructureSnapshot } from "@/lib/connectors/index-microstructure";
+import { IndexChart } from "@/components/index-chart";
 
 export default function IndexDetailPage({ params }: { params: Promise<{ code: string }> }) {
   const { code: rawCode } = use(params);
@@ -40,7 +41,7 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
   }, [code]);
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5 p-4 md:p-6">
+    <div className="mx-auto max-w-7xl space-y-4 p-3 sm:p-6">
       {/* Navigation Breadcrumb */}
       <div className="flex items-center gap-2 font-mono text-xs text-slate-400">
         <Link href="/" className="hover:text-cyan-300">Tổng quan</Link>
@@ -49,16 +50,16 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
       </div>
 
       {/* Header Banner */}
-      <div className="rounded-xl border border-[#1e3a5f]/80 bg-[#081d35]/90 p-5 shadow-lg">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#1a3558] pb-4">
+      <div className="rounded-xl border border-[#1e3a5f]/80 bg-[#081d35]/90 p-4 sm:p-5 shadow-lg">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#1a3558] pb-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-cyan-400/40 bg-gradient-to-br from-cyan-500/20 to-blue-600/10 font-display text-xl font-black text-cyan-300">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-cyan-400/40 bg-gradient-to-br from-cyan-500/20 to-blue-600/10 font-display text-lg font-black text-cyan-300">
               {code.slice(0, 4)}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="font-display text-2xl font-black text-white">{data?.name || code}</h1>
-                <span className="rounded bg-cyan-500/20 px-2.5 py-0.5 font-mono text-xs font-bold text-cyan-300">
+                <h1 className="font-display text-xl sm:text-2xl font-black text-white">{data?.name || code}</h1>
+                <span className="rounded bg-cyan-500/20 px-2 py-0.5 font-mono text-xs font-bold text-cyan-300">
                   {data?.exchange || "HOSE"}
                 </span>
               </div>
@@ -67,7 +68,7 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
           </div>
 
           <div className="text-right font-mono">
-            <div className="text-2xl font-black text-white">{data ? fmtNum(data.close) : "—"}</div>
+            <div className="text-xl sm:text-2xl font-black text-white">{data ? fmtNum(data.close) : "—"}</div>
             {data && (
               <div className={`text-xs font-bold ${data.changePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                 {data.changePoints > 0 ? `+${data.changePoints}` : data.changePoints} ({fmtPct(data.changePct)})
@@ -86,9 +87,9 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
         {error && <div className="py-6 text-center font-mono text-xs text-rose-400">Lỗi: {error}</div>}
 
         {data && !loading && (
-          <div className="mt-4 space-y-5">
+          <div className="mt-4 space-y-4">
             {/* Price Strip */}
-            <div className="grid grid-cols-2 gap-3 rounded-lg border border-white/5 bg-[#06152b] p-3 sm:grid-cols-4 md:grid-cols-6 font-mono text-xs">
+            <div className="grid grid-cols-2 gap-2.5 rounded-lg border border-white/5 bg-[#06152b] p-3 sm:grid-cols-3 md:grid-cols-6 font-mono text-xs">
               <div>
                 <div className="text-[10px] text-slate-400">Cao / Thấp</div>
                 <div className="mt-0.5 font-bold text-white"><span className="text-emerald-400">{fmtNum(data.high)}</span> / <span className="text-rose-400">{fmtNum(data.low)}</span></div>
@@ -119,8 +120,11 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
               </div>
             </div>
 
+            {/* Interactive Chart */}
+            <IndexChart code={code} />
+
             {/* Tabs */}
-            <div className="flex border-b border-[#1c3a60] font-mono text-xs">
+            <div className="no-scrollbar flex overflow-x-auto border-b border-[#1c3a60] font-mono text-xs">
               {[
                 { id: "intraday", label: "Biến động & Thanh khoản" },
                 { id: "depth", label: "Sổ lệnh & Cung cầu" },
@@ -131,7 +135,7 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`border-b-2 px-4 py-2.5 font-bold transition-colors ${
+                  className={`shrink-0 border-b-2 px-3.5 py-2 font-bold transition-colors whitespace-nowrap ${
                     activeTab === tab.id
                       ? "border-cyan-400 text-cyan-300 bg-cyan-500/10"
                       : "border-transparent text-slate-400 hover:text-slate-200"
@@ -147,7 +151,7 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
               <div className="space-y-4">
                 <div className="rounded-xl border border-[#1e3d64] bg-[#0a203c]/80 p-4">
                   <h3 className="mb-3 font-mono text-xs font-bold uppercase text-cyan-300">Biến động VWAP trong ngày</h3>
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6 font-mono text-xs">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 font-mono text-xs">
                     {data.intraday.map((pt) => (
                       <div key={pt.time} className="rounded-lg bg-[#06162b] p-2.5 text-center">
                         <div className="text-[10px] text-slate-400">{pt.time}</div>
