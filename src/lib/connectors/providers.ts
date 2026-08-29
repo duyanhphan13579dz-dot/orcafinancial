@@ -146,42 +146,56 @@ interface YahooChart {
 
 export async function yahooHistory(symbol: string, from: number, to: number, resolution: Timeframe, options: ProviderFetchOptions = {}): Promise<Ohlcv[]> {
   return getBreaker(YAHOO).exec(async () => {
+    const rawSym = symbol.toUpperCase().trim();
     const interval = resolution === "D" ? "1d" : resolution === "60" ? "60m" : "15m";
-    const ySymbol = /^[A-Z0-9]{3}$/.test(symbol) ? `${symbol}.VN` : symbol;
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-      ySymbol,
-    )}?period1=${from}&period2=${to}&interval=${interval}`;
-    const res = await fetchWithRetry(url, { ...options, provider: YAHOO });
-    const data = await readJsonSafe<YahooChart>(res, YAHOO, url);
-    const result = data.chart.result?.[0];
-    if (!result?.timestamp?.length) {
-      throw new ProviderError(YAHOO, data.chart.error?.description ?? `no data for ${ySymbol}`, {
-        chartError: data.chart.error,
-      });
+    const ySymbol = rawSym.includes("=") || rawSym.startsWith("^") || rawSym.endsWith(".VN") ? rawSym : `${rawSym}.VN`;
+
+    const tryFetch = async (symToFetch: string): Promise<Ohlcv[]> => {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+        symToFetch,
+      )}?period1=${from}&period2=${to}&interval=${interval}`;
+      const res = await fetchWithRetry(url, { ...options, provider: YAHOO });
+      const data = await readJsonSafe<YahooChart>(res, YAHOO, url);
+      const result = data.chart.result?.[0];
+      if (!result?.timestamp?.length) {
+        throw new ProviderError(YAHOO, data.chart.error?.description ?? `no data for ${symToFetch}`, {
+          chartError: data.chart.error,
+        });
+      }
+      const q = result.indicators.quote[0];
+      const bars: Ohlcv[] = [];
+      let rejected = 0;
+      for (let i = 0; i < result.timestamp.length; i++) {
+        const raw = {
+          time: result.timestamp[i],
+          open: q.open[i],
+          high: q.high[i],
+          low: q.low[i],
+          close: q.close[i],
+          volume: q.volume[i] ?? 0,
+        };
+        const v = DataValidator.ohlcv(raw, { provider: YAHOO, symbol });
+        if (v) bars.push(v);
+        else rejected += 1;
+      }
+      if (bars.length === 0) {
+        throw new ProviderError(YAHOO, `all ${result.timestamp.length} bars failed validation for ${symToFetch}`);
+      }
+      return bars;
+    };
+
+    try {
+      return await tryFetch(ySymbol);
+    } catch (primaryErr) {
+      if (ySymbol !== rawSym && !rawSym.includes("=") && !rawSym.startsWith("^")) {
+        try {
+          return await tryFetch(rawSym);
+        } catch {
+          throw primaryErr;
+        }
+      }
+      throw primaryErr;
     }
-    const q = result.indicators.quote[0];
-    const bars: Ohlcv[] = [];
-    let rejected = 0;
-    for (let i = 0; i < result.timestamp.length; i++) {
-      const raw = {
-        time: result.timestamp[i],
-        open: q.open[i],
-        high: q.high[i],
-        low: q.low[i],
-        close: q.close[i],
-        volume: q.volume[i] ?? 0,
-      };
-      const v = DataValidator.ohlcv(raw, { provider: YAHOO, symbol });
-      if (v) bars.push(v);
-      else rejected += 1;
-    }
-    if (bars.length === 0) {
-      throw new ProviderError(YAHOO, `all ${result.timestamp.length} bars failed validation for ${ySymbol}`);
-    }
-    if (rejected > 0) {
-      forProvider(YAHOO).warn("history_some_bars_rejected", { symbol, total: result.timestamp.length, rejected });
-    }
-    return bars;
   });
 }
 
