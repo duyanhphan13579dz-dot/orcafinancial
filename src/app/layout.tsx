@@ -6,6 +6,7 @@ import { SearchBar } from "@/components/search-bar";
 import { MobileHeader, MobileBottomNav } from "@/components/MobileNav";
 import { UserMenu } from "@/components/UserMenu";
 import { AppearanceLoader } from "@/components/AppearanceLoader";
+import { OrcaAiChatWidget } from "@/components/OrcaAiChatWidget";
 import { AuthProvider } from "@/lib/auth/context";
 import "./globals.css";
 
@@ -56,7 +57,7 @@ const NAV = [
   { href: "/screener", label: "Bộ lọc" },
   { href: "/news", label: "Tin tức" },
   { href: "/watchlist", label: "Theo dõi" },
-  { href: "/agent", label: "Trợ lý AI" },
+  { href: "/agent", label: "ORCA AI" },
   { href: "/system", label: "Hệ thống" },
   { href: "/settings", label: "Cài đặt" },
 ];
@@ -159,6 +160,7 @@ export default function RootLayout({
           </footer>
 
           <MobileBottomNav />
+          <OrcaAiChatWidget />
         </AuthProvider>
       </body>
     </html>

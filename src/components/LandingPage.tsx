@@ -4,7 +4,7 @@ const FEATURES = [
   { icon: "🔍", title: "Bộ lọc cổ phiếu", desc: "CANSLIM, Minervini, Wyckoff, Elliott Wave với ngưỡng điểm tùy chỉnh" },
   { icon: "📦", title: "Hàng hóa", desc: "31 loại hàng hóa ảnh hưởng thị trường Việt Nam, quy đổi VND" },
   { icon: "📰", title: "Báo cáo tự động", desc: "Bản tin sáng 07:30 và tóm tắt thị trường 15:15 mỗi ngày giao dịch" },
-  { icon: "🤖", title: "Trợ lý AI", desc: "Phân tích thông minh, chỉ dùng dữ liệu thật từ bộ máy dữ liệu" },
+  { icon: "🤖", title: "ORCA AI", desc: "Phân tích thông minh, chỉ dùng dữ liệu thật từ bộ máy dữ liệu" },
   { icon: "📊", title: "Phân tích kỹ thuật", desc: "RSI, MACD, mẫu hình nến, vùng hỗ trợ/kháng cự" },
   { icon: "🩺", title: "Sức khỏe tài chính", desc: "Chấm điểm 6 trụ cột, DuPont, DCF, Graham Number" },
 ];

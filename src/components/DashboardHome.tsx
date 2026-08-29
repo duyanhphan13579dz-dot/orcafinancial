@@ -2,15 +2,15 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { api, changeColor, fmtNum, fmtPct, fmtVol, timeAgo, usePoll } from "@/lib/client";
+import { api, fmtNum, fmtPct, fmtVol, timeAgo, usePoll } from "@/lib/client";
 import type { MarketIndex, MarketQuote, MarketNewsItem, MarketSnapshot } from "@/types/market";
 import { OvernightMarkets } from "@/components/market/OvernightMarkets";
 
 const QUICK_LINKS = [
-  { href: "/heatmap", label: "Bản đồ nhiệt", desc: "Bản đồ sức mạnh thị trường" },
-  { href: "/screener", label: "Bộ lọc", desc: "CANSLIM · Minervini · Wyckoff" },
-  { href: "/reports", label: "Báo cáo", desc: "Bản tin sáng · Tóm tắt thị trường" },
-  { href: "/agent", label: "Trợ lý AI", desc: "Phân tích từ dữ liệu thật" },
+  { href: "/heatmap", label: "Bản đồ nhiệt", desc: "Bản đồ sức mạnh & dòng tiền" },
+  { href: "/screener", label: "Bộ lọc cổ phiếu", desc: "CANSLIM · Minervini · Wyckoff" },
+  { href: "/reports", label: "Báo cáo thị trường", desc: "Bản tin sáng · Tóm tắt thị trường" },
+  { href: "/agent", label: "ORCA AI", desc: "Trợ lý phân tích tài chính 24/7" },
 ];
 
 function tone(value: number | null | undefined) {
@@ -25,86 +25,588 @@ function MiniSparkline({ quote }: { quote: MarketQuote }) {
   const span = Math.max(0.000001, max - min);
   const points = values.map((value, index) => `${2 + index * 30},${26 - ((value - min) / span) * 20}`).join(" ");
   const positive = (quote.changePct ?? quote.close - quote.open) >= 0;
-  return <svg viewBox="0 0 96 30" className="h-7 w-24" aria-label="Biên độ OHLC trong phiên" role="img"><polyline points={points} fill="none" stroke={positive ? "#34d399" : "#fb7185"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><circle cx="92" cy={26 - ((quote.close - min) / span) * 20} r="2.5" fill={positive ? "#34d399" : "#fb7185"} /></svg>;
+  return (
+    <svg viewBox="0 0 96 30" className="h-7 w-20 shrink-0" aria-label="Biên độ giá" role="img">
+      <polyline
+        points={points}
+        fill="none"
+        stroke={positive ? "#34d399" : "#fb7185"}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle
+        cx="92"
+        cy={26 - ((quote.close - min) / span) * 20}
+        r="2.5"
+        fill={positive ? "#34d399" : "#fb7185"}
+      />
+    </svg>
+  );
 }
 
 function SectionHeader({ eyebrow, title, action }: { eyebrow?: string; title: string; action?: React.ReactNode }) {
-  return <div className="mb-3 flex items-end justify-between gap-3"><div><div className="font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-400">{eyebrow ?? "ORCA THỊ TRƯỜNG"}</div><h2 className="font-display text-lg font-bold text-white md:text-xl">{title}</h2></div>{action}</div>;
+  return (
+    <div className="mb-3.5 flex items-end justify-between gap-3 border-b border-white/5 pb-2">
+      <div>
+        <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-400">{eyebrow ?? "ORCA THỊ TRƯỜNG"}</div>
+        <h2 className="font-display text-base font-extrabold tracking-tight text-white md:text-lg">{title}</h2>
+      </div>
+      {action}
+    </div>
+  );
 }
 
 function IndexCard({ index, primary }: { index: MarketIndex; primary?: boolean }) {
-  return <div className={`panel relative overflow-hidden p-3 ${primary ? "border-cyan-400/50 bg-gradient-to-br from-[#123d60] to-[#0b2745] shadow-[0_0_24px_rgba(0,212,255,.12)]" : ""}`}><div className="flex items-center justify-between gap-2"><span className={`text-xs font-semibold ${primary ? "text-cyan-200" : "text-slate-300"}`}>{index.name}</span><span className="flex items-center gap-1 text-[10px] text-slate-500"><span className="live-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />TRỰC TIẾP</span></div><div className="mt-2 flex items-end justify-between gap-2"><div><div className={`font-mono font-bold tabular-nums ${primary ? "text-2xl text-white" : "text-xl text-slate-100"}`}>{fmtNum(index.close)}</div><div className={`mt-0.5 font-mono text-xs font-semibold ${tone(index.changePct)}`}>{fmtPct(index.changePct)}</div></div><MiniSparkline quote={index} /></div><div className="mt-2 flex justify-between text-[10px] text-slate-500"><span>{index.exchange}</span><span>KLGD {fmtVol(index.volume)}</span></div></div>;
+  return (
+    <div
+      className={`relative overflow-hidden rounded-xl border p-3.5 transition-all duration-200 hover:border-cyan-400/40 hover:shadow-lg ${
+        primary
+          ? "border-cyan-400/50 bg-gradient-to-br from-[#0c2a47] via-[#0a2340] to-[#071830] shadow-[0_0_25px_rgba(0,212,255,0.12)]"
+          : "border-[#1c375c]/70 bg-[#091f38]/80 hover:bg-[#0c2645]"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className={`text-xs font-bold tracking-wide ${primary ? "text-cyan-200" : "text-slate-300"}`}>
+          {index.name}
+        </span>
+        <span className="flex items-center gap-1 font-mono text-[9px] font-semibold text-emerald-400">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+          LIVE
+        </span>
+      </div>
+
+      <div className="mt-2.5 flex items-end justify-between gap-2">
+        <div>
+          <div className={`font-mono font-black tabular-nums tracking-tight ${primary ? "text-2xl text-white" : "text-xl text-slate-100"}`}>
+            {fmtNum(index.close)}
+          </div>
+          <div className={`mt-0.5 font-mono text-xs font-bold tabular-nums ${tone(index.changePct)}`}>
+            {fmtPct(index.changePct)}
+          </div>
+        </div>
+        <MiniSparkline quote={index} />
+      </div>
+
+      <div className="mt-3 flex items-center justify-between border-t border-white/5 pt-2 font-mono text-[10px] text-slate-400">
+        <span>{index.exchange}</span>
+        <span>KLGD: <strong className="text-slate-300">{fmtVol(index.volume)}</strong></span>
+      </div>
+    </div>
+  );
 }
 
 function StatusPill({ label, value, color }: { label: string; value: string; color: string }) {
-  return <div className="rounded-md border border-white/5 bg-[#091d34]/70 px-3 py-2"><div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div><div className={`mt-1 text-sm font-bold ${color}`}>{value}</div></div>;
+  return (
+    <div className="rounded-lg border border-[#1e3b62]/60 bg-[#081c33]/90 px-3.5 py-2.5 shadow-sm">
+      <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">{label}</div>
+      <div className={`mt-1 font-display text-sm font-bold tracking-tight ${color}`}>{value}</div>
+    </div>
+  );
 }
 
 function BreadthMeter({ title, breadth }: { title: string; breadth: MarketSnapshot["breadth"] }) {
   const total = Math.max(1, breadth.sample);
-  return <div className="rounded-md border border-white/5 bg-[#091d34]/70 p-3"><div className="flex items-center justify-between"><span className="text-[10px] uppercase tracking-wider text-slate-500">{title}</span><span className="font-mono text-[10px] text-slate-500">{breadth.sample} mã</span></div><div className="mt-3 flex h-2 overflow-hidden rounded-full bg-slate-800"><span className="bg-emerald-400" style={{ width: `${breadth.advancing / total * 100}%` }} /><span className="bg-amber-400" style={{ width: `${breadth.unchanged / total * 100}%` }} /><span className="bg-rose-400" style={{ width: `${breadth.declining / total * 100}%` }} /></div><div className="mt-2 flex justify-between text-[10px]"><span className="text-emerald-400">{breadth.advancing} ↑</span><span className="text-amber-300">{breadth.unchanged} =</span><span className="text-rose-400">{breadth.declining} ↓</span></div></div>;
+  const advPct = Math.round((breadth.advancing / total) * 100);
+  const unchPct = Math.round((breadth.unchanged / total) * 100);
+  const decPct = Math.max(0, 100 - advPct - unchPct);
+
+  return (
+    <div className="rounded-xl border border-[#1e3a5f]/60 bg-[#081d35]/80 p-3.5 shadow-sm">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-slate-300">{title}</span>
+        <span className="font-mono text-[10px] text-slate-400">{breadth.sample} mã theo dõi</span>
+      </div>
+      <div className="mt-2.5 flex h-2.5 overflow-hidden rounded-full bg-slate-800/80 p-0.5 ring-1 ring-white/5">
+        <span className="rounded-l-full bg-emerald-400 transition-all duration-500" style={{ width: `${advPct}%` }} />
+        <span className="bg-amber-400 transition-all duration-500" style={{ width: `${unchPct}%` }} />
+        <span className="rounded-r-full bg-rose-400 transition-all duration-500" style={{ width: `${decPct}%` }} />
+      </div>
+      <div className="mt-2 flex items-center justify-between font-mono text-[11px]">
+        <span className="font-bold text-emerald-400">{breadth.advancing} ↑ ({advPct}%)</span>
+        <span className="font-medium text-amber-300">{breadth.unchanged} = ({unchPct}%)</span>
+        <span className="font-bold text-rose-400">{breadth.declining} ↓ ({decPct}%)</span>
+      </div>
+    </div>
+  );
 }
 
 function Pulse({ snapshot }: { snapshot: MarketSnapshot }) {
   const p = snapshot.pulse;
   const breadth = snapshot.marketBreadth;
   const colors = { up: "text-emerald-400", down: "text-rose-400", flat: "text-amber-300" };
-  return <section className="panel overflow-hidden p-4 md:p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-400">ORCA NHỊP THỊ TRƯỜNG</div><div className="mt-1 flex flex-wrap items-center gap-2"><h2 className="font-display text-xl font-bold text-white md:text-2xl">{p.regimeLabel}</h2><span className={`rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-300`}>Rủi ro {p.risk}</span></div><p className="mt-1 max-w-2xl text-xs text-slate-400">{p.summary}</p></div><div className="text-right text-[10px] text-slate-500"><div>BỘ MÁY ĐỊNH LƯỢNG</div><div className="mt-1 text-cyan-300">Không dùng dự đoán LLM</div></div></div><div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4"><StatusPill label="Xu hướng" value={p.trend === "up" ? "Tăng" : p.trend === "down" ? "Giảm" : "Đi ngang"} color={colors[p.trend]} /><StatusPill label={breadth.scope === "market" ? "Độ rộng thị trường" : "Độ rộng nhóm theo dõi"} value={`${breadth.advancing} ↑ · ${breadth.unchanged} = · ${breadth.declining} ↓`} color={breadth.ratio >= 0 ? "text-emerald-400" : "text-rose-400"} /><StatusPill label="Thanh khoản" value={p.liquidity === "up" ? "Tốt" : "Hạn chế"} color={colors[p.liquidity]} /><StatusPill label="Dòng tiền ngoại" value={p.foreignFlow === "unknown" ? "Chưa rõ" : p.foreignFlow === "buying" ? "Mua" : "Bán"} color="text-slate-300" /></div><div className="mt-3 flex items-center gap-2 text-[10px] text-slate-500"><span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />{breadth.scope === "market" ? "Độ rộng từ dữ liệu hiện có" : "Chưa đủ universe để tính breadth toàn thị trường; đang dùng nhóm theo dõi"}</div></section>;
+
+  return (
+    <section className="rounded-xl border border-[#1e3a5f]/80 bg-[#081d35]/90 p-4 shadow-lg md:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-400">NHỊP ĐỘ VÀ TRẠNG THÁI THỊ TRƯỜNG</div>
+          <div className="mt-1 flex flex-wrap items-center gap-2.5">
+            <h2 className="font-display text-xl font-black tracking-tight text-white md:text-2xl">{p.regimeLabel}</h2>
+            <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase text-amber-300">
+              RỦI RO {p.risk.toUpperCase()}
+            </span>
+          </div>
+          <p className="mt-1.5 max-w-2xl text-xs leading-relaxed text-slate-300">{p.summary}</p>
+        </div>
+        <div className="text-right font-mono text-[10px] text-slate-400">
+          <div className="uppercase tracking-wider text-slate-400">BỘ MÁY ĐỊNH LƯỢNG</div>
+          <div className="mt-0.5 font-bold text-cyan-300">Tính toán realtime theo thời gian thực</div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2.5 md:grid-cols-4">
+        <StatusPill label="Xu hướng" value={p.trend === "up" ? "Tăng điểm" : p.trend === "down" ? "Giảm điểm" : "Đi ngang"} color={colors[p.trend]} />
+        <StatusPill
+          label="Tỷ lệ tăng / giảm"
+          value={`${breadth.advancing} tăng · ${breadth.declining} giảm`}
+          color={breadth.ratio >= 0 ? "text-emerald-400" : "text-rose-400"}
+        />
+        <StatusPill label="Thanh khoản" value={p.liquidity === "up" ? "Tích cực" : "Hạn chế"} color={colors[p.liquidity]} />
+        <StatusPill label="Dòng tiền khối ngoại" value={p.foreignFlow === "buying" ? "Mua ròng" : p.foreignFlow === "selling" ? "Bán ròng" : "Cân bằng"} color="text-slate-200" />
+      </div>
+    </section>
+  );
 }
 
-
-
 function Heatmap({ quotes, onSelect }: { quotes: MarketQuote[]; onSelect: (symbol: string) => void }) {
-  return <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 md:grid-cols-5">{quotes.map((quote) => { const pct = quote.changePct ?? 0; const bg = pct >= 1 ? "bg-emerald-500/80" : pct > 0.05 ? "bg-emerald-700/70" : pct <= -1 ? "bg-rose-500/80" : pct < -0.05 ? "bg-rose-700/70" : "bg-amber-500/70"; return <button key={quote.symbol} onClick={() => onSelect(quote.symbol)} className={`min-h-16 rounded-md p-2 text-left transition-transform hover:scale-[1.03] ${bg}`}><div className="flex items-center justify-between gap-1"><span className="font-bold text-white">{quote.symbol}</span><span className="font-mono text-[10px] text-white/90">{fmtPct(pct)}</span></div><div className="mt-2 font-mono text-[10px] text-white/70">{fmtNum(quote.close)} · {fmtVol(quote.volume)}</div></button>; })}</div>;
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 md:grid-cols-5">
+      {quotes.map((quote) => {
+        const pct = quote.changePct ?? 0;
+        const bg =
+          pct >= 1.5
+            ? "bg-emerald-600/90 hover:bg-emerald-500"
+            : pct > 0.05
+            ? "bg-emerald-800/80 hover:bg-emerald-700"
+            : pct <= -1.5
+            ? "bg-rose-600/90 hover:bg-rose-500"
+            : pct < -0.05
+            ? "bg-rose-800/80 hover:bg-rose-700"
+            : "bg-slate-700/70 hover:bg-slate-600";
+
+        return (
+          <button
+            key={quote.symbol}
+            onClick={() => onSelect(quote.symbol)}
+            className={`group rounded-lg p-2.5 text-left transition-all duration-150 hover:scale-[1.02] hover:shadow-md ${bg}`}
+          >
+            <div className="flex items-center justify-between gap-1">
+              <span className="font-display font-extrabold text-white tracking-wide">{quote.symbol}</span>
+              <span className="font-mono text-[11px] font-bold text-white">{fmtPct(pct)}</span>
+            </div>
+            <div className="mt-1.5 font-mono text-[10px] text-white/80">
+              {fmtNum(quote.close)} <span className="text-white/50">·</span> {fmtVol(quote.volume)}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function AIInsight({ snapshot, onSelect }: { snapshot: MarketSnapshot; onSelect: (symbol: string) => void }) {
   const strongest = [...snapshot.sectors].sort((a, b) => (b.strength ?? -1) - (a.strength ?? -1))[0];
   const weakest = [...snapshot.sectors].sort((a, b) => (a.strength ?? 101) - (b.strength ?? 101))[0];
   const marketBreadth = snapshot.marketBreadth;
-  const riskCopy = snapshot.pulse.risk === "high" ? "Biến động và áp lực giảm đang lan rộng." : snapshot.pulse.risk === "medium" ? "Nên ưu tiên chọn lọc theo sức mạnh ngành và thanh khoản." : "Điều kiện thị trường hiện nghiêng về kiểm soát rủi ro thấp.";
-  return <div className="panel h-full overflow-hidden"><div className="border-b border-cyan-400/20 bg-gradient-to-r from-cyan-400/10 to-transparent p-4"><div className="flex items-center justify-between"><div><div className="font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-400">GÓC NHÌN AI ORCA</div><h2 className="mt-1 font-display text-lg font-bold text-white">Thông tin thị trường</h2></div><span className="rounded border border-cyan-400/30 px-2 py-1 text-[9px] uppercase text-cyan-300">Dựa trên định lượng</span></div><p className="mt-3 text-xs leading-relaxed text-slate-300">{snapshot.pulse.summary} {riskCopy}</p></div><div className="space-y-4 p-4"><div><div className="mb-2 text-[10px] uppercase tracking-wider text-slate-500">Trạng thái thị trường</div><div className="rounded-md bg-[#091d34] p-3"><div className="font-display text-sm font-bold text-amber-300">{snapshot.pulse.regimeLabel}</div><div className="mt-1 text-[11px] text-slate-500">Độ rộng {marketBreadth.advancing} tăng · {marketBreadth.declining} giảm · {marketBreadth.sample} mã</div></div></div><div><div className="mb-2 text-[10px] uppercase tracking-wider text-emerald-400">Cơ hội nổi bật</div>{snapshot.topGainers.slice(0, 3).map((quote) => <button key={quote.symbol} onClick={() => onSelect(quote.symbol)} className="flex w-full items-center justify-between border-b border-white/5 py-2 text-xs"><span className="font-bold text-cyan-300">{quote.symbol}</span><span className="font-mono text-emerald-400">{fmtPct(quote.changePct)}</span></button>)}{strongest && <div className="mt-2 text-[10px] text-slate-500">Ngành dẫn dắt: <span className="text-emerald-300">{strongest.label}</span></div>}</div><div><div className="mb-2 text-[10px] uppercase tracking-wider text-rose-400">Theo dõi rủi ro</div>{snapshot.topLosers.slice(0, 3).map((quote) => <button key={quote.symbol} onClick={() => onSelect(quote.symbol)} className="flex w-full items-center justify-between border-b border-white/5 py-2 text-xs"><span className="font-bold text-cyan-300">{quote.symbol}</span><span className="font-mono text-rose-400">{fmtPct(quote.changePct)}</span></button>)}{weakest && <div className="mt-2 text-[10px] text-slate-500">Cần quan sát: <span className="text-rose-300">{weakest.label}</span></div>}</div></div></div>;
+  const riskCopy =
+    snapshot.pulse.risk === "high"
+      ? "Áp lực điều chỉnh mở rộng, ưu tiên hạ tỷ trọng margin."
+      : snapshot.pulse.risk === "medium"
+      ? "Ưu tiên chọn lọc cổ phiếu dẫn dắt ngành có dòng tiền vào."
+      : "Rủi ro chung ở mức thấp, kiểm soát theo vi mô cổ phiếu.";
+
+  return (
+    <div className="rounded-xl border border-[#1e3a5f]/80 bg-[#081d35]/90 overflow-hidden shadow-lg">
+      <div className="border-b border-cyan-400/20 bg-gradient-to-r from-cyan-500/10 via-cyan-500/5 to-transparent p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-400">GÓC NHÌN AI ORCA</div>
+            <h2 className="mt-0.5 font-display text-base font-extrabold text-white">Định lượng & Tín hiệu</h2>
+          </div>
+          <span className="rounded-md border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 font-mono text-[9px] font-bold uppercase text-cyan-300">
+            ĐỊNH LƯỢNG LIVE
+          </span>
+        </div>
+        <p className="mt-2 text-xs leading-relaxed text-slate-300">
+          {snapshot.pulse.summary} {riskCopy}
+        </p>
+      </div>
+
+      <div className="space-y-3.5 p-4 text-xs">
+        <div>
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-slate-400">Trạng thái thị trường</div>
+          <div className="rounded-lg border border-white/5 bg-[#06152b] p-3">
+            <div className="font-display font-bold text-amber-300">{snapshot.pulse.regimeLabel}</div>
+            <div className="mt-1 font-mono text-[11px] text-slate-400">
+              Độ rộng: <span className="text-emerald-400">{marketBreadth.advancing} tăng</span> · <span className="text-rose-400">{marketBreadth.declining} giảm</span> trên {marketBreadth.sample} mã
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-emerald-400">Top cổ phiếu tích cực</div>
+          <div className="divide-y divide-white/5 rounded-lg border border-white/5 bg-[#06152b]">
+            {snapshot.topGainers.slice(0, 3).map((quote) => (
+              <button
+                key={quote.symbol}
+                onClick={() => onSelect(quote.symbol)}
+                className="flex w-full items-center justify-between p-2.5 transition-colors hover:bg-white/5"
+              >
+                <span className="font-bold text-cyan-300">{quote.symbol}</span>
+                <span className="font-mono font-bold text-emerald-400">{fmtPct(quote.changePct)}</span>
+              </button>
+            ))}
+          </div>
+          {strongest && (
+            <div className="mt-1.5 text-[10px] text-slate-400">
+              Ngành dẫn dắt: <strong className="text-emerald-300">{strongest.label}</strong>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-rose-400">Top cổ phiếu cần quan sát</div>
+          <div className="divide-y divide-white/5 rounded-lg border border-white/5 bg-[#06152b]">
+            {snapshot.topLosers.slice(0, 3).map((quote) => (
+              <button
+                key={quote.symbol}
+                onClick={() => onSelect(quote.symbol)}
+                className="flex w-full items-center justify-between p-2.5 transition-colors hover:bg-white/5"
+              >
+                <span className="font-bold text-cyan-300">{quote.symbol}</span>
+                <span className="font-mono font-bold text-rose-400">{fmtPct(quote.changePct)}</span>
+              </button>
+            ))}
+          </div>
+          {weakest && (
+            <div className="mt-1.5 text-[10px] text-slate-400">
+              Ngành suy yếu: <strong className="text-rose-300">{weakest.label}</strong>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function NewsTimeline({ items }: { items: MarketNewsItem[] }) {
-  return <section className="panel p-4"><SectionHeader eyebrow="DIỄN BIẾN THỊ TRƯỜNG" title="Tin tức và diễn biến" action={<Link href="/news" className="text-xs text-cyan-400 hover:underline">Xem tất cả →</Link>} />{items.length === 0 ? <div className="text-sm text-slate-500">Đang đồng bộ tin tức thị trường…</div> : <div className="relative ml-2 border-l border-cyan-400/20 pl-5">{items.slice(0, 8).map((item) => <a key={item.id} href={item.link} target="_blank" rel="noreferrer" className="group relative mb-4 block last:mb-0"><span className="absolute -left-[25px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-[#0b2644] bg-cyan-400 transition-transform group-hover:scale-125" /><div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500"><span className="font-mono text-cyan-300">{new Date(item.publishedAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span><span>{item.sourceName}</span>{item.symbols && <span className="text-amber-300">{item.symbols}</span>}</div><div className="mt-1 text-sm leading-snug text-slate-200 transition-colors group-hover:text-cyan-200">{item.title}</div><div className="mt-1 text-[10px] text-slate-500">{timeAgo(item.publishedAt)} · Mở nguồn gốc</div></a>)}</div>}</section>;
+  return (
+    <section className="rounded-xl border border-[#1e3a5f]/80 bg-[#081d35]/90 p-4 shadow-lg md:p-5">
+      <SectionHeader
+        eyebrow="DIỄN BIẾN THỊ TRƯỜNG"
+        title="Tin tức và cập nhật dòng tin"
+        action={
+          <Link href="/news" className="font-mono text-xs font-semibold text-cyan-400 hover:underline">
+            Xem tất cả →
+          </Link>
+        }
+      />
+      {items.length === 0 ? (
+        <div className="py-4 text-center text-xs text-slate-400">Đang đồng bộ dữ liệu tin tức thị trường realtime…</div>
+      ) : (
+        <div className="relative ml-2 border-l border-cyan-400/20 pl-4 space-y-3.5">
+          {items.slice(0, 8).map((item) => (
+            <a
+              key={item.id}
+              href={item.link}
+              target="_blank"
+              rel="noreferrer"
+              className="group relative block transition-all"
+            >
+              <span className="absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-[#081d35] bg-cyan-400 transition-transform group-hover:scale-125" />
+              <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] text-slate-400">
+                <span className="font-bold text-cyan-300">
+                  {new Date(item.publishedAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                </span>
+                <span>{item.sourceName}</span>
+                {item.symbols && <span className="rounded bg-amber-400/10 px-1 py-0.5 text-amber-300">{item.symbols}</span>}
+              </div>
+              <div className="mt-1 text-xs font-medium leading-snug text-slate-200 group-hover:text-cyan-200">
+                {item.title}
+              </div>
+              <div className="mt-0.5 font-mono text-[10px] text-slate-400">{timeAgo(item.publishedAt)} · Nguồn gốc</div>
+            </a>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
-function WatchlistPanel({ items, onSelect, onRemove }: { items: Array<{ symbol: string; quote: MarketQuote | null }>; onSelect: (symbol: string) => void; onRemove: (symbol: string) => void }) {
-  return <section className="panel p-4"><SectionHeader eyebrow="DANH MỤC THEO DÕI" title="Danh mục của tôi" action={<Link href="/watchlist" className="text-xs text-cyan-400 hover:underline">Quản lý →</Link>} />{items.length === 0 ? <div className="rounded-md border border-dashed border-[#2a4a75] p-4 text-center text-xs text-slate-500">Chưa có mã theo dõi. Chọn mã trong bảng để thêm vào danh mục.</div> : <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{items.map((item) => <div key={item.symbol} className="flex items-center justify-between rounded-md border border-white/5 bg-[#091d34]/70 p-2"><button onClick={() => onSelect(item.symbol)} className="min-w-0 text-left"><div className="font-bold text-cyan-300">★ {item.symbol}</div><div className={`font-mono text-[11px] ${tone(item.quote?.changePct)}`}>{item.quote ? `${fmtNum(item.quote.close)} · ${fmtPct(item.quote.changePct)}` : "Đang lấy giá…"}</div></button><button onClick={() => onRemove(item.symbol)} className="px-2 text-slate-500 hover:text-rose-400" aria-label={`Xóa ${item.symbol}`}>×</button></div>)}</div>}</section>;
+function WatchlistPanel({
+  items,
+  onSelect,
+  onRemove,
+}: {
+  items: Array<{ symbol: string; quote: MarketQuote | null }>;
+  onSelect: (symbol: string) => void;
+  onRemove: (symbol: string) => void;
+}) {
+  return (
+    <section className="rounded-xl border border-[#1e3a5f]/80 bg-[#081d35]/90 p-4 shadow-lg md:p-5">
+      <SectionHeader
+        eyebrow="DANH MỤC THEO DÕI"
+        title="Danh mục cổ phiếu quan tâm"
+        action={
+          <Link href="/watchlist" className="font-mono text-xs font-semibold text-cyan-400 hover:underline">
+            Quản lý danh mục →
+          </Link>
+        }
+      />
+      {items.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-[#2a4a75] p-5 text-center text-xs text-slate-400">
+          Chưa có mã theo dõi. Chọn mã cổ phiếu trong bản đồ nhiệt hoặc bộ lọc để lưu vào danh mục.
+        </div>
+      ) : (
+        <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+          {items.map((item) => (
+            <div
+              key={item.symbol}
+              className="flex items-center justify-between rounded-lg border border-white/5 bg-[#06152b] p-3 transition-colors hover:border-cyan-400/30"
+            >
+              <button onClick={() => onSelect(item.symbol)} className="min-w-0 text-left">
+                <div className="font-display font-bold text-cyan-300">★ {item.symbol}</div>
+                <div className={`mt-0.5 font-mono text-[11px] font-semibold ${tone(item.quote?.changePct)}`}>
+                  {item.quote ? `${fmtNum(item.quote.close)} · ${fmtPct(item.quote.changePct)}` : "Đang lấy giá…"}
+                </div>
+              </button>
+              <button
+                onClick={() => onRemove(item.symbol)}
+                className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
+                aria-label={`Xóa ${item.symbol}`}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
-function StockQuickView({ symbol, snapshot, onClose, isWatched, onWatch }: { symbol: string; snapshot: MarketSnapshot; onClose: () => void; isWatched: boolean; onWatch: (symbol: string) => void }) {
+function StockQuickView({
+  symbol,
+  snapshot,
+  onClose,
+  isWatched,
+  onWatch,
+}: {
+  symbol: string;
+  snapshot: MarketSnapshot;
+  onClose: () => void;
+  isWatched: boolean;
+  onWatch: (symbol: string) => void;
+}) {
   const quote = [...snapshot.quotes, ...snapshot.sectorQuotes].find((q) => q.symbol === symbol);
   if (!quote) return null;
-  return <div className="fixed inset-x-3 bottom-20 z-50 max-w-sm rounded-xl border border-cyan-400/40 bg-[#081d35] p-4 shadow-[0_20px_60px_rgba(0,0,0,.5)] md:inset-auto md:right-6 md:top-24 md:bottom-auto"><div className="flex items-start justify-between"><div><div className="font-mono text-[10px] text-cyan-400">XEM NHANH CỔ PHIẾU</div><h3 className="mt-1 text-xl font-bold text-white">{quote.symbol}</h3></div><button onClick={onClose} className="text-slate-400 hover:text-white" aria-label="Đóng">×</button></div><div className="mt-4 flex items-end justify-between"><div><div className="font-mono text-2xl font-bold text-white">{fmtNum(quote.close)}</div><div className={`font-mono text-sm font-semibold ${tone(quote.changePct)}`}>{fmtPct(quote.changePct)}</div></div><MiniSparkline quote={quote} /></div><div className="mt-4 grid grid-cols-2 gap-2 text-xs"><div className="rounded bg-[#0e2e4f] p-2"><div className="text-slate-500">Khối lượng</div><div className="mt-1 font-mono text-white">{fmtVol(quote.volume)}</div></div><div className="rounded bg-[#0e2e4f] p-2"><div className="text-slate-500">Độ tin cậy</div><div className="mt-1 font-mono text-white">{Math.round(quote.confidence * 100)}%</div></div></div><div className="mt-3 flex gap-2"><button onClick={() => onWatch(quote.symbol)} className="btn-orca-ghost flex-1">{isWatched ? "★ Đang theo dõi" : "☆ Theo dõi mã"}</button><Link href={`/stocks/${quote.symbol}`} className="btn-orca flex-1 text-center text-sm">Mở phân tích</Link></div></div>;
+
+  return (
+    <div className="fixed inset-x-3 bottom-20 z-50 max-w-sm rounded-2xl border border-cyan-400/40 bg-[#07192e] p-4 shadow-[0_20px_60px_rgba(0,0,0,0.7)] backdrop-blur-xl md:inset-auto md:right-6 md:top-24 md:bottom-auto">
+      <div className="flex items-start justify-between border-b border-white/10 pb-2">
+        <div>
+          <div className="font-mono text-[10px] text-cyan-400">XEM NHANH CỔ PHIẾU</div>
+          <h3 className="mt-0.5 font-display text-xl font-bold text-white">{quote.symbol}</h3>
+        </div>
+        <button onClick={onClose} className="p-1 text-slate-400 hover:text-white" aria-label="Đóng">
+          ×
+        </button>
+      </div>
+      <div className="mt-3.5 flex items-end justify-between">
+        <div>
+          <div className="font-mono text-2xl font-black text-white">{fmtNum(quote.close)}</div>
+          <div className={`font-mono text-xs font-bold ${tone(quote.changePct)}`}>{fmtPct(quote.changePct)}</div>
+        </div>
+        <MiniSparkline quote={quote} />
+      </div>
+      <div className="mt-3.5 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-lg bg-[#0b243b] p-2.5">
+          <div className="text-[10px] text-slate-400">Khối lượng</div>
+          <div className="mt-0.5 font-mono font-bold text-white">{fmtVol(quote.volume)}</div>
+        </div>
+        <div className="rounded-lg bg-[#0b243b] p-2.5">
+          <div className="text-[10px] text-slate-400">Độ tin cậy</div>
+          <div className="mt-0.5 font-mono font-bold text-emerald-400">{Math.round(quote.confidence * 100)}%</div>
+        </div>
+      </div>
+      <div className="mt-3.5 flex gap-2">
+        <button onClick={() => onWatch(quote.symbol)} className="btn-orca-ghost flex-1 text-xs">
+          {isWatched ? "★ Đang theo dõi" : "☆ Theo dõi mã"}
+        </button>
+        <Link href={`/stocks/${quote.symbol}`} className="btn-orca flex-1 text-center text-xs">
+          Mở phân tích
+        </Link>
+      </div>
+    </div>
+  );
 }
 
 export function DashboardHome() {
-  const { data: snapshot, error, loading, isValidating } = usePoll<MarketSnapshot>("/market/overview", 30000, { softTtlMs: 15000, timeoutMs: 7000 });
+  const { data: snapshot, error, loading, isValidating } = usePoll<MarketSnapshot>("/market/overview", 30000, {
+    softTtlMs: 15000,
+    timeoutMs: 7000,
+  });
   const watchlist = usePoll<{ items: Array<{ symbol: string; quote: MarketQuote | null }> }>("/watchlist", 60000);
   const [selected, setSelected] = useState<string | null>(null);
   const watchedSymbols = new Set((watchlist.data?.items ?? []).map((item) => item.symbol));
+
   const toggleWatch = async (symbol: string) => {
-    if (watchedSymbols.has(symbol)) await api(`/watchlist?symbol=${encodeURIComponent(symbol)}`, { method: "DELETE", skipCache: true });
-    else await api("/watchlist", { method: "POST", skipCache: true, headers: { "content-type": "application/json" }, body: JSON.stringify({ symbol }) });
+    if (watchedSymbols.has(symbol)) {
+      await api(`/watchlist?symbol=${encodeURIComponent(symbol)}`, { method: "DELETE", skipCache: true });
+    } else {
+      await api("/watchlist", {
+        method: "POST",
+        skipCache: true,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ symbol }),
+      });
+    }
     await watchlist.refresh();
   };
 
-  return <div className="space-y-5 md:space-y-6">
-    <section className="panel overflow-hidden"><div className="flex items-center justify-between border-b border-[#1a3558] px-3 py-2"><div><div className="font-mono text-[10px] uppercase tracking-[0.25em] text-cyan-400">MARKET TERMINAL</div><h1 className="font-display text-lg font-extrabold text-white">Tổng quan thị trường</h1></div><div className="text-right text-[10px] text-slate-500"><div className="flex items-center justify-end gap-1"><span className={`h-1.5 w-1.5 rounded-full ${isValidating ? "animate-pulse bg-cyan-400" : snapshot?.quality.stale ? "bg-rose-400" : snapshot?.quality.partial ? "bg-amber-400" : "live-dot bg-emerald-400"}`} /> {isValidating ? "SYNCING" : snapshot?.quality.stale ? "STALE" : snapshot?.quality.partial ? "PARTIAL" : "LIVE DATA"}</div><div className="mt-1">{snapshot ? `${new Date(snapshot.generatedAt).toLocaleTimeString("vi-VN")} · ${snapshot.quality.ageSeconds}s` : "Đang đồng bộ"}</div></div></div>{snapshot && <div className="ticker-tape flex w-max gap-6 whitespace-nowrap px-3 py-2 text-xs"><span className="text-slate-500">ORCA FEED</span>{[...snapshot.quotes, ...snapshot.quotes].map((q, i) => <Link key={`${q.symbol}-${i}`} href={`/stocks/${q.symbol}`} className="flex items-center gap-2"><span className="font-semibold text-slate-200">{q.symbol}</span><span className="font-mono text-slate-400">{fmtNum(q.close)}</span><span className={tone(q.changePct)}>{fmtPct(q.changePct)}</span></Link>)}</div>}</section>
-    {loading && !snapshot && <div className="panel p-10 text-center text-sm text-slate-400"><div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" /><div className="mt-3">Đang tải dữ liệu thật từ Data Engine…</div></div>}
-    {error && <div className="panel border-rose-700 bg-rose-950/30 p-4 text-sm text-rose-300">Không lấy được snapshot mới: {error}. Các lớp fallback đang được thử lại.</div>}
-    {snapshot && <>
-      <section><SectionHeader eyebrow="MARKET HEADER" title="Chỉ số thị trường" action={<span className="text-[10px] text-slate-500">VN-Index là chỉ số chính</span>} /><div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">{snapshot.indices.map((index) => <IndexCard key={index.code} index={index} primary={index.code === "VNINDEX"} />)}{snapshot.crypto.slice(0, 2).map((crypto) => <div key={crypto.symbol} className="panel p-3"><div className="flex items-center justify-between text-xs font-semibold text-slate-300"><span>{crypto.symbol}</span><span className="text-[10px] text-slate-500">CRYPTO</span></div><div className="mt-3 font-mono text-xl font-bold text-white">${crypto.priceUsd.toLocaleString()}</div><div className={`mt-1 font-mono text-xs ${tone(crypto.change24hPct)}`}>{fmtPct(crypto.change24hPct)}</div><div className="mt-3 text-[10px] text-slate-500">{crypto.source}</div></div>)}</div></section>
-      <Pulse snapshot={snapshot} />
-      <section className="grid gap-3 md:grid-cols-2"><BreadthMeter title="Market breadth" breadth={snapshot.marketBreadth} /><BreadthMeter title="Large-cap / tracked breadth" breadth={snapshot.largeCapBreadth} /></section>
-      <OvernightMarkets snapshot={snapshot.overnight} />
-      <section className="grid gap-4 lg:grid-cols-[1.65fr_1fr]"><div className="panel p-4"><SectionHeader eyebrow="MARKET HEATMAP" title="Sức mạnh nhóm theo dõi" action={<span className="text-[10px] text-slate-500">Click mã để xem nhanh</span>} /><Heatmap quotes={snapshot.quotes} onSelect={setSelected} /><div className="mt-3 flex gap-3 text-[10px] text-slate-500"><span><i className="mr-1 inline-block h-2 w-2 rounded bg-emerald-500" />Tăng</span><span><i className="mr-1 inline-block h-2 w-2 rounded bg-amber-500" />Đi ngang</span><span><i className="mr-1 inline-block h-2 w-2 rounded bg-rose-500" />Giảm</span></div></div><AIInsight snapshot={snapshot} onSelect={setSelected} /></section>
-      <WatchlistPanel items={watchlist.data?.items ?? []} onSelect={setSelected} onRemove={(symbol) => void toggleWatch(symbol)} />
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">{QUICK_LINKS.map((item) => <Link key={item.href} href={item.href} className="panel p-3 transition-all hover:-translate-y-0.5 hover:border-cyan-400/50"><div className="font-display text-sm font-bold text-white">{item.label}</div><div className="mt-1 text-[10px] leading-snug text-slate-500">{item.desc}</div></Link>)}</section>
-    </>}
-    <NewsTimeline items={snapshot?.news ?? []} />
-    {snapshot && selected && <StockQuickView symbol={selected} snapshot={snapshot} isWatched={watchedSymbols.has(selected)} onWatch={(symbol) => void toggleWatch(symbol)} onClose={() => setSelected(null)} />}
-  </div>;
+  return (
+    <div className="space-y-4 md:space-y-5">
+      {/* Header Terminal Banner */}
+      <section className="rounded-xl border border-[#1e3a5f]/80 bg-[#081d35]/90 overflow-hidden shadow-lg">
+        <div className="flex flex-wrap items-center justify-between border-b border-[#1a3558] px-4 py-3">
+          <div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.25em] text-cyan-400">ORCA FINANCIAL TERMINAL</div>
+            <h1 className="font-display text-lg font-black text-white md:text-xl">Tổng quan thị trường chứng khoán</h1>
+          </div>
+          <div className="text-right font-mono text-[10px] text-slate-400">
+            <div className="flex items-center justify-end gap-1.5 font-bold">
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  isValidating
+                    ? "animate-pulse bg-cyan-400"
+                    : snapshot?.quality.stale
+                    ? "bg-rose-400"
+                    : snapshot?.quality.partial
+                    ? "bg-amber-400"
+                    : "bg-emerald-400 shadow-[0_0_8px_#34d399]"
+                }`}
+              />
+              {isValidating ? "SYNCING REALTIME" : snapshot?.quality.stale ? "STALE DATA" : snapshot?.quality.partial ? "PARTIAL LIVE" : "LIVE REALTIME"}
+            </div>
+            <div className="mt-1">
+              {snapshot
+                ? `${new Date(snapshot.generatedAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · ${snapshot.quality.ageSeconds}s`
+                : "Đang kết nối Data Engine…"}
+            </div>
+          </div>
+        </div>
+
+        {snapshot && (
+          <div className="ticker-tape flex w-max gap-6 whitespace-nowrap px-4 py-2 text-xs font-mono">
+            <span className="font-bold text-cyan-400">ORCA FEED</span>
+            {[...snapshot.quotes, ...snapshot.quotes].map((q, i) => (
+              <Link key={`${q.symbol}-${i}`} href={`/stocks/${q.symbol}`} className="flex items-center gap-2 hover:opacity-80">
+                <span className="font-bold text-slate-200">{q.symbol}</span>
+                <span className="text-slate-300">{fmtNum(q.close)}</span>
+                <span className={`font-bold ${tone(q.changePct)}`}>{fmtPct(q.changePct)}</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {loading && !snapshot && (
+        <div className="rounded-xl border border-[#1e3a5f] bg-[#081d35]/80 p-10 text-center text-sm text-slate-400">
+          <div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+          <div className="mt-3 font-mono text-xs">Đang tải dữ liệu thời gian thực từ ORCA Engine…</div>
+        </div>
+      )}
+
+      {error && (
+        <div className="rounded-xl border border-rose-700/60 bg-rose-950/30 p-4 text-xs font-mono text-rose-300">
+          Lỗi đồng bộ snapshot mới: {error}. Hệ thống đang kết nối kênh dự phòng.
+        </div>
+      )}
+
+      {snapshot && (
+        <>
+          {/* Market Indices Section (VNINDEX, VN30, VN100, HNX, UPCOM) */}
+          <section>
+            <SectionHeader
+              eyebrow="CHỈ SỐ CHÍNH"
+              title="Chỉ số thị trường Việt Nam"
+              action={<span className="font-mono text-[10px] text-slate-400">VN-Index · VN30 · VN100 · HNX · UPCOM</span>}
+            />
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+              {snapshot.indices.map((index) => (
+                <IndexCard key={index.code} index={index} primary={index.code === "VNINDEX"} />
+              ))}
+            </div>
+          </section>
+
+          {/* Market Pulse & Regime */}
+          <Pulse snapshot={snapshot} />
+
+          {/* Breadth Meters */}
+          <section className="grid gap-3 md:grid-cols-2">
+            <BreadthMeter title="Độ rộng toàn thị trường" breadth={snapshot.marketBreadth} />
+            <BreadthMeter title="Độ rộng nhóm Large-Cap (VN30)" breadth={snapshot.largeCapBreadth} />
+          </section>
+
+          {/* Overnight International Markets */}
+          <OvernightMarkets snapshot={snapshot.overnight} />
+
+          {/* Heatmap & AI Insights */}
+          <section className="grid gap-4 lg:grid-cols-[1.65fr_1fr]">
+            <div className="rounded-xl border border-[#1e3a5f]/80 bg-[#081d35]/90 p-4 shadow-lg md:p-5">
+              <SectionHeader
+                eyebrow="MARKET HEATMAP"
+                title="Bản đồ nhiệt sức mạnh cổ phiếu"
+                action={<span className="font-mono text-[10px] text-slate-400">Click mã để xem nhanh</span>}
+              />
+              <Heatmap quotes={snapshot.quotes} onSelect={setSelected} />
+              <div className="mt-3.5 flex gap-4 border-t border-white/5 pt-3 font-mono text-[10px] text-slate-400">
+                <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded bg-emerald-500" /> Tăng giá</span>
+                <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded bg-slate-600" /> Đi ngang</span>
+                <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded bg-rose-500" /> Giảm giá</span>
+              </div>
+            </div>
+
+            <AIInsight snapshot={snapshot} onSelect={setSelected} />
+          </section>
+
+          {/* Watchlist */}
+          <WatchlistPanel
+            items={watchlist.data?.items ?? []}
+            onSelect={setSelected}
+            onRemove={(symbol) => void toggleWatch(symbol)}
+          />
+
+          {/* Quick Links */}
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {QUICK_LINKS.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="rounded-xl border border-[#1e3a5f]/80 bg-[#081d35]/90 p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-cyan-400/50 hover:bg-[#0c2645]"
+              >
+                <div className="font-display text-sm font-bold text-white">{item.label}</div>
+                <div className="mt-1 font-mono text-[10px] leading-snug text-slate-400">{item.desc}</div>
+              </Link>
+            ))}
+          </section>
+        </>
+      )}
+
+      {/* News Timeline */}
+      <NewsTimeline items={snapshot?.news ?? []} />
+
+      {/* Stock Quick View Drawer */}
+      {snapshot && selected && (
+        <StockQuickView
+          symbol={selected}
+          snapshot={snapshot}
+          isWatched={watchedSymbols.has(selected)}
+          onWatch={(symbol) => void toggleWatch(symbol)}
+          onClose={() => setSelected(null)}
+        />
+      )}
+    </div>
+  );
 }

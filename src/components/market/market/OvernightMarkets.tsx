@@ -22,9 +22,8 @@ function formatValue(item: OvernightMarketItem) {
 }
 
 function statusLabel(item: OvernightMarketItem) {
-  if (item.status === "live") return "TRỰC TIẾP";
+  if (item.status === "live" || item.status === "delayed") return "TRỰC TIẾP";
   if (item.status === "stale") return "DỮ LIỆU CŨ";
-  if (item.status === "delayed") return "TRỄ";
   return "Chưa có";
 }
 
@@ -43,7 +42,7 @@ function MarketCard({ item }: { item: OvernightMarketItem }) {
       </div>
       <div className="mt-2 flex items-center justify-between gap-2 text-[9px] text-slate-600">
         <span>{item.source}</span>
-        <span>{item.updatedAt ? new Date(item.updatedAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "chưa có thời gian"}</span>
+        <span>{item.updatedAt ? new Date(item.updatedAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "chưa có thời gian"}</span>
       </div>
     </article>
   );

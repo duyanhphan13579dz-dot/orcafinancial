@@ -5,6 +5,8 @@
  * no daylight-saving transitions, so a constant is exact and dependency-free.
  */
 
+import { getRealtimeContext, type RealtimeContext } from "@/lib/realtime-time";
+
 export const VN_OFFSET_MINUTES = 7 * 60;
 
 /** Current instant (a normal Date; JS Dates are absolute instants). */
@@ -15,9 +17,12 @@ export function vnNow(): Date {
 /** Wall-clock parts as seen in Vietnam. */
 export function vnParts(d: Date = new Date()) {
   const shifted = new Date(d.getTime() + VN_OFFSET_MINUTES * 60_000);
+  const month = shifted.getUTCMonth() + 1;
+  const quarter = Math.ceil(month / 3) as 1 | 2 | 3 | 4;
   return {
     year: shifted.getUTCFullYear(),
-    month: shifted.getUTCMonth() + 1,
+    quarter,
+    month,
     day: shifted.getUTCDate(),
     hour: shifted.getUTCHours(),
     minute: shifted.getUTCMinutes(),
@@ -60,4 +65,8 @@ export function truncateToMinute(d: Date = new Date()): Date {
 export function isVnWeekday(d: Date = new Date()): boolean {
   const w = vnParts(d).weekday;
   return w >= 1 && w <= 5;
+}
+
+export function vnRealtimeContext(d: Date = new Date()): RealtimeContext {
+  return getRealtimeContext(d);
 }

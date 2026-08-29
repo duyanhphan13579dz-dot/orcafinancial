@@ -24,6 +24,7 @@ import {
   type FinancialQuarter,
   type StatementType,
 } from "@/lib/financial-statements";
+import { isFuturePeriod } from "@/lib/realtime-time";
 import { getHistory } from "@/lib/market";
 import { getNewsSentiment } from "@/lib/market";
 import { logger } from "@/lib/logger";
@@ -46,10 +47,7 @@ export async function ensureQuarterlyFinancials(symbol: string, numQuarters = 4)
   }
 
   const latestCompleted = getLatestCompletedQuarter();
-  existing = existing.filter((row) => {
-    const quarter = Number.parseInt(row.period.replace(/^Q/i, ""), 10);
-    return row.fiscalYear < latestCompleted.fiscalYear || (row.fiscalYear === latestCompleted.fiscalYear && quarter <= latestCompleted.quarter);
-  });
+  existing = existing.filter((row) => !isFuturePeriod(row.period, row.fiscalYear));
 
   // Synthetic rows are versioned. Do not let a previously persisted v1 model
   // mask the corrected period-specific generator; actual/provider rows remain

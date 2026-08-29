@@ -40,6 +40,8 @@ export const SECTOR_SYMBOLS = [...new Set(SECTOR_DEFINITIONS.flatMap((sector) =>
 
 export const INDICES = [
   { code: "VNINDEX", name: "VN-Index", exchange: "HOSE" },
+  { code: "VN30", name: "VN30-Index", exchange: "HOSE" },
+  { code: "VN100", name: "VN100-Index", exchange: "HOSE" },
   { code: "HNX", name: "HNX-Index", exchange: "HNX" },
   { code: "UPCOM", name: "UPCOM-Index", exchange: "UPCOM" },
 ];
@@ -203,23 +205,31 @@ export async function getQuote(symbol: string, options: { persist?: boolean; fas
         symbol,
         error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
       });
-      const to = Math.floor(Date.now() / 1000);
-      const bars = await yahooHistory(symbol, to - 86400 * 14, to, "D", providerOptions);
-      const last = bars[bars.length - 1];
-      const prev = bars.length > 1 ? bars[bars.length - 2] : null;
-      return {
-        symbol,
-        time: last.time,
-        open: last.open,
-        high: last.high,
-        low: last.low,
-        close: last.close,
-        volume: last.volume,
-        prevClose: prev?.close ?? null,
-        changePct: prev ? ((last.close - prev.close) / prev.close) * 100 : null,
-        source: "yahoo-finance",
-        confidence: 0.85,
-      } satisfies Quote;
+      try {
+        const to = Math.floor(Date.now() / 1000);
+        const bars = await yahooHistory(symbol, to - 86400 * 14, to, "D", providerOptions);
+        const last = bars[bars.length - 1];
+        const prev = bars.length > 1 ? bars[bars.length - 2] : null;
+        return {
+          symbol,
+          time: last.time,
+          open: last.open,
+          high: last.high,
+          low: last.low,
+          close: last.close,
+          volume: last.volume,
+          prevClose: prev?.close ?? null,
+          changePct: prev ? ((last.close - prev.close) / prev.close) * 100 : null,
+          source: "yahoo-finance",
+          confidence: 0.85,
+        } satisfies Quote;
+      } catch (secondaryErr) {
+        logger.warn("quote_all_providers_failed_using_mock", {
+          symbol,
+          error: secondaryErr instanceof Error ? secondaryErr.message : String(secondaryErr),
+        });
+        return tcbsMockQuote(symbol);
+      }
     }
   });
 

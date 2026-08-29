@@ -32,7 +32,7 @@ const SUGGESTIONS = [
 
 export default function AgentPage() {
   return (
-    <ProtectedPage featureName="trợ lý AI">
+    <ProtectedPage featureName="ORCA AI">
       <AgentChatShell />
     </ProtectedPage>
   );
@@ -313,7 +313,7 @@ function AgentChatShell() {
           </button>
           <div className="min-w-0 flex-1">
             <h1 className="text-sm sm:text-base md:text-lg font-bold text-white truncate">
-              Trợ lý AI ORCA
+              ORCA AI
             </h1>
             <p className="text-[10px] sm:text-xs text-slate-500 truncate hidden xs:block sm:block">
               Thị trường · Tài chính cá nhân · Doanh nghiệp · Tài sản

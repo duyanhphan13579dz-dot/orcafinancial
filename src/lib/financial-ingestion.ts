@@ -5,6 +5,7 @@ import { ensureFinancialIngestionTables } from "@/db/ensure-financial-ingestion-
 import { financialNormalizedFacts, financialSourceDocuments } from "@/db/schema";
 import { getLatestCompletedQuarter } from "@/lib/financial-statements";
 import { fetchTcbsFinancialStatements } from "@/lib/connectors/tcbs-financials";
+import { isFuturePeriod } from "@/lib/realtime-time";
 
 export type IngestionSource = "tcbs" | "vietstock" | "cafef";
 export type StatementType = "income" | "balance" | "cashflow";
@@ -90,13 +91,7 @@ function normalizedPeriod(period: string | undefined, fiscalYear: number | undef
 }
 
 function periodIsFuture(period: string, expected = getLatestCompletedQuarter()): boolean {
-  const match = /^(Q[1-4]|FY)\/(\d{4})$/i.exec(period);
-  if (!match) return true;
-  const year = Number(match[2]);
-  if (year > expected.fiscalYear) return true;
-  if (year < expected.fiscalYear) return false;
-  if (match[1].toUpperCase() === "FY") return false;
-  return Number(match[1].slice(1)) > expected.quarter;
+  return isFuturePeriod(period, expected.fiscalYear);
 }
 
 function stableHash(value: unknown): string {

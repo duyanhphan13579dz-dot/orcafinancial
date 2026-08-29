@@ -18,6 +18,7 @@
 
 import type { Ohlcv } from "@/lib/connectors/core";
 import { getBenchmarkForSymbol, type SectorBenchmark } from "@/lib/industry-benchmarks";
+import { getRealtimeContext } from "@/lib/realtime-time";
 
 export interface IncomeData {
   revenue: number;
@@ -100,14 +101,7 @@ function jitter(rand: () => number, base: number, pct = 0.08): number {
 }
 
 export function getLatestCompletedQuarter(asOf = new Date()): { fiscalYear: number; quarter: 1 | 2 | 3 | 4 } {
-  const month = asOf.getMonth();
-  let quarter = Math.floor(month / 3);
-  let fiscalYear = asOf.getFullYear();
-  if (quarter === 0) {
-    quarter = 4;
-    fiscalYear -= 1;
-  }
-  return { fiscalYear, quarter: quarter as 1 | 2 | 3 | 4 };
+  return getRealtimeContext(asOf).latestCompletedQuarter;
 }
 
 /**

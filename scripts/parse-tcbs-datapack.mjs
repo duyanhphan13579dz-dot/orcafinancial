@@ -28,8 +28,13 @@ function parseStatement(rows, statementType, fields) {
   if (headerIndex < 0) throw new Error(`${statementType}: header not found`);
   const header = rows[headerIndex];
   const nextHeader = rows[headerIndex + 1] ?? [];
-  const currentColumn = header.findIndex((cell, index) => /2026|06\/2026|31\/06|quý\s*2/i.test(clean(cell)) || (/năm nay/i.test(clean(nextHeader[index])) && index >= 3));
-  if (currentColumn < 0) throw new Error(`${statementType}: Q2/2026 column not found`);
+  const periodMatch = /^Q([1-4])\/(\d{4})$/i.exec(period.trim());
+  const qNum = periodMatch ? Number(periodMatch[1]) : 2;
+  const qYear = periodMatch ? periodMatch[2] : "2026";
+  const endMonth = String(qNum * 3).padStart(2, "0");
+  const columnRegex = new RegExp(`${qYear}|${endMonth}\\/${qYear}|3[01]\\/${endMonth}|quý\\s*${qNum}`, "i");
+  const currentColumn = header.findIndex((cell, index) => columnRegex.test(clean(cell)) || (/năm nay/i.test(clean(nextHeader[index])) && index >= 3));
+  if (currentColumn < 0) throw new Error(`${statementType}: ${period} column not found`);
   const data = {};
   const evidence = {};
   for (const [key, patterns] of Object.entries(fields)) {

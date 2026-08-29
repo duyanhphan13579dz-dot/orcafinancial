@@ -15,6 +15,7 @@
  */
 
 import type { FinancialQuarter } from "@/lib/financial-statements";
+import { getRealtimeContext, type RealtimeContext } from "@/lib/realtime-time";
 
 export interface IndicatorDetail {
   key: string;
@@ -45,6 +46,7 @@ export interface HealthDetail {
   summary: string;
   asOfPeriod: string;
   dataQuality: { currentStateOnly: true; periodsUsed: number; debtMaturityDisclosed: boolean };
+  realtimeContext?: RealtimeContext;
 }
 
 const WEIGHTS = {
@@ -252,7 +254,16 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
       : "Không có nhóm nào ở mức báo động; doanh nghiệp cân bằng trên cả 6 khía cạnh."
   }`;
 
-  return { symbol, overall, rating, groups, summary, asOfPeriod: latest.period, dataQuality: { currentStateOnly: true, periodsUsed: qs.length, debtMaturityDisclosed: Boolean(debtDueWithin12m !== null || bal.debtMaturityBuckets) } };
+  return {
+    symbol,
+    overall,
+    rating,
+    groups,
+    summary,
+    asOfPeriod: latest.period,
+    dataQuality: { currentStateOnly: true, periodsUsed: qs.length, debtMaturityDisclosed: Boolean(debtDueWithin12m !== null || bal.debtMaturityBuckets) },
+    realtimeContext: getRealtimeContext(),
+  };
 }
 
 function avg(xs: number[]): number {
