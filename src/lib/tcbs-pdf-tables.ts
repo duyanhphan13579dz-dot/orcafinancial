@@ -1,18 +1,18 @@
-export type TcbsTableKind = "income_statement" | "balance_sheet";
+export type FinancialPdfTableKind = "income_statement" | "balance_sheet";
 
-export interface ParsedTcbsTableRow {
+export interface ParsedFinancialTableRow {
   key: string;
   label: string;
   values: number[];
   sourceLine: string;
 }
 
-export interface ParsedTcbsTable {
-  kind: TcbsTableKind;
+export interface ParsedFinancialTable {
+  kind: FinancialPdfTableKind;
   title: string;
   unit: string | null;
   periods: string[];
-  rows: ParsedTcbsTableRow[];
+  rows: ParsedFinancialTableRow[];
   complete: boolean;
   warnings: string[];
 }
@@ -52,7 +52,7 @@ function periods(text: string): string[] {
   return [...new Set(found)];
 }
 
-function parseKind(text: string, kind: TcbsTableKind): ParsedTcbsTable {
+function parseKind(text: string, kind: FinancialPdfTableKind): ParsedFinancialTable {
   const labels = kind === "income_statement" ? INCOME_LABELS : BALANCE_LABELS;
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const rows = Object.entries(labels).flatMap(([key, pattern]) => {
@@ -71,10 +71,14 @@ function parseKind(text: string, kind: TcbsTableKind): ParsedTcbsTable {
   return { kind, title: kind === "income_statement" ? "Income Statement" : "Balance Sheet", unit: text.match(/(?:unit|đơn vị)\s*[:：]?\s*([^\n]+)/i)?.[1]?.trim() ?? null, periods: periods(text), rows, complete, warnings };
 }
 
-export function extractTcbsTables(text: string): ParsedTcbsTable[] {
+export function extractPdfTables(text: string): ParsedFinancialTable[] {
   return [parseKind(text, "income_statement"), parseKind(text, "balance_sheet")];
 }
 
-export function tableToRecord(table: ParsedTcbsTable, period: string): Record<string, number> {
+export function extractTcbsTables(text: string): ParsedFinancialTable[] {
+  return extractPdfTables(text);
+}
+
+export function tableToRecord(table: ParsedFinancialTable, period: string): Record<string, number> {
   return Object.fromEntries(table.rows.map((row) => [row.key, row.values[0]]).filter((entry): entry is [string, number] => typeof entry[1] === "number"));
 }

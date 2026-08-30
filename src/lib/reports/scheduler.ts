@@ -10,13 +10,13 @@ const JOBS: JobSpec[] = [
   { type: "summary", targetVn: { hh: 15, mm: 15 }, run: (d) => generateMarketSummary(d) },
 ];
 interface JobRuntime { lastAttemptAt: string | null; lastSuccessAt: string | null; lastError: string | null; attemptsToday: number; successesToday: number; todayKey: string | null; nextRetryAt: number | null; }
-const g = globalThis as typeof globalThis & { __orcaReportsStartedV4?: boolean; __orcaReportsRuntimeV4?: Record<ReportType, JobRuntime>; __orcaReportsLastTickAtV4?: string | null; __orcaReportsTickCountV4?: number; __orcaReportsTickInFlightV4?: boolean; __orcaTcbsQuarterlyKeyV4?: string | null; __orcaTcbsQuarterlyRetryAtV4?: number | null; };
+const g = globalThis as typeof globalThis & { __orcaReportsStartedV4?: boolean; __orcaReportsRuntimeV4?: Record<ReportType, JobRuntime>; __orcaReportsLastTickAtV4?: string | null; __orcaReportsTickCountV4?: number; __orcaReportsTickInFlightV4?: boolean; __orcaVndirectQuarterlyKeyV4?: string | null; __orcaVndirectQuarterlyRetryAtV4?: number | null; };
 const emptyRuntime = (): JobRuntime => ({ lastAttemptAt: null, lastSuccessAt: null, lastError: null, attemptsToday: 0, successesToday: 0, todayKey: null, nextRetryAt: null });
 g.__orcaReportsRuntimeV4 ??= { morning: emptyRuntime(), summary: emptyRuntime() };
 g.__orcaReportsTickCountV4 ??= 0;
 g.__orcaReportsLastTickAtV4 ??= null;
-g.__orcaTcbsQuarterlyKeyV4 ??= null;
-g.__orcaTcbsQuarterlyRetryAtV4 ??= null;
+g.__orcaVndirectQuarterlyKeyV4 ??= null;
+g.__orcaVndirectQuarterlyRetryAtV4 ??= null;
 function vnNow() { const d = new Date(); const shifted = new Date(d.getTime() + 7 * 60 * 60_000); return { hh: shifted.getUTCHours(), mm: shifted.getUTCMinutes(), key: `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}-${String(shifted.getUTCDate()).padStart(2, "0")}`, weekday: shifted.getUTCDay() }; }
 const TICK_MS = 60_000;
 const RETRY_DELAY_MS = 5 * 60_000;
@@ -28,16 +28,16 @@ function quarterlyKey(now: ReturnType<typeof vnNow>): string | null {
 async function refreshQuarterlyFinancials(now: ReturnType<typeof vnNow>) {
   if (process.env.VNDIRECT_ENABLED?.trim().toLowerCase() === "false" || process.env.VNDIRECT_ENABLED === "0") return;
   const key = quarterlyKey(now);
-  if (!key || g.__orcaTcbsQuarterlyKeyV4 === key || (g.__orcaTcbsQuarterlyRetryAtV4 && Date.now() < g.__orcaTcbsQuarterlyRetryAtV4)) return;
-  const symbols = (process.env.FINANCIAL_INGEST_SYMBOLS ?? "VNM,FPT,VCB,HPG,MSN").split(",").map((symbol) => symbol.trim().toUpperCase()).filter((symbol) => /^[A-Z0-9]{1,15}$/.test(symbol)).slice(0, 100);
+  if (!key || g.__orcaVndirectQuarterlyKeyV4 === key || (g.__orcaVndirectQuarterlyRetryAtV4 && Date.now() < g.__orcaVndirectQuarterlyRetryAtV4)) return;
+  const symbols = (process.env.FINANCIAL_INGEST_SYMBOLS ?? "VNM,FPT,VCB,HPG,MSN,BSR").split(",").map((symbol) => symbol.trim().toUpperCase()).filter((symbol) => /^[A-Z0-9]{1,15}$/.test(symbol)).slice(0, 100);
   if (!symbols.length) return;
   try {
     const result = await ingestFinancialSources(symbols, 8);
-    g.__orcaTcbsQuarterlyKeyV4 = key;
-    g.__orcaTcbsQuarterlyRetryAtV4 = null;
+    g.__orcaVndirectQuarterlyKeyV4 = key;
+    g.__orcaVndirectQuarterlyRetryAtV4 = null;
     log.info("quarterly_financials_refresh_success", { key, symbols, acceptedFactCount: result.acceptedFactCount });
   } catch (error) {
-    g.__orcaTcbsQuarterlyRetryAtV4 = Date.now() + RETRY_DELAY_MS;
+    g.__orcaVndirectQuarterlyRetryAtV4 = Date.now() + RETRY_DELAY_MS;
     log.warn("quarterly_financials_refresh_failed", { key, error: error instanceof Error ? error.message : String(error) });
   }
 }

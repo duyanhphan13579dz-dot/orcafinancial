@@ -95,14 +95,16 @@ function fmtValue(v: number, unit: string): string {
 
 function sourceName(source: string): string {
   if (source === "vietstock") return "Vietstock";
+  if (source === "vndirect") return "VNDirect";
   if (source === "cafef") return "CafeF";
-  return source;
+  return source.toUpperCase();
 }
 
 function dateLabel(value: string | Date | null | undefined): string {
   if (!value) return "Chưa có";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString("vi-VN");
+  if (Number.isNaN(date.getTime())) return String(value);
+  return `${date.toLocaleDateString("vi-VN")} ${date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
 export function FinancialStatements({ symbol }: { symbol: string }) {

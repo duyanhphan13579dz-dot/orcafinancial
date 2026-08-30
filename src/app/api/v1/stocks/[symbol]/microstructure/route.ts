@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { getQuote } from "@/lib/market";
-import { tcbsMockMicrostructure } from "@/lib/connectors/tcbs-microstructure";
+import { getStockMicrostructure } from "@/lib/connectors/stock-microstructure";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +13,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
   if (!/^[A-Z0-9]{1,15}$/.test(symbol)) return fail("Mã cổ phiếu không hợp lệ", 400);
   try {
     const quote = await getQuote(symbol, { persist: false, fast: true, allowStale: true });
-    const snapshot = tcbsMockMicrostructure(symbol, quote.close);
+    const snapshot = getStockMicrostructure(symbol, quote.close);
     snapshot.orderBook.source = "vndirect-vietstock";
     snapshot.foreignFlow.source = "vndirect-vietstock";
     return ok(snapshot, { source: "vndirect-vietstock", confidence: 0.9 }, { cacheSeconds: 5 });

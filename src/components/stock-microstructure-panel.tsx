@@ -1,6 +1,6 @@
 "use client";
 
-import type { OrderBookSnapshot, ForeignFlowSnapshot } from "@/lib/connectors/tcbs-microstructure";
+import type { OrderBookSnapshot, ForeignFlowSnapshot } from "@/lib/connectors/stock-microstructure";
 
 type Props = { orderBook: OrderBookSnapshot; foreignFlow: ForeignFlowSnapshot };
 const money = (value: number | null) => value == null ? "—" : `${value.toLocaleString("vi-VN", { maximumFractionDigits: 2 })} tỷ`;
