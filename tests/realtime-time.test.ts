@@ -73,22 +73,24 @@ describe("Realtime Time Engine", () => {
     expect(filtered.map((item) => item.id)).toEqual([1, 2, 3]);
   });
 
-  it("ensures quarterly financial generation starts at exact latest completed quarter (Q2/2026 as of Aug 30, 2026)", async () => {
+  it("ensures quarterly financial generation starts at exact latest completed quarter (Q2/2026 as of Aug 30, 2026) and matches enterprise scale for BSR", async () => {
     const { generateQuarterlyFinancials } = await import("@/lib/financial-statements");
     const fakeBars = Array.from({ length: 100 }, (_, i) => ({
       time: 1700000000 + i * 86400,
-      open: 50,
-      high: 52,
-      low: 49,
-      close: 51,
-      volume: 1000000,
+      open: 23,
+      high: 24,
+      low: 22,
+      close: 23,
+      volume: 5000000,
     }));
 
-    const quarters = generateQuarterlyFinancials("VNM", fakeBars, 4);
+    const quarters = generateQuarterlyFinancials("BSR", fakeBars, 4);
     expect(quarters.length).toBe(4);
     expect(quarters[0].period).toBe("Q2/2026");
     expect(quarters[0].fiscalYear).toBe(2026);
     expect(quarters[0].quarter).toBe(2);
+    // BSR Q2/2026 revenue must be over 50,000 billion VND (~58,000 tỷ VND)
+    expect(quarters[0].income.revenue).toBeGreaterThan(50000);
     expect(quarters[1].period).toBe("Q1/2026");
     expect(quarters[2].period).toBe("Q4/2025");
     expect(quarters[3].period).toBe("Q3/2025");

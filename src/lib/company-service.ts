@@ -24,6 +24,7 @@ import {
   type FinancialQuarter,
   type StatementType,
 } from "@/lib/financial-statements";
+import { getCompanyPreset } from "@/lib/company-presets";
 import { isFuturePeriod } from "@/lib/realtime-time";
 import { getHistory } from "@/lib/market";
 import { getNewsSentiment } from "@/lib/market";
@@ -49,12 +50,12 @@ export async function ensureQuarterlyFinancials(symbol: string, numQuarters = 4)
   const latestCompleted = getLatestCompletedQuarter();
   existing = existing.filter((row) => !isFuturePeriod(row.period, row.fiscalYear));
 
-  // Synthetic rows are versioned. Do not let a previously persisted v1 model
+  // Synthetic rows are versioned. Do not let a previously persisted v1/v2 model
   // mask the corrected period-specific generator; actual/provider rows remain
   // eligible and are never treated as synthetic.
-  const hasLegacySynthetic = existing.some((row) => row.source === "sector-synthetic-v1");
+  const hasLegacySynthetic = existing.some((row) => row.source === "sector-synthetic-v1" || row.source === "sector-synthetic-v2");
   if (hasLegacySynthetic) {
-    existing = existing.filter((row) => row.source !== "sector-synthetic-v1");
+    existing = existing.filter((row) => row.source !== "sector-synthetic-v1" && row.source !== "sector-synthetic-v2");
   }
 
   const byKey = new Map<string, { type: StatementType; period: string; fiscalYear: number; data: any }>();
@@ -88,8 +89,10 @@ export async function ensureQuarterlyFinancials(symbol: string, numQuarters = 4)
         if (a.fiscalYear !== b.fiscalYear) return b.fiscalYear - a.fiscalYear;
         return b.quarter - a.quarter;
       });
+    const preset = getCompanyPreset(symbol);
     const isUpToDate = quarters.length > 0 && quarters[0].fiscalYear === latestCompleted.fiscalYear && quarters[0].quarter === latestCompleted.quarter;
-    if (isUpToDate && quarters.length >= numQuarters && quarters.every((q) => q.income && q.balance && q.cashflow)) {
+    const matchesPresetScale = !preset || (quarters[0]?.income?.revenue && quarters[0].income.revenue >= preset.baseQuarterlyRevenue * 0.5);
+    if (isUpToDate && matchesPresetScale && quarters.length >= numQuarters && quarters.every((q) => q.income && q.balance && q.cashflow)) {
       return quarters.slice(0, numQuarters);
     }
   }
@@ -116,13 +119,13 @@ async function persistQuarterlyFinancials(symbol: string, quarters: FinancialQua
       db
         .insert(financialStatements)
         .values([
-          { symbol, type: "income", period, fiscalYear: q.fiscalYear, data: q.income, source: "sector-synthetic-v2", confidence: 0.75 },
-          { symbol, type: "balance", period, fiscalYear: q.fiscalYear, data: q.balance, source: "sector-synthetic-v2", confidence: 0.7 },
-          { symbol, type: "cashflow", period, fiscalYear: q.fiscalYear, data: q.cashflow, source: "sector-synthetic-v2", confidence: 0.72 },
+          { symbol, type: "income", period, fiscalYear: q.fiscalYear, data: q.income, source: "sector-synthetic-v3", confidence: 0.75 },
+          { symbol, type: "balance", period, fiscalYear: q.fiscalYear, data: q.balance, source: "sector-synthetic-v3", confidence: 0.7 },
+          { symbol, type: "cashflow", period, fiscalYear: q.fiscalYear, data: q.cashflow, source: "sector-synthetic-v3", confidence: 0.72 },
         ])
         .onConflictDoUpdate({
           target: [financialStatements.symbol, financialStatements.type, financialStatements.period, financialStatements.fiscalYear],
-          set: { data: sql`excluded.data`, updatedAt: new Date(), source: "sector-synthetic-v2" },
+          set: { data: sql`excluded.data`, updatedAt: new Date(), source: "sector-synthetic-v3" },
           // Never replace provider/filing data with a degraded estimate.
           where: sql`${financialStatements.source} LIKE 'sector-synthetic-%'`,
         }),

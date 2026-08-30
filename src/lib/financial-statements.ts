@@ -18,6 +18,7 @@
 
 import type { Ohlcv } from "@/lib/connectors/core";
 import { getBenchmarkForSymbol, type SectorBenchmark } from "@/lib/industry-benchmarks";
+import { getCompanyPreset } from "@/lib/company-presets";
 import { getRealtimeContext } from "@/lib/realtime-time";
 
 export interface IncomeData {
@@ -114,25 +115,25 @@ export function generateQuarterlyFinancials(
   numQuarters = 4,
 ): FinancialQuarter[] {
   const benchmark = getBenchmarkForSymbol(symbol);
+  const preset = getCompanyPreset(symbol);
   const closes = bars.map((b) => b.close);
   const avgVol = bars.slice(-60).reduce((s, b) => s + b.volume, 0) / Math.min(60, bars.length);
   const lastPrice = closes[closes.length - 1];
 
-  // Estimate shares outstanding and market cap.
-  // VN large caps: 1-5 billion shares, mid: 300M-1B, small: 100-300M.
+  // Estimate or use preset shares outstanding and revenue base
   const rand = seededRandom(`${symbol}-shares`);
-  const sharesMillions = Math.round(300 + rand() * 4200); // 300-4500 million shares (0.3B to 4.5B)
-  // lastPrice is in thousands of VND (e.g. 59 = 59,000 VND)
-  // marketCap_BillionVND = price_kVND * shares_millions (because kVND * M = billions VND)
+  const sharesMillions = preset?.sharesOutstandingMillions ?? Math.round(300 + rand() * 4200);
   const marketCapBillions = lastPrice * sharesMillions;
 
-  // Annual revenue: derived from market cap, typical P/B and asset turnover.
-  // For VN: P/B ≈ 1.5-2.5x book value → assets ≈ marketCap / (PB × (1 - leverage))
   const pbRatio = 1.6;
-  const equityRatio = 1 - benchmark.leverage;
+  const leverage = preset?.leverage ?? benchmark.leverage;
+  const grossMargin = preset?.grossMargin ?? benchmark.grossMargin;
+  const operatingMargin = preset?.operatingMargin ?? benchmark.operatingMargin;
+  const netMargin = preset?.netMargin ?? benchmark.netMargin;
+  const equityRatio = 1 - leverage;
   const assetsEst = marketCapBillions / (pbRatio * equityRatio);
-  const annualRevenue = assetsEst * benchmark.assetTurnover;
-  const quarterlyRevenueBase = annualRevenue / 4;
+
+  const quarterlyRevenueBase = preset?.baseQuarterlyRevenue ?? (assetsEst * benchmark.assetTurnover) / 4;
 
   const quarters: FinancialQuarter[] = [];
   const now = new Date();
@@ -177,10 +178,10 @@ export function generateQuarterlyFinancials(
     const revenueJ = jitter(qRand, revenue, 0.04);
 
     // ──── INCOME STATEMENT ────
-    const grossProfit = revenueJ * jitter(qRand, benchmark.grossMargin, 0.05);
+    const grossProfit = revenueJ * jitter(qRand, grossMargin, 0.05);
     const cogs = revenueJ - grossProfit;
     const depreciation = fixedAssetsStart * (benchmark.depreciationPctFA / 4);
-    const operatingIncome = grossProfit * jitter(qRand, benchmark.operatingMargin / benchmark.grossMargin, 0.08);
+    const operatingIncome = grossProfit * jitter(qRand, operatingMargin / Math.max(0.01, grossMargin), 0.08);
     const operatingExpenses = grossProfit - operatingIncome;
     const interestRate = 0.08 / 4; // ~8% annual interest rate
     const interestExpense = accumulatedDebt * interestRate;

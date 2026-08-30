@@ -169,6 +169,26 @@ export const SECTOR_BENCHMARKS: Record<string, SectorBenchmark> = {
     beta: 0.9,
     description: "Công ty công nghệ có tài sản vô hình lớn, tái đầu tư R&D cao, biên cải thiện với quy mô, dòng tiền linh hoạt.",
   },
+  "oil_refining": {
+    sector: "Năng lượng",
+    industry: "Lọc hóa dầu",
+    netMargin: 0.042,
+    grossMargin: 0.08,
+    operatingMargin: 0.06,
+    assetTurnover: 3.8,
+    leverage: 0.42,
+    currentRatio: 1.85,
+    inventoryDays: 35,
+    receivableDays: 15,
+    revenuePerEmployee: 45000,
+    capexToRevenue: 0.02,
+    dividendPayout: 0.40,
+    effectiveTaxRate: 0.10,
+    depreciationPctFA: 0.08,
+    cashPctAssets: 0.25,
+    beta: 1.1,
+    description: "Doanh nghiệp lọc hóa dầu có quy mô doanh thu siêu lớn, vòng quay tài sản cao, biên lợi nhuận mỏng và chịu tác động của crack spread giá dầu thế giới.",
+  },
   "energy": {
     sector: "Năng lượng",
     industry: "Dầu khí & Điện",
@@ -291,11 +311,14 @@ export const SYMBOL_SECTOR_MAP: Record<string, string> = {
   // Retail
   MWG: "retail",
   PNJ: "retail",
-  // Energy
+  // Energy & Oil Refining
+  BSR: "oil_refining",
+  PLX: "oil_refining",
+  OIL: "oil_refining",
   GAS: "energy",
-  PLX: "energy",
   POW: "utilities",
   PVD: "energy",
+  PVS: "energy",
   // Conglomerate
   MSN: "conglomerate",
 };

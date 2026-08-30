@@ -12,6 +12,7 @@
 
 import type { Ohlcv } from "@/lib/connectors/core";
 import { getBenchmarkForSymbol } from "@/lib/industry-benchmarks";
+import { getCompanyPreset } from "@/lib/company-presets";
 import type { FinancialQuarter } from "@/lib/financial-statements";
 
 export interface CompanyProfile {
@@ -57,9 +58,14 @@ export function generateCompanyProfile(
   sharesMillions: number,
 ): CompanyProfile {
   const bm = getBenchmarkForSymbol(symbol);
+  const preset = getCompanyPreset(symbol);
+  const finalName = preset?.name ?? (name !== symbol ? name : symbol);
+  const finalExchange = preset?.exchange ?? exchange;
+  const finalShares = preset?.sharesOutstandingMillions ?? sharesMillions;
+
   const lastPrice = bars[bars.length - 1].close;
   // lastPrice is in thousands of VND, sharesMillions in millions → billions VND
-  const marketCapB = lastPrice * sharesMillions;
+  const marketCapB = lastPrice * finalShares;
   const rand = seededRand(`profile-${symbol}`);
   const employeesEst = Math.round(bm.revenuePerEmployee * (0.7 + rand() * 0.6));
   const listingYear = 2005 + Math.floor(rand() * 16);
@@ -71,7 +77,7 @@ export function generateCompanyProfile(
     : null;
   const avgVol = bars.slice(-20).reduce((s, b) => s + b.volume, 0) / 20;
 
-  let description = `${name} (mã ${symbol}) là doanh nghiệp niêm yết trên sàn ${exchange}, hoạt động chính trong ngành ${bm.industry}, thuộc lĩnh vực ${bm.sector}. `;
+  let description = `${finalName} (mã ${symbol}) là doanh nghiệp niêm yết trên sàn ${finalExchange}, hoạt động chính trong ngành ${bm.industry}, thuộc lĩnh vực ${bm.sector}. `;
   description += bm.description + " ";
   description += `Vốn hóa thị trường ước tính khoảng ${marketCapB.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} tỷ VNĐ, khối lượng giao dịch trung bình 20 phiên khoảng ${(avgVol / 1_000_000).toFixed(1)} triệu cổ phiếu/phiên. `;
   if (return1y !== null) {
@@ -82,8 +88,8 @@ export function generateCompanyProfile(
 
   return {
     symbol,
-    name,
-    exchange,
+    name: finalName,
+    exchange: finalExchange,
     sector: bm.sector,
     industry: bm.industry,
     description,
@@ -91,7 +97,7 @@ export function generateCompanyProfile(
     website,
     listingDate,
     marketCapBillionVnd: Number(marketCapB.toFixed(0)),
-    sharesOutstandingMillions: sharesMillions,
+    sharesOutstandingMillions: finalShares,
     beta: bm.beta,
     benchmarkDescription: bm.description,
     isGenerated: true,
