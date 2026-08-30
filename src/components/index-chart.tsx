@@ -108,38 +108,49 @@ export function IndexChart({ code, defaultTimeframe = "1D" }: Props) {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setHasMore(true);
 
-    api<{ bars: Bar[] }>(`/stocks/${encodeURIComponent(code)}/history?timeframe=${encodeURIComponent(timeframe)}&limit=300`)
-      .then((env) => {
-        if (!active) return;
-        if (env?.data?.bars && env.data.bars.length > 0) {
-          setBars(env.data.bars);
-          setHoveredBar(env.data.bars[env.data.bars.length - 1]);
-          setHasMore(env.meta?.hasMore !== false);
-        } else {
-          const dummy = generateFallbackBars(code, timeframe);
-          setBars(dummy);
-          setHoveredBar(dummy[dummy.length - 1]);
-          setHasMore(false);
-        }
-        if (env?.meta?.source) setSource(String(env.meta.source));
-      })
-      .catch(() => {
-        if (!active) return;
-        const dummy = generateFallbackBars(code, timeframe);
-        setBars(dummy);
-        setHoveredBar(dummy[dummy.length - 1]);
-        setHasMore(false);
-        setSource("VNDIRECT dchart Live");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+    const fetchLatest = (isInitial = false) => {
+      if (isInitial) setLoading(true);
+      api<{ bars: Bar[] }>(`/stocks/${encodeURIComponent(code)}/history?timeframe=${encodeURIComponent(timeframe)}&limit=300`)
+        .then((env) => {
+          if (!active) return;
+          if (env?.data?.bars && env.data.bars.length > 0) {
+            setBars(env.data.bars);
+            setHoveredBar(env.data.bars[env.data.bars.length - 1]);
+            setHasMore(env.meta?.hasMore !== false);
+          } else if (isInitial) {
+            const dummy = generateFallbackBars(code, timeframe);
+            setBars(dummy);
+            setHoveredBar(dummy[dummy.length - 1]);
+            setHasMore(false);
+          }
+          if (env?.meta?.source) setSource(String(env.meta.source));
+        })
+        .catch(() => {
+          if (!active) return;
+          if (isInitial) {
+            const dummy = generateFallbackBars(code, timeframe);
+            setBars(dummy);
+            setHoveredBar(dummy[dummy.length - 1]);
+            setHasMore(false);
+            setSource("VNDIRECT dchart Live");
+          }
+        })
+        .finally(() => {
+          if (active && isInitial) setLoading(false);
+        });
+    };
+
+    fetchLatest(true);
+
+    const timer = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      fetchLatest(false);
+    }, 3500);
 
     return () => {
       active = false;
+      clearInterval(timer);
     };
   }, [code, timeframe]);
 

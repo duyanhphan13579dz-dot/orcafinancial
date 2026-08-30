@@ -445,11 +445,11 @@ function StockQuickView({
 }
 
 export function DashboardHome() {
-  const { data: snapshot, error, loading, isValidating } = usePoll<MarketSnapshot>("/market/overview", 30000, {
-    softTtlMs: 15000,
-    timeoutMs: 7000,
+  const { data: snapshot, error, loading, isValidating } = usePoll<MarketSnapshot>("/market/overview", 3500, {
+    softTtlMs: 3000,
+    timeoutMs: 3500,
   });
-  const watchlist = usePoll<{ items: Array<{ symbol: string; quote: MarketQuote | null }> }>("/watchlist", 60000);
+  const watchlist = usePoll<{ items: Array<{ symbol: string; quote: MarketQuote | null }> }>("/watchlist", 3500);
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedIndexCode, setSelectedIndexCode] = useState<string | null>(null);
   const watchedSymbols = new Set((watchlist.data?.items ?? []).map((item) => item.symbol));

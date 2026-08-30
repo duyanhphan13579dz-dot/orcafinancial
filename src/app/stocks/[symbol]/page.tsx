@@ -1081,7 +1081,7 @@ export default function StockPage({
             "refresh",
           );
         },
-        30000,
+        3500,
       );
 
     return () =>

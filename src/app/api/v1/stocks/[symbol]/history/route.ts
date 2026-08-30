@@ -540,7 +540,7 @@ export async function GET(
      */
     response.headers.set(
       "Cache-Control",
-      "public, s-maxage=20, stale-while-revalidate=60",
+      "public, s-maxage=3, stale-while-revalidate=10",
     );
 
     return response;

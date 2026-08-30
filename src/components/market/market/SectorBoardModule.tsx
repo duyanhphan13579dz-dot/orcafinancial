@@ -13,7 +13,7 @@ function QuickQuote({ quote }: { quote: MarketQuote }) {
 }
 
 export function SectorBoardModule() {
-  const { data: snapshot, error, loading } = usePoll<MarketSnapshot>("/market/overview", 30_000, { softTtlMs: 15_000, timeoutMs: 7_000 });
+  const { data: snapshot, error, loading } = usePoll<MarketSnapshot>("/market/overview", 3500, { softTtlMs: 3000, timeoutMs: 3500 });
   const [selected, setSelected] = useState<string | null>(null);
   const selectedQuote = selected && snapshot && [...snapshot.quotes, ...snapshot.sectorQuotes].find((quote) => quote.symbol === selected);
 

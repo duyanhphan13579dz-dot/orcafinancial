@@ -14,10 +14,10 @@ interface CacheEntry {
   fetchedAt: number;
 }
 
-const DEFAULT_SOFT_TTL_MS = 15_000;
+const DEFAULT_SOFT_TTL_MS = 3_500;
 const DEFAULT_HARD_TTL_MS = 5 * 60_000;
 const MAX_CACHE_ENTRIES = 80;
-const DEFAULT_FETCH_TIMEOUT_MS = 55_000;
+const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
 
 const responseCache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<Envelope<unknown>>>();
@@ -159,7 +159,7 @@ export type UsePollOptions = {
 
 export function usePoll<T>(
   path: string | null,
-  intervalMs = 15_000,
+  intervalMs = 3_500,
   options: UsePollOptions = {},
 ) {
   const softTtl = options.softTtlMs ?? Math.min(intervalMs, DEFAULT_SOFT_TTL_MS);

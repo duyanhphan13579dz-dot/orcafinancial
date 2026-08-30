@@ -63,18 +63,18 @@ function envInt(key: string, fallback: number): number {
 
 export const CONNECTOR_CONFIG = {
   failureThreshold: envInt("CIRCUIT_BREAKER_THRESHOLD", 5),
-  cooldownMs: envInt("CIRCUIT_BREAKER_TIMEOUT", 60_000),
-  retryAttempts: envInt("CONNECTOR_RETRY_ATTEMPTS", 1),
-  retryBaseMs: envInt("CONNECTOR_RETRY_BASE_MS", 300),
-  fetchTimeoutMs: envInt("CONNECTOR_FETCH_TIMEOUT_MS", 4_000),
+  cooldownMs: envInt("CIRCUIT_BREAKER_TIMEOUT", 4_000),
+  retryAttempts: envInt("CONNECTOR_RETRY_ATTEMPTS", 2),
+  retryBaseMs: envInt("CONNECTOR_RETRY_BASE_MS", 150),
+  fetchTimeoutMs: envInt("CONNECTOR_FETCH_TIMEOUT_MS", 3_500),
   staleAfterMs: envInt("CONNECTOR_STALE_AFTER_MS", 15 * 60_000),
   degradedAfterMs: envInt("CONNECTOR_DEGRADED_AFTER_MS", 5 * 60_000),
   /** Max parallel upstream quote fetches per request (≤12 recommended on serverless). */
-  quoteConcurrency: envInt("CONNECTOR_QUOTE_CONCURRENCY", 10),
+  quoteConcurrency: envInt("CONNECTOR_QUOTE_CONCURRENCY", 12),
   /** Parallel search / ticker validation (agent). */
-  searchConcurrency: envInt("CONNECTOR_SEARCH_CONCURRENCY", 5),
+  searchConcurrency: envInt("CONNECTOR_SEARCH_CONCURRENCY", 8),
   /** Parallel news insert workers per chunk. */
-  newsInsertConcurrency: envInt("CONNECTOR_NEWS_INSERT_CONCURRENCY", 8),
+  newsInsertConcurrency: envInt("CONNECTOR_NEWS_INSERT_CONCURRENCY", 10),
 };
 
 export class CircuitBreaker {

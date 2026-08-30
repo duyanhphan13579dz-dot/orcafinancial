@@ -209,7 +209,7 @@ const selectClass =
   "h-10 min-h-10 rounded-lg border border-slate-700 bg-slate-900 px-2.5 text-xs text-slate-200 outline-none focus:border-[#00d4ff]/50";
 
 export function StockHeatmap({ compact = false }: { compact?: boolean }) {
-  const { data, meta, error, loading, isValidating, refresh } = usePoll<Item[]>("/market/heatmap", 12_000);
+  const { data, meta, error, loading, isValidating, refresh } = usePoll<Item[]>("/market/heatmap", 3500);
   const shape: Shape = "rectangle";
   const [metric, setMetric] = useState<Metric>("tradingValue");
   const [exchange, setExchange] = useState("all");

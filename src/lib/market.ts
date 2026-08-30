@@ -42,17 +42,17 @@ export const INDICES = [
 ];
 
 /** Prefer DB snapshot if newer than this (ms). */
-const SNAPSHOT_FRESH_MS = 45_000;
+const SNAPSHOT_FRESH_MS = 10_000;
 
-/** Market overview cache — longer TTL = sub-second warm dashboard hits via Redis. */
-const OVERVIEW_TTL_MS = Number(process.env.MARKET_OVERVIEW_TTL_MS) || 60_000;
-const QUOTE_TTL_MS = Number(process.env.MARKET_QUOTE_TTL_MS) || 20_000;
-const HIST_D_TTL_MS = Number(process.env.MARKET_HIST_D_TTL_MS) || 120_000;
-const HIST_INTRA_TTL_MS = Number(process.env.MARKET_HIST_INTRA_TTL_MS) || 30_000;
+/** Market overview cache — 3.5s TTL for sub-second sync and 3-4s realtime updates. */
+const OVERVIEW_TTL_MS = Number(process.env.MARKET_OVERVIEW_TTL_MS) || 3_500;
+const QUOTE_TTL_MS = Number(process.env.MARKET_QUOTE_TTL_MS) || 3_000;
+const HIST_D_TTL_MS = Number(process.env.MARKET_HIST_D_TTL_MS) || 60_000;
+const HIST_INTRA_TTL_MS = Number(process.env.MARKET_HIST_INTRA_TTL_MS) || 3_500;
 const OVERVIEW_AUX_TIMEOUT_MS = Number(process.env.MARKET_OVERVIEW_AUX_TIMEOUT_MS) || 450;
 const SECTOR_QUOTE_TIMEOUT_MS = Number(process.env.MARKET_SECTOR_QUOTE_TIMEOUT_MS) || 1_800;
 const OVERVIEW_TOTAL_TIMEOUT_MS = Number(process.env.MARKET_OVERVIEW_TOTAL_TIMEOUT_MS) || 2_500;
-const OVERNIGHT_TTL_MS = Number(process.env.OVERNIGHT_MARKET_TTL_MS) || 45_000;
+const OVERNIGHT_TTL_MS = Number(process.env.OVERNIGHT_MARKET_TTL_MS) || 4_000;
 const OVERNIGHT_TIMEOUT_MS = Number(process.env.OVERNIGHT_MARKET_TIMEOUT_MS) || 1_200;
 
 const OVERNIGHT_DEFINITIONS: ReadonlyArray<Omit<OvernightMarketItem, "value" | "changePct" | "source" | "status" | "updatedAt">> = [
