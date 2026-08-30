@@ -273,54 +273,64 @@ export const SECTOR_BENCHMARKS: Record<string, SectorBenchmark> = {
 
 /** Map featured VN symbols to their sector benchmark key. */
 export const SYMBOL_SECTOR_MAP: Record<string, string> = {
-  // Consumer Staples
-  VNM: "consumer_staples",
-  MCM: "consumer_staples",
-  SAB: "consumer_staples",
-  // Real Estate
-  VHM: "real_estate",
-  VIC: "conglomerate",
-  VRE: "real_estate",
-  NVL: "real_estate",
-  PDR: "real_estate",
-  KDH: "real_estate",
-  // Steel / Materials
-  HPG: "steel",
-  HSG: "steel",
-  NKG: "steel",
-  GVR: "materials",
   // Banking
-  VCB: "banking",
-  TCB: "banking",
-  BID: "banking",
-  CTG: "banking",
-  MBB: "banking",
-  STB: "banking",
-  HDB: "banking",
-  ACB: "banking",
-  TPB: "banking",
-  VPB: "banking",
+  VCB: "banking", TCB: "banking", BID: "banking", CTG: "banking", MBB: "banking",
+  STB: "banking", HDB: "banking", ACB: "banking", VPB: "banking", SHB: "banking",
+  EIB: "banking", LPB: "banking", MSB: "banking", OCB: "banking", VIB: "banking",
+  SSB: "banking", TPB: "banking",
+
   // Securities
-  SSI: "securities",
-  VND: "securities",
-  VCI: "securities",
-  SHS: "securities",
-  // Tech
-  FPT: "technology",
-  CMG: "technology",
+  SSI: "securities", VND: "securities", VCI: "securities", HCM: "securities",
+  MBS: "securities", FTS: "securities", BSI: "securities", CTS: "securities",
+  ORS: "securities", VDS: "securities", SHS: "securities",
+
+  // Real Estate
+  VIC: "conglomerate", VHM: "real_estate", VRE: "real_estate", DXG: "real_estate",
+  DIG: "real_estate", NVL: "real_estate", KDH: "real_estate", NLG: "real_estate",
+  PDR: "real_estate", CEO: "real_estate", BCM: "real_estate", IDC: "real_estate",
+  SZC: "real_estate", KBC: "real_estate", DXS: "real_estate", HQC: "real_estate",
+
+  // Steel & Metals
+  HPG: "steel", HSG: "steel", NKG: "steel", TLH: "steel", SMC: "steel",
+  VGS: "steel", POM: "steel", VIS: "steel",
+
+  // Construction & Infrastructure
+  CTD: "logistics", HBC: "logistics", CII: "logistics", HHV: "logistics",
+  FCN: "logistics", LCG: "logistics", C4G: "logistics", VCG: "logistics",
+  HT1: "steel", BCC: "steel",
+
   // Retail
-  MWG: "retail",
-  PNJ: "retail",
+  MWG: "retail", FRT: "retail", DGW: "retail", PET: "retail", PNJ: "retail",
+  VGC: "retail", VEA: "retail", HTM: "retail",
+
+  // Technology & Telecom
+  FPT: "technology", CMG: "technology", ELC: "technology", CTR: "technology",
+  ITD: "technology", VGI: "technology", FOX: "technology", SIP: "technology",
+
   // Energy & Oil Refining
-  BSR: "oil_refining",
-  PLX: "oil_refining",
-  OIL: "oil_refining",
-  GAS: "energy",
-  POW: "utilities",
-  PVD: "energy",
-  PVS: "energy",
-  // Conglomerate
-  MSN: "conglomerate",
+  BSR: "oil_refining", PLX: "oil_refining", OIL: "oil_refining",
+  GAS: "energy", POW: "utilities", PVD: "energy", PVS: "energy",
+  NT2: "utilities", REE: "utilities", GEG: "utilities", HDG: "utilities",
+  PC1: "utilities", PPC: "utilities", HND: "utilities", VSH: "utilities",
+
+  // Chemicals & Rubber / Materials
+  GVR: "steel", DGC: "steel", DPM: "steel", DCM: "steel", CSV: "steel",
+  BMP: "steel", DRC: "steel", AAA: "steel", PHR: "steel", DPR: "steel",
+
+  // Logistics, Shipping & Aviation
+  GMD: "logistics", VSC: "logistics", HAH: "logistics", SCS: "logistics",
+  VTP: "logistics", HVN: "logistics", ACV: "logistics", VJC: "logistics",
+  PVT: "logistics", VIP: "logistics", VTO: "logistics",
+
+  // Food & Beverage / Consumer Staples
+  VNM: "consumer_staples", MSN: "conglomerate", SAB: "consumer_staples",
+  QNS: "consumer_staples", PAN: "consumer_staples", DBC: "consumer_staples",
+  SBT: "consumer_staples", KDC: "consumer_staples", MCM: "consumer_staples",
+  BAF: "consumer_staples", HAG: "consumer_staples", HNG: "consumer_staples",
+
+  // Insurance
+  BVH: "securities", MIG: "securities", PVI: "securities", BMI: "securities",
+  BIC: "securities", VNR: "securities", ABI: "securities", PTI: "securities",
 };
 
 export function getSectorKeyForSymbol(symbol: string): string | null {

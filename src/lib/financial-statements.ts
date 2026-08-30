@@ -122,7 +122,9 @@ export function generateQuarterlyFinancials(
 
   // Estimate or use preset shares outstanding and revenue base
   const rand = seededRandom(`${symbol}-shares`);
-  const sharesMillions = preset?.sharesOutstandingMillions ?? Math.round(300 + rand() * 4200);
+  const estimatedSharesFromVol = avgVol > 0 ? Math.round(avgVol / 0.0035 / 1_000_000) : 0;
+  const fallbackShares = Math.round(50 + rand() * 800);
+  const sharesMillions = preset?.sharesOutstandingMillions ?? Math.min(6000, Math.max(15, estimatedSharesFromVol > 0 ? estimatedSharesFromVol : fallbackShares));
   const marketCapBillions = lastPrice * sharesMillions;
 
   const pbRatio = 1.6;
