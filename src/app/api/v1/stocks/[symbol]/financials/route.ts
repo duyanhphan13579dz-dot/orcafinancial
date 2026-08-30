@@ -49,7 +49,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
         validation,
         disclosure: preferred.providerBacked ? "Bảng được lấy từ normalized facts của nguồn dữ liệu bên ngoài và đã qua quality gate; chưa gọi là audited actual nếu chưa có filing/evidence đầy đủ." : "Chưa có normalized facts từ Vietstock/CafeF; các periods đang dùng fallback degraded, không phải audited actual.",
       },
-      { cacheSeconds: 300 },
+      { cacheSeconds: 3 },
     );
   } catch (err) {
     return handleError(err, `financials:${symbol}`);

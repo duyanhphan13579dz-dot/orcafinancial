@@ -152,10 +152,8 @@ export async function getStatements(
   }>;
   fields: string[];
 }> {
-  // Financial statements update at most once per quarter. Cache the DB
-  // round-trip for 10 minutes so repeated tab switches / polls for the same
-  // symbol+type+period don't re-hit Postgres every time.
-  return cached(`statements:${symbol}:${type}:${period}:${limit}`, 10 * 60_000, async () =>
+  // Use a short 3.5s SWR cache so switching tabs or polling updates in real-time
+  return cached(`statements:${symbol}:${type}:${period}:${limit}`, 3_500, async () =>
     getStatementsUncached(symbol, type, period, limit),
   );
 }

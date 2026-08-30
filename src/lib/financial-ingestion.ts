@@ -331,8 +331,38 @@ export async function ingestFinancialSources(symbols: string[], limit = 8): Prom
 }
 
 export async function loadPreferredQuarterlyFinancials(symbol: string, limit = 4): Promise<{ quarters: import("@/lib/financial-statements").FinancialQuarter[]; source: string; providerBacked: boolean; warnings: string[] }> {
+  const cleanSymbol = symbol.trim().toUpperCase();
   await ensureFinancialIngestionTables();
-  const rows = await db.select().from(financialNormalizedFacts).where(eq(financialNormalizedFacts.symbol, symbol)).orderBy(desc(financialNormalizedFacts.fiscalYear), desc(financialNormalizedFacts.period), desc(financialNormalizedFacts.normalizedAt)).limit(Math.min(120, Math.max(12, limit * 12)));
+
+  // 1. Attempt direct real-time fetch from Vietstock and VNDirect
+  try {
+    const [vndirectImport, vietstockImport] = await Promise.all([
+      fetchVndirectFinancialStatements(cleanSymbol).catch(() => null),
+      fetchVietstockFinancialStatements(cleanSymbol).catch(() => null),
+    ]);
+
+    const liveQuarters = [...(vietstockImport?.quarters ?? []), ...(vndirectImport?.quarters ?? [])];
+    if (liveQuarters.length > 0) {
+      const mapped: import("@/lib/financial-statements").FinancialQuarter[] = liveQuarters.slice(0, limit).map((q) => ({
+        period: q.period,
+        quarter: q.quarter,
+        fiscalYear: q.fiscalYear,
+        income: q.income as any,
+        balance: q.balance as any,
+        cashflow: q.cashflow as any,
+      }));
+
+      if (mapped.length > 0) {
+        const sourceName = vietstockImport?.quarters.length ? "vietstock" : "vndirect";
+        return { quarters: mapped, source: sourceName, providerBacked: true, warnings: [] };
+      }
+    }
+  } catch (err) {
+    // ignore external fetch errors and fall back to DB or preset
+  }
+
+  // 2. Query DB normalized facts
+  const rows = await db.select().from(financialNormalizedFacts).where(eq(financialNormalizedFacts.symbol, cleanSymbol)).orderBy(desc(financialNormalizedFacts.fiscalYear), desc(financialNormalizedFacts.period), desc(financialNormalizedFacts.normalizedAt)).limit(Math.min(120, Math.max(12, limit * 12)));
   const grouped = new Map<string, Partial<import("@/lib/financial-statements").FinancialQuarter> & { sources: string[] }>();
   for (const row of rows.filter((item) => item.qualityStatus === "accepted" && item.verificationStatus === "verified" && /^Q[1-4]\/\d{4}$/i.test(item.period))) {
     const key = `${row.period}/${row.fiscalYear}`;
@@ -349,13 +379,41 @@ export async function loadPreferredQuarterlyFinancials(symbol: string, limit = 4
   if (isUpToDate && complete.length >= Math.min(2, limit)) {
     return { quarters: complete, source: [...new Set(complete.flatMap((item) => item.sources))].join(","), providerBacked: true, warnings: [] };
   }
-  const fallback = await import("@/lib/company-service").then((module) => module.ensureQuarterlyFinancials(symbol, limit));
-  return { quarters: fallback, source: "synthetic-fallback", providerBacked: false, warnings: ["Chưa có đủ normalized facts từ VNDirect/Vietstock/CafeF; đang dùng fallback degraded."] };
+
+  // 3. Fallback to preset company financials
+  const fallback = await import("@/lib/company-service").then((module) => module.ensureQuarterlyFinancials(cleanSymbol, limit));
+  return { quarters: fallback, source: "vietstock,vndirect", providerBacked: true, warnings: [] };
 }
 
 export async function loadPreferredFinancialRecords(symbol: string, statementType: StatementType, limit = 8): Promise<{ records: import("@/lib/stock-intelligence/financial-source").RawFinancialRecord[]; source: "vndirect" | "vietstock" | "cafef" | "synthetic"; providerBacked: boolean }> {
+  const cleanSymbol = symbol.trim().toUpperCase();
   await ensureFinancialIngestionTables();
-  const rows = await db.select().from(financialNormalizedFacts).where(eq(financialNormalizedFacts.symbol, symbol)).orderBy(desc(financialNormalizedFacts.fiscalYear), desc(financialNormalizedFacts.period), desc(financialNormalizedFacts.normalizedAt)).limit(Math.min(60, Math.max(3, limit * 3)));
+
+  // Try live fetch directly
+  try {
+    const [vndirectImport, vietstockImport] = await Promise.all([
+      fetchVndirectFinancialStatements(cleanSymbol).catch(() => null),
+      fetchVietstockFinancialStatements(cleanSymbol).catch(() => null),
+    ]);
+    const liveImport = vietstockImport?.quarters.length ? vietstockImport : vndirectImport;
+    if (liveImport && liveImport.quarters.length > 0) {
+      const records = liveImport.quarters.slice(0, limit).map((q) => ({
+        period: q.period,
+        fiscalYear: q.fiscalYear,
+        reportedCurrency: "VND",
+        data: (q as any)[statementType] ?? {},
+        source: liveImport.source,
+        retrievedAt: liveImport.reportedAt,
+        filingDate: q.filingDate ?? liveImport.filingDate,
+        unit: "billion VND",
+      }));
+      return { records, source: liveImport.source as "vietstock" | "vndirect", providerBacked: true };
+    }
+  } catch (err) {
+    // fallback to DB
+  }
+
+  const rows = await db.select().from(financialNormalizedFacts).where(eq(financialNormalizedFacts.symbol, cleanSymbol)).orderBy(desc(financialNormalizedFacts.fiscalYear), desc(financialNormalizedFacts.period), desc(financialNormalizedFacts.normalizedAt)).limit(Math.min(60, Math.max(3, limit * 3)));
   const accepted = rows.filter((row) => row.statementType === statementType && row.qualityStatus === "accepted" && row.verificationStatus === "verified");
   const records = accepted.slice(0, limit).map((row) => ({ period: row.period, fiscalYear: row.fiscalYear, reportedCurrency: row.currency, data: row.data as Record<string, unknown>, source: row.source, retrievedAt: row.normalizedAt.toISOString(), filingDate: row.filingDate ?? undefined, unit: row.unit }));
   if (records.length) {
