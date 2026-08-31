@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "drizzle-kit push --force && next build",
+    "build": "next build",
     "db:push": "drizzle-kit push",
     "start": "next start",
     "lint": "eslint .",

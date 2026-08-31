@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { Be_Vietnam_Pro, Bricolage_Grotesque, JetBrains_Mono } from "next/font/google";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { SearchBar } from "@/components/search-bar";
@@ -10,26 +9,9 @@ import { OrcaAiChatWidget } from "@/components/OrcaAiChatWidget";
 import { AuthProvider } from "@/lib/auth/context";
 import "./globals.css";
 
-const display = Bricolage_Grotesque({
-  weight: ["400", "600", "700", "800"],
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-display",
-});
-
-const sans = Be_Vietnam_Pro({
-  weight: ["300", "400", "500", "600", "700", "800"],
-  subsets: ["latin", "vietnamese"],
-  display: "swap",
-  variable: "--font-sans",
-});
-
-const mono = JetBrains_Mono({
-  weight: ["400", "500", "700"],
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-mono",
-});
+const display = { variable: "--font-display" };
+const sans = { variable: "--font-sans" };
+const mono = { variable: "--font-mono" };
 
 export const metadata: Metadata = {
   title: "ORCA FINANCIAL — Nền tảng đầu tư thông minh",
@@ -76,6 +58,12 @@ export default function RootLayout({
         <meta
           name="apple-mobile-web-app-status-bar-style"
           content="black-translucent"
+        />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap"
+          rel="stylesheet"
         />
       </head>
 
