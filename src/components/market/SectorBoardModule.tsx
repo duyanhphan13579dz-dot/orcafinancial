@@ -77,21 +77,21 @@ function IndexCard({ index, onClick }: { index: MarketIndex; onClick: () => void
     <button
       type="button"
       onClick={onClick}
-      className="group relative text-left flex flex-col justify-between rounded-lg border border-[#1a385c] bg-[#07192e] p-2.5 transition-all hover:border-cyan-400/60 hover:bg-[#0b223c]"
+      className="group relative text-left flex flex-col justify-between rounded-lg border border-[#1a385c] bg-[#07192e] p-2.5 transition-all hover:border-cyan-400/60 hover:bg-[#0b223c] min-w-0"
     >
       <div>
         {/* Header */}
-        <div className="flex items-center justify-between font-mono text-xs font-bold">
-          <span className="text-white group-hover:text-cyan-300">{index.code}</span>
-          <span className={`tabular-nums ${color}`}>
+        <div className="flex items-center justify-between font-mono text-xs font-bold gap-1 whitespace-nowrap">
+          <span className="text-white group-hover:text-cyan-300 truncate">{index.code}</span>
+          <span className={`tabular-nums shrink-0 ${color}`}>
             {isUp ? "↑" : "↓"} {fmtNum(index.close)} ({changeVal >= 0 ? "+" : ""}{changeVal.toFixed(2)} {fmtPct(change)})
           </span>
         </div>
 
         {/* Volume & Value */}
-        <div className="mt-1 flex items-center justify-between font-mono text-[10px] text-slate-400">
-          <span>{volCp.toLocaleString("vi-VN")} CP</span>
-          <span className="font-semibold text-amber-300">{valTy} Tỷ</span>
+        <div className="mt-1 flex items-center justify-between font-mono text-[10px] text-slate-400 whitespace-nowrap gap-1">
+          <span className="truncate">{volCp.toLocaleString("vi-VN")} CP</span>
+          <span className="font-semibold text-amber-300 shrink-0">{valTy} Tỷ</span>
         </div>
 
         {/* Intraday Sparkline Chart */}
@@ -101,7 +101,7 @@ function IndexCard({ index, onClick }: { index: MarketIndex; onClick: () => void
       </div>
 
       {/* Market Breadth Line */}
-      <div className="mt-2 border-t border-[#162c46] pt-1.5 font-mono text-[9px] flex items-center justify-between text-slate-400">
+      <div className="mt-2 border-t border-[#162c46] pt-1.5 font-mono text-[9px] flex items-center justify-between text-slate-400 whitespace-nowrap gap-1">
         <span className="text-[#4ade80]">↑ {adv} ({ceil})</span>
         <span className="text-[#facc15]">■ {unch}</span>
         <span className="text-[#f87171]">↓ {dec} ({floor})</span>
@@ -121,28 +121,28 @@ function IndexSummaryTable() {
 
   return (
     <div className="rounded-lg border border-[#1a385c] bg-[#07192e] p-2 overflow-x-auto">
-      <table className="w-full text-left font-mono text-[10px]">
+      <table className="w-full text-left font-mono text-[10px] min-w-[340px] border-collapse">
         <thead>
-          <tr className="border-b border-[#18314f] text-slate-400">
-            <th className="pb-1 font-semibold">Tên chỉ số</th>
-            <th className="pb-1 text-right font-semibold">Điểm</th>
-            <th className="pb-1 text-right font-semibold">&lt; +/- &gt;</th>
-            <th className="pb-1 text-right font-semibold">KLGD</th>
-            <th className="pb-1 text-right font-semibold">GTGD (Tỷ)</th>
-            <th className="pb-1 text-right font-semibold">Số CK tăng/giảm</th>
+          <tr className="border-b border-[#18314f] text-slate-400 whitespace-nowrap">
+            <th className="pb-1 font-semibold pr-2">Tên chỉ số</th>
+            <th className="pb-1 text-right font-semibold px-1">Điểm</th>
+            <th className="pb-1 text-right font-semibold px-1">&lt; +/- &gt;</th>
+            <th className="pb-1 text-right font-semibold px-1">KLGD</th>
+            <th className="pb-1 text-right font-semibold px-1">GTGD (Tỷ)</th>
+            <th className="pb-1 text-right font-semibold pl-1">Số CK tăng/giảm</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[#152a44]">
           {rows.map((r) => (
-            <tr key={r.name} className="hover:bg-[#0b223c]">
-              <td className="py-1 font-bold text-amber-300">{r.name}</td>
-              <td className="py-1 text-right font-bold text-white tabular-nums">{r.score.toLocaleString("vi-VN", { minimumFractionDigits: 2 })}</td>
-              <td className={`py-1 text-right font-bold tabular-nums ${r.change >= 0 ? "text-[#4ade80]" : "text-[#f87171]"}`}>
+            <tr key={r.name} className="hover:bg-[#0b223c] whitespace-nowrap">
+              <td className="py-1 font-bold text-amber-300 pr-2">{r.name}</td>
+              <td className="py-1 text-right font-bold text-white tabular-nums px-1">{r.score.toLocaleString("vi-VN", { minimumFractionDigits: 2 })}</td>
+              <td className={`py-1 text-right font-bold tabular-nums px-1 ${r.change >= 0 ? "text-[#4ade80]" : "text-[#f87171]"}`}>
                 {r.change >= 0 ? "+" : ""}{r.change.toFixed(2)}
               </td>
-              <td className="py-1 text-right text-slate-300 tabular-nums">{r.volume}</td>
-              <td className="py-1 text-right text-amber-200 tabular-nums">{r.val}</td>
-              <td className="py-1 text-right tabular-nums whitespace-nowrap">
+              <td className="py-1 text-right text-slate-300 tabular-nums px-1">{r.volume}</td>
+              <td className="py-1 text-right text-amber-200 tabular-nums px-1">{r.val}</td>
+              <td className="py-1 text-right tabular-nums whitespace-nowrap pl-1">
                 <span className="text-[#4ade80]">↑ {r.up}</span>{" "}
                 <span className="text-[#facc15]">■ {r.unch}</span>{" "}
                 <span className="text-[#f87171]">↓ {r.down}</span>
@@ -342,10 +342,10 @@ export function SectorBoardModule() {
       {/* ─── CỤM 3: VNDIRECT TRADING PRICE BOARD TABLE ─── */}
       {snapshot && quotesList.length > 0 && (
         <div className="overflow-x-auto rounded-lg border border-[#1a385c] bg-[#07192e] shadow-xl">
-          <table className="w-full text-left font-mono text-[11px] border-collapse">
+          <table className="w-full text-left font-mono text-[11px] border-collapse min-w-[1300px]">
             <thead>
               {/* Row 1 Headers */}
-              <tr className="border-b border-[#1c3a60] bg-[#0b2440] text-center text-[10px] text-slate-300 font-bold">
+              <tr className="border-b border-[#1c3a60] bg-[#0b2440] text-center text-[10px] text-slate-300 font-bold whitespace-nowrap">
                 <th rowSpan={2} className="px-2 py-1.5 border-r border-[#1c3a60] text-left min-w-[70px]">Mã CK</th>
                 <th rowSpan={2} className="px-1.5 py-1.5 border-r border-[#1c3a60] text-[#facc15] min-w-[50px]">TC</th>
                 <th rowSpan={2} className="px-1.5 py-1.5 border-r border-[#1c3a60] text-[#e879f9] min-w-[50px]">Trần</th>
@@ -359,38 +359,38 @@ export function SectorBoardModule() {
                 <th colSpan={2} className="py-1 text-amber-300 bg-amber-950/20">ĐTNN</th>
               </tr>
               {/* Row 2 Sub-headers */}
-              <tr className="border-b border-[#1c3a60] bg-[#091f38] text-center text-[9px] text-slate-400">
+              <tr className="border-b border-[#1c3a60] bg-[#091f38] text-center text-[9px] text-slate-400 whitespace-nowrap">
                 {/* Bên mua */}
-                <th className="px-1 py-1">Giá 3</th>
-                <th className="px-1 py-1">KL 3</th>
-                <th className="px-1 py-1">Giá 2</th>
-                <th className="px-1 py-1">KL 2</th>
-                <th className="px-1 py-1">Giá 1</th>
-                <th className="px-1 py-1 border-r border-[#1c3a60]">KL 1</th>
+                <th className="px-1 py-1 min-w-[45px]">Giá 3</th>
+                <th className="px-1 py-1 min-w-[45px]">KL 3</th>
+                <th className="px-1 py-1 min-w-[45px]">Giá 2</th>
+                <th className="px-1 py-1 min-w-[45px]">KL 2</th>
+                <th className="px-1 py-1 min-w-[45px]">Giá 1</th>
+                <th className="px-1 py-1 border-r border-[#1c3a60] min-w-[45px]">KL 1</th>
                 {/* Khớp lệnh */}
-                <th className="px-1 py-1 text-cyan-300 font-bold">Giá</th>
-                <th className="px-1 py-1 text-cyan-300 font-bold">KL</th>
-                <th className="px-1 py-1 text-cyan-300 font-bold border-r border-[#1c3a60]">+/-</th>
+                <th className="px-1 py-1 text-cyan-300 font-bold min-w-[48px]">Giá</th>
+                <th className="px-1 py-1 text-cyan-300 font-bold min-w-[48px]">KL</th>
+                <th className="px-1 py-1 text-cyan-300 font-bold border-r border-[#1c3a60] min-w-[48px]">+/-</th>
                 {/* Bên bán */}
-                <th className="px-1 py-1">Giá 1</th>
-                <th className="px-1 py-1">KL 1</th>
-                <th className="px-1 py-1">Giá 2</th>
-                <th className="px-1 py-1">KL 2</th>
-                <th className="px-1 py-1">Giá 3</th>
-                <th className="px-1 py-1 border-r border-[#1c3a60]">KL 3</th>
+                <th className="px-1 py-1 min-w-[45px]">Giá 1</th>
+                <th className="px-1 py-1 min-w-[45px]">KL 1</th>
+                <th className="px-1 py-1 min-w-[45px]">Giá 2</th>
+                <th className="px-1 py-1 min-w-[45px]">KL 2</th>
+                <th className="px-1 py-1 min-w-[45px]">Giá 3</th>
+                <th className="px-1 py-1 border-r border-[#1c3a60] min-w-[45px]">KL 3</th>
                 {/* Giá */}
-                <th className="px-1 py-1">Cao</th>
-                <th className="px-1 py-1">TB</th>
-                <th className="px-1 py-1 border-r border-[#1c3a60]">Thấp</th>
+                <th className="px-1 py-1 min-w-[45px]">Cao</th>
+                <th className="px-1 py-1 min-w-[45px]">TB</th>
+                <th className="px-1 py-1 border-r border-[#1c3a60] min-w-[45px]">Thấp</th>
                 {/* Dư */}
-                <th className="px-1 py-1">Mua</th>
-                <th className="px-1 py-1 border-r border-[#1c3a60]">Bán</th>
+                <th className="px-1 py-1 min-w-[45px]">Mua</th>
+                <th className="px-1 py-1 border-r border-[#1c3a60] min-w-[45px]">Bán</th>
                 {/* ĐTNN */}
-                <th className="px-1 py-1 text-amber-300">Mua</th>
-                <th className="px-1 py-1 text-amber-300">Bán</th>
+                <th className="px-1 py-1 text-amber-300 min-w-[50px]">Mua</th>
+                <th className="px-1 py-1 text-amber-300 min-w-[50px]">Bán</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#142944] text-[11px] tabular-nums">
+            <tbody className="divide-y divide-[#142944] text-[11px] tabular-nums whitespace-nowrap">
               {quotesList.map((q) => {
                 const tc = q.prevClose ?? q.close;
                 const isUpcom = ["BSR", "ACV", "VGI", "VEA", "QNS", "MCH", "OIL"].includes(q.symbol);
@@ -412,61 +412,61 @@ export function SectorBoardModule() {
                 const change = q.close - tc;
 
                 return (
-                  <tr key={q.symbol} className="hover:bg-[#0e2a4a] transition-colors border-b border-[#12263f]">
+                  <tr key={q.symbol} className="hover:bg-[#0e2a4a] transition-colors border-b border-[#12263f] whitespace-nowrap">
                     {/* Symbol */}
-                    <td className="px-2 py-1.5 font-bold border-r border-[#1c3a60]">
+                    <td className="px-2 py-1.5 font-bold border-r border-[#1c3a60] whitespace-nowrap">
                       <Link href={`/stocks/${q.symbol}`} className={`${closeCol} hover:underline`}>
                         {q.symbol}
                       </Link>
                     </td>
 
                     {/* TC / Trần / Sàn */}
-                    <td className="px-1.5 py-1.5 text-right font-semibold text-[#facc15] border-r border-[#1c3a60]">{tc.toFixed(2)}</td>
-                    <td className="px-1.5 py-1.5 text-right font-semibold text-[#e879f9] border-r border-[#1c3a60]">{tran.toFixed(2)}</td>
-                    <td className="px-1.5 py-1.5 text-right font-semibold text-[#38bdf8] border-r border-[#1c3a60]">{san.toFixed(2)}</td>
+                    <td className="px-1.5 py-1.5 text-right font-semibold text-[#facc15] border-r border-[#1c3a60] whitespace-nowrap">{tc.toFixed(2)}</td>
+                    <td className="px-1.5 py-1.5 text-right font-semibold text-[#e879f9] border-r border-[#1c3a60] whitespace-nowrap">{tran.toFixed(2)}</td>
+                    <td className="px-1.5 py-1.5 text-right font-semibold text-[#38bdf8] border-r border-[#1c3a60] whitespace-nowrap">{san.toFixed(2)}</td>
 
                     {/* Total Volume */}
-                    <td className="px-2 py-1.5 text-right font-bold text-slate-200 border-r border-[#1c3a60]">
+                    <td className="px-2 py-1.5 text-right font-bold text-slate-200 border-r border-[#1c3a60] whitespace-nowrap">
                       {fmtVol(q.volume)}
                     </td>
 
                     {/* Bên mua (3 levels) */}
-                    <td className={`px-1 py-1.5 text-right ${priceColor(bids[2]?.price ?? q.close, tc, tran, san)}`}>{bids[2]?.price ? bids[2].price.toFixed(2) : "—"}</td>
-                    <td className="px-1 py-1.5 text-right text-slate-300 font-semibold">{bids[2]?.volume ? fmtVol(bids[2].volume) : "—"}</td>
-                    <td className={`px-1 py-1.5 text-right ${priceColor(bids[1]?.price ?? q.close, tc, tran, san)}`}>{bids[1]?.price ? bids[1].price.toFixed(2) : "—"}</td>
-                    <td className="px-1 py-1.5 text-right text-slate-300 font-semibold">{bids[1]?.volume ? fmtVol(bids[1].volume) : "—"}</td>
-                    <td className={`px-1 py-1.5 text-right font-bold ${priceColor(bids[0]?.price ?? q.close, tc, tran, san)}`}>{bids[0]?.price ? bids[0].price.toFixed(2) : "—"}</td>
-                    <td className="px-1 py-1.5 text-right text-slate-200 font-bold border-r border-[#1c3a60]">{bids[0]?.volume ? fmtVol(bids[0].volume) : "—"}</td>
+                    <td className={`px-1 py-1.5 text-right whitespace-nowrap ${priceColor(bids[2]?.price ?? q.close, tc, tran, san)}`}>{bids[2]?.price ? bids[2].price.toFixed(2) : "—"}</td>
+                    <td className="px-1 py-1.5 text-right text-slate-300 font-semibold whitespace-nowrap">{bids[2]?.volume ? fmtVol(bids[2].volume) : "—"}</td>
+                    <td className={`px-1 py-1.5 text-right whitespace-nowrap ${priceColor(bids[1]?.price ?? q.close, tc, tran, san)}`}>{bids[1]?.price ? bids[1].price.toFixed(2) : "—"}</td>
+                    <td className="px-1 py-1.5 text-right text-slate-300 font-semibold whitespace-nowrap">{bids[1]?.volume ? fmtVol(bids[1].volume) : "—"}</td>
+                    <td className={`px-1 py-1.5 text-right font-bold whitespace-nowrap ${priceColor(bids[0]?.price ?? q.close, tc, tran, san)}`}>{bids[0]?.price ? bids[0].price.toFixed(2) : "—"}</td>
+                    <td className="px-1 py-1.5 text-right text-slate-200 font-bold border-r border-[#1c3a60] whitespace-nowrap">{bids[0]?.volume ? fmtVol(bids[0].volume) : "—"}</td>
 
                     {/* Khớp lệnh */}
-                    <td className={`px-1.5 py-1.5 text-right font-extrabold ${closeBg}`}>{q.close.toFixed(2)}</td>
-                    <td className="px-1.5 py-1.5 text-right font-bold text-white bg-[#0b2440]">{fmtVol(Math.round(q.volume * 0.08))}</td>
-                    <td className={`px-1.5 py-1.5 text-right font-bold border-r border-[#1c3a60] ${closeCol}`}>
+                    <td className={`px-1.5 py-1.5 text-right font-extrabold whitespace-nowrap ${closeBg}`}>{q.close.toFixed(2)}</td>
+                    <td className="px-1.5 py-1.5 text-right font-bold text-white bg-[#0b2440] whitespace-nowrap">{fmtVol(Math.round(q.volume * 0.08))}</td>
+                    <td className={`px-1.5 py-1.5 text-right font-bold border-r border-[#1c3a60] whitespace-nowrap ${closeCol}`}>
                       {change >= 0 ? "+" : ""}{change.toFixed(2)}
                     </td>
 
                     {/* Bên bán (3 levels) */}
-                    <td className={`px-1 py-1.5 text-right font-bold ${priceColor(asks[0]?.price ?? q.close, tc, tran, san)}`}>{asks[0]?.price ? asks[0].price.toFixed(2) : "—"}</td>
-                    <td className="px-1 py-1.5 text-right text-slate-200 font-bold">{asks[0]?.volume ? fmtVol(asks[0].volume) : "—"}</td>
-                    <td className={`px-1 py-1.5 text-right ${priceColor(asks[1]?.price ?? q.close, tc, tran, san)}`}>{asks[1]?.price ? asks[1].price.toFixed(2) : "—"}</td>
-                    <td className="px-1 py-1.5 text-right text-slate-300 font-semibold">{asks[1]?.volume ? fmtVol(asks[1].volume) : "—"}</td>
-                    <td className={`px-1 py-1.5 text-right ${priceColor(asks[2]?.price ?? q.close, tc, tran, san)}`}>{asks[2]?.price ? asks[2].price.toFixed(2) : "—"}</td>
-                    <td className="px-1 py-1.5 text-right text-slate-300 font-semibold border-r border-[#1c3a60]">{asks[2]?.volume ? fmtVol(asks[2].volume) : "—"}</td>
+                    <td className={`px-1 py-1.5 text-right font-bold whitespace-nowrap ${priceColor(asks[0]?.price ?? q.close, tc, tran, san)}`}>{asks[0]?.price ? asks[0].price.toFixed(2) : "—"}</td>
+                    <td className="px-1 py-1.5 text-right text-slate-200 font-bold whitespace-nowrap">{asks[0]?.volume ? fmtVol(asks[0].volume) : "—"}</td>
+                    <td className={`px-1 py-1.5 text-right whitespace-nowrap ${priceColor(asks[1]?.price ?? q.close, tc, tran, san)}`}>{asks[1]?.price ? asks[1].price.toFixed(2) : "—"}</td>
+                    <td className="px-1 py-1.5 text-right text-slate-300 font-semibold whitespace-nowrap">{asks[1]?.volume ? fmtVol(asks[1].volume) : "—"}</td>
+                    <td className={`px-1 py-1.5 text-right whitespace-nowrap ${priceColor(asks[2]?.price ?? q.close, tc, tran, san)}`}>{asks[2]?.price ? asks[2].price.toFixed(2) : "—"}</td>
+                    <td className="px-1 py-1.5 text-right text-slate-300 font-semibold border-r border-[#1c3a60] whitespace-nowrap">{asks[2]?.volume ? fmtVol(asks[2].volume) : "—"}</td>
 
                     {/* Giá High / TB / Low */}
-                    <td className={`px-1 py-1.5 text-right ${priceColor(high, tc, tran, san)}`}>{high.toFixed(2)}</td>
-                    <td className="px-1 py-1.5 text-right text-amber-300 font-semibold">{avg.toFixed(2)}</td>
-                    <td className={`px-1 py-1.5 text-right border-r border-[#1c3a60] ${priceColor(low, tc, tran, san)}`}>{low.toFixed(2)}</td>
+                    <td className={`px-1 py-1.5 text-right whitespace-nowrap ${priceColor(high, tc, tran, san)}`}>{high.toFixed(2)}</td>
+                    <td className="px-1 py-1.5 text-right text-amber-300 font-semibold whitespace-nowrap">{avg.toFixed(2)}</td>
+                    <td className={`px-1 py-1.5 text-right border-r border-[#1c3a60] whitespace-nowrap ${priceColor(low, tc, tran, san)}`}>{low.toFixed(2)}</td>
 
                     {/* Dư Mua / Bán */}
-                    <td className="px-1 py-1.5 text-right text-emerald-400">{fmtVol(Math.round(micro.orderBook.bidValue * 10_000))}</td>
-                    <td className="px-1 py-1.5 text-right text-rose-400 border-r border-[#1c3a60]">{fmtVol(Math.round(micro.orderBook.askValue * 10_000))}</td>
+                    <td className="px-1 py-1.5 text-right text-emerald-400 whitespace-nowrap">{fmtVol(Math.round(micro.orderBook.bidValue * 10_000))}</td>
+                    <td className="px-1 py-1.5 text-right text-rose-400 border-r border-[#1c3a60] whitespace-nowrap">{fmtVol(Math.round(micro.orderBook.askValue * 10_000))}</td>
 
                     {/* ĐTNN Mua / Bán */}
-                    <td className="px-1.5 py-1.5 text-right font-semibold text-emerald-300">
+                    <td className="px-1.5 py-1.5 text-right font-semibold text-emerald-300 whitespace-nowrap">
                       {foreign.buyValue ? (foreign.buyValue * 100).toFixed(2) : "—"}
                     </td>
-                    <td className="px-1.5 py-1.5 text-right font-semibold text-rose-300">
+                    <td className="px-1.5 py-1.5 text-right font-semibold text-rose-300 whitespace-nowrap">
                       {foreign.sellValue ? (foreign.sellValue * 100).toFixed(2) : "—"}
                     </td>
                   </tr>
