@@ -6,6 +6,7 @@ import { financialNormalizedFacts, financialSourceDocuments } from "@/db/schema"
 import { getLatestCompletedQuarter } from "@/lib/financial-statements";
 import { fetchVndirectFinancialStatements } from "@/lib/connectors/vndirect-financials";
 import { fetchVietstockFinancialStatements } from "@/lib/connectors/vietstock-financials";
+import { fetchCafefFinancialStatements } from "@/lib/connectors/cafef-financials";
 import { isFuturePeriod } from "@/lib/realtime-time";
 
 export type IngestionSource = "vndirect" | "vietstock" | "cafef";
@@ -334,14 +335,19 @@ export async function loadPreferredQuarterlyFinancials(symbol: string, limit = 4
   const cleanSymbol = symbol.trim().toUpperCase();
   await ensureFinancialIngestionTables();
 
-  // 1. Attempt direct real-time fetch from Vietstock and VNDirect
+  // 1. Attempt direct real-time fetch from Vietstock, CafeF, and VNDirect
   try {
-    const [vndirectImport, vietstockImport] = await Promise.all([
-      fetchVndirectFinancialStatements(cleanSymbol).catch(() => null),
+    const [vietstockImport, cafefImport, vndirectImport] = await Promise.all([
       fetchVietstockFinancialStatements(cleanSymbol).catch(() => null),
+      fetchCafefFinancialStatements(cleanSymbol).catch(() => null),
+      fetchVndirectFinancialStatements(cleanSymbol).catch(() => null),
     ]);
 
-    const liveQuarters = [...(vietstockImport?.quarters ?? []), ...(vndirectImport?.quarters ?? [])];
+    const liveQuarters = [
+      ...(vietstockImport?.quarters ?? []),
+      ...(cafefImport?.quarters ?? []),
+      ...(vndirectImport?.quarters ?? []),
+    ];
     if (liveQuarters.length > 0) {
       const mapped: import("@/lib/financial-statements").FinancialQuarter[] = liveQuarters.slice(0, limit).map((q) => ({
         period: q.period,
@@ -353,7 +359,7 @@ export async function loadPreferredQuarterlyFinancials(symbol: string, limit = 4
       }));
 
       if (mapped.length > 0) {
-        const sourceName = vietstockImport?.quarters.length ? "vietstock" : "vndirect";
+        const sourceName = vietstockImport?.quarters.length ? "vietstock" : cafefImport?.quarters.length ? "cafef" : "vndirect";
         return { quarters: mapped, source: sourceName, providerBacked: true, warnings: [] };
       }
     }
@@ -391,11 +397,12 @@ export async function loadPreferredFinancialRecords(symbol: string, statementTyp
 
   // Try live fetch directly
   try {
-    const [vndirectImport, vietstockImport] = await Promise.all([
-      fetchVndirectFinancialStatements(cleanSymbol).catch(() => null),
+    const [vietstockImport, cafefImport, vndirectImport] = await Promise.all([
       fetchVietstockFinancialStatements(cleanSymbol).catch(() => null),
+      fetchCafefFinancialStatements(cleanSymbol).catch(() => null),
+      fetchVndirectFinancialStatements(cleanSymbol).catch(() => null),
     ]);
-    const liveImport = vietstockImport?.quarters.length ? vietstockImport : vndirectImport;
+    const liveImport = (vietstockImport?.quarters.length ? vietstockImport : null) ?? (cafefImport?.quarters.length ? cafefImport : null) ?? vndirectImport;
     if (liveImport && liveImport.quarters.length > 0) {
       const records = liveImport.quarters.slice(0, limit).map((q) => ({
         period: q.period,
@@ -407,7 +414,7 @@ export async function loadPreferredFinancialRecords(symbol: string, statementTyp
         filingDate: q.filingDate ?? liveImport.filingDate,
         unit: "billion VND",
       }));
-      return { records, source: liveImport.source as "vietstock" | "vndirect", providerBacked: true };
+      return { records, source: liveImport.source as "vietstock" | "cafef" | "vndirect", providerBacked: true };
     }
   } catch (err) {
     // fallback to DB

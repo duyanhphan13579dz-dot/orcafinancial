@@ -89,8 +89,7 @@ const TYPE_LABELS: Record<StatementType, string> = {
 
 function fmtValue(v: number, unit: string): string {
   if (unit === "") return v.toFixed(2);
-  if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(2)}N`;
-  return `${v.toFixed(0)}`;
+  return v.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
 }
 
 function sourceName(source: string): string {
