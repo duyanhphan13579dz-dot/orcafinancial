@@ -57,7 +57,6 @@ const NAV = [
   { href: "/screener", label: "Bộ lọc" },
   { href: "/news", label: "Tin tức" },
   { href: "/watchlist", label: "Theo dõi" },
-  { href: "/agent", label: "ORCA AI" },
   { href: "/system", label: "Hệ thống" },
   { href: "/settings", label: "Cài đặt" },
 ];

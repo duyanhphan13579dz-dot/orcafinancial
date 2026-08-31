@@ -20,7 +20,6 @@ const MORE = [
   { href: "/screener", label: "Bộ lọc", icon: "🔍" },
   { href: "/news", label: "Tin tức", icon: "📡" },
   { href: "/watchlist", label: "Theo dõi", icon: "⭐" },
-  { href: "/agent", label: "ORCA AI", icon: "🤖" },
   { href: "/system", label: "Hệ thống", icon: "🩺" },
   { href: "/settings", label: "Cài đặt", icon: "⚙️" },
 ];

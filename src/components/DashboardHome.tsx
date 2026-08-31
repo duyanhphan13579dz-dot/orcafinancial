@@ -11,7 +11,7 @@ const QUICK_LINKS = [
   { href: "/heatmap", label: "Bản đồ nhiệt", desc: "Bản đồ sức mạnh & dòng tiền" },
   { href: "/screener", label: "Bộ lọc cổ phiếu", desc: "CANSLIM · Minervini · Wyckoff" },
   { href: "/reports", label: "Báo cáo thị trường", desc: "Bản tin sáng · Tóm tắt thị trường" },
-  { href: "/agent", label: "ORCA AI", desc: "Trợ lý phân tích tài chính 24/7" },
+  { href: "/watchlist", label: "Danh mục theo dõi", desc: "Quản lý & theo dõi tín hiệu" },
 ];
 
 function tone(value: number | null | undefined) {
