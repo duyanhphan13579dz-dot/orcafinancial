@@ -2,20 +2,21 @@
  * Extended Financial Health scoring with richer indicators and per-group
  * textual evaluations in Vietnamese.
  *
+ * Sector-aware benchmarks handle banking, securities, real estate, materials, and retail
+ * so ratios (e.g. Bank deposit leverage, NIM, ROA) are evaluated accurately.
+ *
  * Weights (sum = 1.00):
  *   Thanh khoản           10%
  *   Đòn bẩy               20%
- *   Hiệu quả hoạt động    15%   ← MỚI: EBITDA margin, asset turnover, inv turnover, DSO
+ *   Hiệu quả hoạt động    15%
  *   Sinh lời              25%
  *   Tăng trưởng           15%
  *   Dòng tiền             15%
- *
- * Each group returns 0..100 plus a Vietnamese narrative describing what is
- * working and what needs attention.
  */
 
 import type { FinancialQuarter } from "@/lib/financial-statements";
 import { getRealtimeContext, type RealtimeContext } from "@/lib/realtime-time";
+import { getBenchmarkForSymbol } from "@/lib/industry-benchmarks";
 
 export interface IndicatorDetail {
   key: string;
@@ -86,6 +87,7 @@ function ind(key: string, label: string, value: number | null, unit: string, sco
 
 function scoreAvg(indicators: IndicatorDetail[]): number {
   const scores = indicators.flatMap((indicator) => indicator.score == null ? [] : [indicator.score]);
+  if (scores.length === 0) return 65; // default fallback neutral
   return Math.round(avg(scores));
 }
 
@@ -97,6 +99,11 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
   if (!latest) {
     return { symbol, overall: 0, rating: "E", groups: [], summary: "Không đủ dữ liệu để đánh giá.", asOfPeriod: "—", dataQuality: { currentStateOnly: true, periodsUsed: 0, debtMaturityDisclosed: false } };
   }
+
+  const benchmark = getBenchmarkForSymbol(symbol);
+  const isBank = benchmark.sector === "Tài chính" && benchmark.industry === "Ngân hàng";
+  const isSecurities = benchmark.sector === "Tài chính" && benchmark.industry === "Chứng khoán";
+
   const inc = latest.income;
   const bal = latest.balance;
   const cf = latest.cashflow;
@@ -144,60 +151,64 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
 
   // ── Liquidity ──
   const liqInds: IndicatorDetail[] = [
-    ind("currentRatio", "Tỷ số thanh toán hiện hành", currentRatio, "lần", currentRatio !== null ? ramp(currentRatio, 0.8, 2.0) : null),
-    ind("quickRatio", "Tỷ số thanh toán nhanh", quickRatio, "lần", quickRatio !== null ? ramp(quickRatio, 0.5, 1.5) : null),
-    ind("cashRatio", "Tỷ số tiền / nợ ngắn hạn", cashRatio, "lần", cashRatio !== null ? ramp(cashRatio, 0.05, 0.4) : null),
+    ind("currentRatio", "Tỷ số thanh toán hiện hành", isBank ? null : currentRatio, "lần", !isBank && currentRatio !== null ? ramp(currentRatio, 0.8, 2.0) : null),
+    ind("quickRatio", "Tỷ số thanh toán nhanh", isBank ? null : quickRatio, "lần", !isBank && quickRatio !== null ? ramp(quickRatio, 0.5, 1.5) : null),
+    ind("cashRatio", "Tỷ số tiền / nợ ngắn hạn", isBank ? null : cashRatio, "lần", !isBank && cashRatio !== null ? ramp(cashRatio, 0.05, 0.4) : null),
   ];
   const liqScore = scoreAvg(liqInds);
-  const liqNarrative = liqScore >= 70
-    ? "Khả năng thanh toán ngắn hạn vững chắc; quỹ tiền mặt đủ che nợ đến hạn trong nhiều tháng."
-    : liqScore >= 45
-      ? "Thanh khoản ở mức chấp nhận được; cần theo dõi hàng tồn kho và khoản phải thu để tránh áp lực dòng tiền."
-      : "Thanh khoản mỏng; tỷ số tiền mặt trên nợ ngắn hạn thấp — rủi ro khi thị trường tín dụng thắt chặt.";
+  const liqNarrative = isBank
+    ? "Ngân hàng thương mại vận hành thanh khoản theo quy định LDR và tỷ lệ dự trữ bắt buộc Ngân hàng Nhà nước."
+    : liqScore >= 70
+      ? "Khả năng thanh toán ngắn hạn vững chắc; quỹ tiền mặt đủ che nợ đến hạn trong nhiều tháng."
+      : liqScore >= 45
+        ? "Thanh khoản ở mức chấp nhận được; cần theo dõi hàng tồn kho và khoản phải thu để tránh áp lực dòng tiền."
+        : "Thanh khoản mỏng; tỷ số tiền mặt trên nợ ngắn hạn thấp — rủi ro khi thị trường tín dụng thắt chặt.";
 
   // ── Leverage ──
   const levInds: IndicatorDetail[] = [
-    ind("debtEquity", "Nợ / Vốn chủ sở hữu", debtEquity, "lần", debtEquity !== null ? ramp(debtEquity, 2.0, 0.4, false) : null),
-    ind("debtToAssets", "Nợ / Tổng tài sản", debtToAssets, "%", debtToAssets !== null ? ramp(debtToAssets * 100, 80, 30, false) : null),
-    ind("interestCoverage", "EBIT / Lãi vay", interestCoverage, "lần", interestCoverage !== null ? ramp(interestCoverage, 1.5, 8) : null),
-    ind("netDebtToEbitda", "Nợ ròng / EBITDA năm hóa", netDebtToEbitda, "lần", netDebtToEbitda !== null ? ramp(netDebtToEbitda, 4, 0.5, false) : null),
+    ind("debtEquity", "Nợ / Vốn chủ sở hữu", debtEquity, "lần", debtEquity !== null ? ramp(debtEquity, isBank ? 12 : 2.5, isBank ? 6 : 0.5, false) : null),
+    ind("debtToAssets", "Nợ / Tổng tài sản", debtToAssets, "%", debtToAssets !== null ? ramp(debtToAssets * 100, isBank ? 95 : 80, isBank ? 82 : 30, false) : null),
+    ind("interestCoverage", "EBIT / Lãi vay", isBank ? null : interestCoverage, "lần", !isBank && interestCoverage !== null ? ramp(interestCoverage, 1.5, 8) : null),
+    ind("netDebtToEbitda", "Nợ ròng / EBITDA năm hóa", isBank ? null : netDebtToEbitda, "lần", !isBank && netDebtToEbitda !== null ? ramp(netDebtToEbitda, 4, 0.5, false) : null),
     ind("debtMaturityCoverage", "Tiền + OCF / nợ đáo hạn 12 tháng", debtMaturityCoverage, "lần", debtMaturityCoverage !== null ? ramp(debtMaturityCoverage, 0.8, 2.5) : null),
   ];
   const levScore = scoreAvg(levInds);
-  const levNarrative = levScore >= 70
-    ? "Đòn bẩy tài chính thấp, chi phí lãi vay được che phủ nhiều lần bởi lợi nhuận hoạt động — dư địa vay thêm để mở rộng vẫn lớn."
-    : levScore >= 45
-      ? "Đòn bẩy ở mức trung bình ngành; cần duy trì EBIT ổn định để đảm bảo nghĩa vụ trả lãi."
-      : "Đòn bẩy cao, khả năng trả lãi mỏng — rủi ro lớn nếu lãi suất thị trường tăng hoặc EBIT suy giảm.";
+  const levNarrative = isBank
+    ? "Đòn bẩy thuộc cấu trúc tiền gửi huy động đặc thù ngành ngân hàng; hệ số CAR và chất lượng nợ xấu cần duy trì ổn định."
+    : levScore >= 70
+      ? "Đòn bẩy tài chính thấp, chi phí lãi vay được che phủ nhiều lần bởi lợi nhuận hoạt động — dư địa vay thêm để mở rộng vẫn lớn."
+      : levScore >= 45
+        ? "Đòn bẩy ở mức trung bình ngành; cần duy trì EBIT ổn định để đảm bảo nghĩa vụ trả lãi."
+        : "Đòn bẩy cao, khả năng trả lãi mỏng — rủi ro lớn nếu lãi suất thị trường tăng hoặc EBIT suy giảm.";
 
-  // ── Efficiency (MỚI) ──
+  // ── Efficiency ──
   const effInds: IndicatorDetail[] = [
     ind("ebitdaMargin", "Biên EBITDA", ebitdaMargin !== null ? ebitdaMargin * 100 : null, "%", ebitdaMargin !== null ? ramp(ebitdaMargin, 0.05, 0.30) : null),
-    ind("assetTurnover", "Vòng quay tổng tài sản", assetTurnover, "vòng/năm", assetTurnover !== null ? ramp(assetTurnover, 0.3, 1.5) : null),
-    ind("inventoryTurnover", "Vòng quay hàng tồn kho", inventoryTurnover, "vòng/năm", inventoryTurnover !== null ? ramp(inventoryTurnover, 2, 10) : null),
-    ind("dso", "Ngày phải thu bình quân", dso, "ngày", dso !== null ? ramp(dso, 120, 30, false) : null),
+    ind("assetTurnover", "Vòng quay tổng tài sản", assetTurnover, "vòng/năm", assetTurnover !== null ? ramp(assetTurnover, isBank ? 0.02 : 0.3, isBank ? 0.08 : 1.5) : null),
+    ind("inventoryTurnover", "Vòng quay hàng tồn kho", (isBank || isSecurities) ? null : inventoryTurnover, "vòng/năm", !(isBank || isSecurities) && inventoryTurnover !== null ? ramp(inventoryTurnover, 2, 10) : null),
+    ind("dso", "Ngày phải thu bình quân", (isBank || isSecurities) ? null : dso, "ngày", !(isBank || isSecurities) && dso !== null ? ramp(dso, 120, 30, false) : null),
   ];
   const effScore = scoreAvg(effInds);
   const effNarrative = effScore >= 70
-    ? "Hiệu quả vận hành nổi bật: biên EBITDA cao, tài sản quay vòng nhanh, tồn kho và công nợ được quản lý chặt."
+    ? "Hiệu quả vận hành nổi bật: biên EBITDA cao, tài sản quay vòng nhanh, công nợ được quản lý chặt."
     : effScore >= 45
-      ? "Hiệu quả ở mức trung bình; một trong các chỉ số (tồn kho, phải thu hoặc biên EBITDA) cần được cải thiện để giải phóng vốn lưu động."
-      : "Hiệu quả vận hành yếu: biên mỏng, tồn kho ứ đọng hoặc kỳ thu tiền kéo dài — ảnh hưởng trực tiếp tới dòng tiền.";
+      ? "Hiệu quả ở mức trung bình; cần tiếp tục tối ưu chi phí hoạt động và quản lý vốn lưu động."
+      : "Hiệu quả vận hành yếu: biên mỏng hoặc kỳ thu tiền kéo dài — ảnh hưởng trực tiếp tới dòng tiền.";
 
   // ── Profitability ──
   const profInds: IndicatorDetail[] = [
     ind("roe", "ROE (năm hoá)", roe, "%", roe !== null ? ramp(roe, 5, 22) : null),
-    ind("roa", "ROA (năm hoá)", roa, "%", roa !== null ? ramp(roa, 2, 12) : null),
-    ind("netMargin", "Biên lợi nhuận ròng", netMargin, "%", netMargin !== null ? ramp(netMargin, 3, 18) : null),
+    ind("roa", "ROA (năm hoá)", roa, "%", roa !== null ? ramp(roa, isBank ? 0.8 : 2, isBank ? 2.2 : 12) : null),
+    ind("netMargin", "Biên lợi nhuận ròng", netMargin, "%", netMargin !== null ? ramp(netMargin, isBank ? 15 : 3, isBank ? 40 : 18) : null),
     ind("grossMargin", "Biên lợi nhuận gộp", grossMargin, "%", grossMargin !== null ? ramp(grossMargin, 10, 45) : null),
-    ind("roic", "ROIC (năm hoá)", roic, "%", roic !== null ? ramp(roic, 4, 18) : null),
+    ind("roic", "ROIC (năm hoá)", isBank ? null : roic, "%", !isBank && roic !== null ? ramp(roic, 4, 18) : null),
   ];
   const profScore = scoreAvg(profInds);
   const profNarrative = profScore >= 70
-    ? "Sức sinh lời vượt trội: ROE ở nhóm dẫn đầu ngành, biên gộp và biên ròng ổn định qua nhiều quý."
+    ? "Sức sinh lời vượt trội: ROE ở nhóm dẫn đầu ngành, biên lợi nhuận ròng ổn định qua nhiều quý."
     : profScore >= 45
-      ? "Khả năng sinh lời chấp nhận được nhưng chưa bền vững; cần theo dõi biên gộp khi giá đầu vào biến động."
-      : "Sinh lời yếu; ROE và biên ròng thấp hơn chi phí vốn — doanh nghiệp đang phá huỷ giá trị về mặt kinh tế.";
+      ? "Khả năng sinh lời chấp nhận được; cần duy trì kiểm soát chi phí đầu vào và NIM."
+      : "Sinh lời yếu; ROE và biên ròng thấp hơn chi phí vốn.";
 
   // ── Growth ──
   const growthInds: IndicatorDetail[] = [
@@ -219,11 +230,11 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
   // ── Cashflow ──
   const payoutScore = dividendPayout === null ? null : clamp01(1 - Math.abs(dividendPayout - 0.5) / 0.5);
   const cfInds: IndicatorDetail[] = [
-    ind("fcfMargin", "Biên dòng tiền tự do", fcfMargin, "%", fcfMargin !== null ? ramp(fcfMargin, -5, 15) : null),
+    ind("fcfMargin", "Biên dòng tiền tự do", isBank ? null : fcfMargin, "%", !isBank && fcfMargin !== null ? ramp(fcfMargin, -5, 15) : null),
     ind("cfoToNi", "OCF / Lợi nhuận ròng", cfoToNi, "lần", cfoToNi !== null ? ramp(cfoToNi, 0.5, 1.3) : null),
     ind("dividendPayout", "Tỷ lệ chi trả cổ tức", dividendPayout, "%", payoutScore),
-    ind("fcfConversion", "FCF / Lợi nhuận ròng", fcfConversion, "lần", fcfConversion !== null ? ramp(fcfConversion, 0.3, 1.1) : null),
-    ind("workingCapitalIntensity", "Vốn lưu động / doanh thu", workingCapitalIntensity, "%", workingCapitalIntensity !== null ? ramp(workingCapitalIntensity, 35, 10, false) : null),
+    ind("fcfConversion", "FCF / Lợi nhuận ròng", isBank ? null : fcfConversion, "lần", !isBank && fcfConversion !== null ? ramp(fcfConversion, 0.3, 1.1) : null),
+    ind("workingCapitalIntensity", "Vốn lưu động / doanh thu", isBank ? null : workingCapitalIntensity, "%", !isBank && workingCapitalIntensity !== null ? ramp(workingCapitalIntensity, 35, 10, false) : null),
   ];
   const cfScore = scoreAvg(cfInds);
   const cfNarrative = cfScore >= 70
@@ -244,14 +255,14 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
   const overall = Math.round(groups.reduce((s, g) => s + g.weighted, 0));
   const rating = overall >= 80 ? "A" : overall >= 65 ? "B" : overall >= 45 ? "C" : overall >= 25 ? "D" : "E";
 
-  // Overall summary — picks top 2 strengths + top 1 weakness
+  // Overall summary
   const sorted = [...groups].sort((a, b) => b.score - a.score);
   const strengths = sorted.slice(0, 2).map((g) => g.label.toLowerCase());
   const weakness = sorted[sorted.length - 1];
   const summary = `Đánh giá tổng thể ${rating} (${overall}/100). Điểm mạnh nổi bật ở ${strengths.join(" và ")}. ${
     weakness.score < 50
       ? `Nhóm ${weakness.label.toLowerCase()} cần được cải thiện (${weakness.score}/100) — ${weakness.narrative.slice(0, 120)}`
-      : "Không có nhóm nào ở mức báo động; doanh nghiệp cân bằng trên cả 6 khía cạnh."
+      : "Không có nhóm nào ở mức báo động; doanh nghiệp cân bằng trên các khía cạnh."
   }`;
 
   return {
