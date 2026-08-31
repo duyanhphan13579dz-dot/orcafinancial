@@ -175,6 +175,7 @@ export function SectorBoardModule() {
 
     let filtered = unique;
 
+<<<<<<< HEAD
     // Filter by Index Group
     if (selectedGroup === "VN30") {
       const vn30Set = new Set(["ACB", "BID", "BCM", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG", "MBB", "MSN", "MWG", "PLX", "POW", "SAB", "SHB", "SSB", "SSI", "STB", "TCB", "TPB", "VCB", "VHM", "VIB", "VIC", "VJC", "VNM", "VPB", "VRE"]);
@@ -185,6 +186,44 @@ export function SectorBoardModule() {
     } else if (selectedGroup === "UPCOM") {
       const upcomSet = new Set(["BSR", "ACV", "VGI", "VEA", "QNS", "MCH", "OIL", "MSR", "DDV"]);
       filtered = filtered.filter((q) => upcomSet.has(q.symbol));
+=======
+    // Filter by Index Group / Basket
+    const hnxSet = new Set(["IDC", "PVS", "SHS", "MBS", "CEO", "THD", "KSF", "NVB", "TNG", "BSI"]);
+    const upcomSet = new Set(["BSR", "ACV", "VGI", "VEA", "QNS", "MCH", "OIL", "MSR", "DDV"]);
+
+    const vn30Set = new Set(["ACB", "BID", "BCM", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG", "MBB", "MSN", "MWG", "PLX", "POW", "SAB", "SHB", "SSB", "SSI", "STB", "TCB", "TPB", "VCB", "VHM", "VIB", "VIC", "VJC", "VNM", "VPB", "VRE"]);
+
+    const vn100MidExt = ["VCI", "HCM", "VND", "DGC", "KDH", "NLG", "PDR", "DIG", "DXG", "NVL", "GMD", "HAH", "FRT", "DGW", "PNJ", "DPM", "DCM", "CTD", "CII", "HHV", "REE", "NT2", "PC1", "EIB", "LPB", "MSB", "OCB", "DSE", "VGC", "VTP", "HVN"];
+    const vn100Set = new Set([...Array.from(vn30Set), ...vn100MidExt]);
+    const vnmidSet = new Set(vn100MidExt);
+
+    const vnsmlSet = new Set(["FTS", "BSI", "CTS", "ORS", "VDS", "TLH", "SMC", "VGS", "POM", "VIS", "HBC", "FCN", "LCG", "C4G", "PET", "ELC", "ITD", "FOX", "SIP", "CSV", "BMP", "DRC", "AAA", "SCS", "PAN", "DBC", "SBT", "KDC", "MIG", "PVI", "BMI", "BIC", "VNR", "ABI", "PTI"]);
+
+    const vndiamondSet = new Set(["FPT", "MWG", "PNJ", "REE", "GMD", "DGW", "KDH", "NLG", "TCB", "MBB", "VPB", "ACB", "MSB", "OCB", "CTG", "VIB"]);
+
+    const vnfinleadSet = new Set(["SSI", "VND", "VCI", "HCM", "FTS", "BSI", "VCB", "TCB", "BID", "CTG", "MBB", "STB", "HDB", "ACB", "VPB", "SHB", "EIB", "LPB", "MSB", "OCB", "BVH", "MIG"]);
+
+    if (selectedGroup === "HOSE" || selectedGroup === "HSX") {
+      filtered = filtered.filter((q) => !hnxSet.has(q.symbol) && !upcomSet.has(q.symbol));
+    } else if (selectedGroup === "HNX") {
+      filtered = filtered.filter((q) => hnxSet.has(q.symbol));
+    } else if (selectedGroup === "UPCOM") {
+      filtered = filtered.filter((q) => upcomSet.has(q.symbol));
+    } else if (selectedGroup === "VN30") {
+      filtered = filtered.filter((q) => vn30Set.has(q.symbol));
+    } else if (selectedGroup === "VN100") {
+      filtered = filtered.filter((q) => vn100Set.has(q.symbol));
+    } else if (selectedGroup === "VNMID") {
+      filtered = filtered.filter((q) => vnmidSet.has(q.symbol));
+    } else if (selectedGroup === "VNSML") {
+      filtered = filtered.filter((q) => vnsmlSet.has(q.symbol));
+    } else if (selectedGroup === "VNDIAMOND") {
+      filtered = filtered.filter((q) => vndiamondSet.has(q.symbol));
+    } else if (selectedGroup === "VNFINLEAD") {
+      filtered = filtered.filter((q) => vnfinleadSet.has(q.symbol));
+    } else if (selectedGroup === "VNXALL") {
+      filtered = filtered.filter((q) => !upcomSet.has(q.symbol));
+>>>>>>> 8464ff1 (feat: expand sector board stock basket filters to HOSE, HNX, UPCOM, VN30, VN100, VNMID, VNSML, VNDIAMOND, VNFINLEAD, VNXALL)
     }
 
     // Filter by Sector
@@ -275,6 +314,7 @@ export function SectorBoardModule() {
 
           {/* Group Tabs / Filters */}
           <div className="flex flex-wrap items-center gap-1 text-xs">
+<<<<<<< HEAD
             {["ALL", "VN30", "HNX", "UPCOM"].map((grp) => (
               <button
                 key={grp}
@@ -285,14 +325,63 @@ export function SectorBoardModule() {
                 }}
                 className={`rounded border px-2.5 py-1 font-bold transition-colors ${
                   selectedGroup === grp && selectedSectorId === "ALL"
+=======
+            {[
+              { id: "ALL", label: "Tất cả" },
+              { id: "HOSE", label: "HOSE" },
+              { id: "HNX", label: "HNX" },
+              { id: "UPCOM", label: "UPCOM" },
+              { id: "VN30", label: "VN30" },
+              { id: "VN100", label: "VN100" },
+              { id: "VNDIAMOND", label: "VNDIAMOND" },
+            ].map((grp) => (
+              <button
+                key={grp.id}
+                type="button"
+                onClick={() => {
+                  setSelectedGroup(grp.id);
+                  setSelectedSectorId("ALL");
+                }}
+                className={`rounded border px-2.5 py-1 font-bold transition-colors ${
+                  selectedGroup === grp.id && selectedSectorId === "ALL"
+>>>>>>> 8464ff1 (feat: expand sector board stock basket filters to HOSE, HNX, UPCOM, VN30, VN100, VNMID, VNSML, VNDIAMOND, VNFINLEAD, VNXALL)
                     ? "border-cyan-400 bg-cyan-500/20 text-cyan-300"
                     : "border-[#1c385c] bg-[#081c33] text-slate-300 hover:border-slate-600"
                 }`}
               >
+<<<<<<< HEAD
                 {grp === "ALL" ? "Tất cả" : grp}
               </button>
             ))}
 
+=======
+                {grp.label}
+              </button>
+            ))}
+
+            {/* Extended Index Basket Dropdown */}
+            <select
+              value={["ALL", "HOSE", "HNX", "UPCOM", "VN30", "VN100", "VNDIAMOND"].includes(selectedGroup) ? "" : selectedGroup}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setSelectedGroup(e.target.value);
+                  setSelectedSectorId("ALL");
+                }
+              }}
+              className={`h-7 rounded border px-2 text-xs font-semibold focus:border-cyan-400 focus:outline-none transition-colors ${
+                !["ALL", "HOSE", "HNX", "UPCOM", "VN30", "VN100", "VNDIAMOND"].includes(selectedGroup)
+                  ? "border-cyan-400 bg-cyan-500/20 text-cyan-300 font-bold"
+                  : "border-[#1c385c] bg-[#081c33] text-slate-300"
+              }`}
+            >
+              <option value="">Rổ CP khác ▾</option>
+              <option value="VNMID">Rổ VN Midcap</option>
+              <option value="VNSML">Rổ VN Smallcap</option>
+              <option value="VNFINLEAD">Rổ VNFINLEAD (Tài chính)</option>
+              <option value="VNXALL">Rổ VNXAllShare (HOSE + HNX)</option>
+            </select>
+
+>>>>>>> 8464ff1 (feat: expand sector board stock basket filters to HOSE, HNX, UPCOM, VN30, VN100, VNMID, VNSML, VNDIAMOND, VNFINLEAD, VNXALL)
             {/* CP Ngành Dropdown */}
             <select
               value={selectedSectorId}
