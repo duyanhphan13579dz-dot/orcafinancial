@@ -207,14 +207,14 @@ export function OrcaAiChatWidget() {
           <button
             type="button"
             onClick={() => setIsOpen(true)}
-            className="group relative flex items-center gap-2 rounded-full bg-gradient-to-r from-[#00d4ff] to-[#0073a8] p-3 lg:px-4 lg:py-3 text-[#0A2540] font-bold shadow-[0_0_20px_rgba(0,212,255,0.4)] hover:shadow-[0_0_30px_rgba(0,212,255,0.7)] active:scale-95 transition-all"
-            aria-label="Mở ORCA AI Chat"
+            className="group relative flex h-13 w-13 lg:h-15 lg:w-15 items-center justify-center rounded-full bg-gradient-to-br from-[#00d4ff] via-[#00a3e0] to-[#005c8a] text-[#0A2540] font-bold shadow-[0_0_22px_rgba(0,212,255,0.5)] hover:shadow-[0_0_35px_rgba(0,212,255,0.85)] hover:scale-105 active:scale-95 transition-all border border-cyan-300/40"
+            aria-label="Mở Trợ lý Cá voi xanh ORCA"
+            title="Chat với ORCA AI"
           >
-            <span className="text-xl leading-none">🤖</span>
-            <span className="hidden lg:inline text-xs font-extrabold tracking-wide uppercase">
-              ORCA AI
+            <span className="text-2xl lg:text-3xl leading-none select-none transition-transform group-hover:scale-110">
+              🐳
             </span>
-            <span className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full bg-emerald-400 border-2 border-[#0A2540] animate-pulse" />
+            <span className="absolute top-0 right-0 h-3.5 w-3.5 rounded-full bg-emerald-400 border-2 border-[#0A2540] animate-pulse" />
           </button>
         )}
       </div>
@@ -226,7 +226,7 @@ export function OrcaAiChatWidget() {
           <div className="shrink-0 flex items-center justify-between px-3.5 py-2.5 bg-[#0e2e4f]/80 border-b border-[#1a3558]">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-[#00d4ff] to-[#0073a8] flex items-center justify-center text-base shrink-0 font-extrabold text-[#0A2540]">
-                🤖
+                🐳
               </div>
               <div className="min-w-0">
                 <div className="font-display font-extrabold text-sm text-white flex items-center gap-1.5 leading-tight">
@@ -337,7 +337,7 @@ export function OrcaAiChatWidget() {
             ) : messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center min-h-full py-4 text-center">
                 <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#00d4ff]/20 to-[#0073a8]/20 border border-[#00d4ff]/30 flex items-center justify-center text-xl mb-2">
-                  🤖
+                  🐳
                 </div>
                 <div className="text-white text-xs font-semibold mb-1">Hỏi ORCA AI bất kỳ điều gì</div>
                 <div className="text-slate-400 text-[11px] mb-3 max-w-xs leading-relaxed">
