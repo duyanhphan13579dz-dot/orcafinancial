@@ -437,7 +437,7 @@ export function SectorBoardModule() {
                 {/* Giá */}
                 <th className="px-1 py-1 min-w-[45px]">Cao</th>
                 <th className="px-1 py-1 min-w-[45px]">TB</th>
-                <th className="px-1 py-1 border-r border-[#1c3a60] min-w-[45px]">Thấp</th>
+                <th className="px-1 py-1 border-r border-[#1c3a60]">Thấp</th>
                 {/* Dư */}
                 <th className="px-1 py-1 min-w-[45px]">Mua</th>
                 <th className="px-1 py-1 border-r border-[#1c3a60] min-w-[45px]">Bán</th>
