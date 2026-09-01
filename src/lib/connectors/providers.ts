@@ -2,11 +2,16 @@ import {
   CONNECTOR_CONFIG,
   fetchWithRetry,
   type Ohlcv,
-  type ProviderFetchOptions,
   type Quote,
   type SymbolInfo,
   type Timeframe,
 } from "@/lib/connectors/core";
+
+/** Local provider call options (timeout / retries). */
+export type ProviderFetchOptions = {
+  timeoutMs?: number;
+  retries?: number;
+};
 
 const VNDIRECT_DCHART = "https://dchart-api.vndirect.com.vn/dchart";
 
@@ -50,8 +55,8 @@ export async function vndirectHistory(
   const res = resolutionToVndirect(resolution);
   const url = `${VNDIRECT_DCHART}/history?symbol=${encodeURIComponent(symbol)}&resolution=${res}&from=${from}&to=${to}`;
   const response = await fetchWithRetry(url, {
-    timeoutMs: options.timeoutMs ?? CONNECTOR_CONFIG.timeoutMs,
-    retries: options.retries ?? CONNECTOR_CONFIG.retries,
+    timeoutMs: options.timeoutMs ?? CONNECTOR_CONFIG.fetchTimeoutMs,
+    retries: options.retries ?? CONNECTOR_CONFIG.retryAttempts,
   });
   if (!response.ok) throw new Error(`VnDirect history HTTP ${response.status}`);
   const payload = await response.json();
@@ -88,11 +93,14 @@ export async function vndirectSearch(query: string, limit = 20): Promise<SymbolI
     if (!response.ok) return [];
     const payload = (await response.json()) as { data?: Array<Record<string, unknown>> };
     const rows = Array.isArray(payload.data) ? payload.data : [];
-    return rows.slice(0, limit).map((row) => ({
-      symbol: String(row.code ?? row.symbol ?? "").toUpperCase(),
-      name: String(row.companyName ?? row.name ?? row.code ?? ""),
-      exchange: String(row.floor ?? row.exchange ?? ""),
-    })).filter((s) => s.symbol);
+    return rows
+      .slice(0, limit)
+      .map((row) => ({
+        symbol: String(row.code ?? row.symbol ?? "").toUpperCase(),
+        name: String(row.companyName ?? row.name ?? row.code ?? ""),
+        exchange: String(row.floor ?? row.exchange ?? ""),
+      }))
+      .filter((s) => s.symbol);
   } catch {
     return [];
   }
@@ -112,8 +120,8 @@ export async function yahooHistory(
       : "1d";
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${from}&period2=${to}&interval=${interval}`;
   const response = await fetchWithRetry(url, {
-    timeoutMs: options.timeoutMs ?? CONNECTOR_CONFIG.timeoutMs,
-    retries: options.retries ?? CONNECTOR_CONFIG.retries,
+    timeoutMs: options.timeoutMs ?? CONNECTOR_CONFIG.fetchTimeoutMs,
+    retries: options.retries ?? CONNECTOR_CONFIG.retryAttempts,
     headers: { "User-Agent": "Mozilla/5.0" },
   });
   if (!response.ok) throw new Error(`Yahoo history HTTP ${response.status}`);
