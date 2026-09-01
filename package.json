@@ -14,7 +14,9 @@
     "tcbs:crawl:financials": "node scripts/crawl-tcbs-financials.mjs",
     "tcbs:parse:datapack": "node scripts/parse-tcbs-datapack.mjs",
     "tcbs:worker:quarterly": "node scripts/tcbs-quarterly-worker.mjs",
-    "llm:evaluate": "tsx scripts/evaluate-financial-llm.ts"
+    "llm:evaluate": "tsx scripts/evaluate-financial-llm.ts",
+    "test:financial": "vitest run tests/financial-phase12.test.ts tests/financial-phase34.test.ts",
+    "financial:release-gate": "tsx -e \"import { runFinancialReleaseGate } from './src/lib/financial-release-gate'; runFinancialReleaseGate({ skipDb: process.env.SKIP_DB==='1' }).then(r=>{console.log(JSON.stringify(r,null,2)); process.exit(r.ok?0:1)})\""
   },
   "dependencies": {
     "@microsoft/signalr": "^10.0.11",
