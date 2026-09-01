@@ -3,7 +3,7 @@ import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { buildFinancialPeriodSet } from "@/lib/stock-intelligence/canonical";
 import { validatePeriods } from "@/lib/stock-intelligence/validation";
 import { getStatements } from "@/lib/company-service";
-import { getFinancialSourceEvidence, loadPreferredFinancialRecords } from "@/lib/financial-ingestion";
+import { getFinancialSourceEvidence, ensureLivePreferredFinancials } from "@/lib/financial-ingestion";
 import type { StatementType } from "@/lib/financial-statements";
 import {
   loadCanonicalStatements,
@@ -14,10 +14,9 @@ import {
 export const dynamic = "force-dynamic";
 
 /**
- * Public financial statements endpoint — Phase 0 containment.
- * - Serves only preferred / verified normalized facts (or FMP if configured).
- * - Never falls back to SyntheticFinancialAdapter / sector-synthetic data.
- * - Missing verified data → empty statements + clear "unavailable" disclosure.
+ * Public financial statements endpoint — Phase 0 + live verified ingest.
+ * Priority: TCBS (company/broker) → Vietstock → configured datafeed.
+ * Never synthesizes sector-model numbers.
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: string }> }) {
   const limited = checkRateLimit(req);
@@ -35,9 +34,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
     : "income";
 
   try {
-    const [result, preferred, sourceEvidence] = await Promise.all([
+    // Live: if DB empty, pull TCBS then Vietstock, persist, reload.
+    const preferred = await ensureLivePreferredFinancials(symbol, type, limit);
+    const [result, sourceEvidence] = await Promise.all([
       getStatements(symbol, type, period, limit),
-      loadPreferredFinancialRecords(symbol, type, limit),
       getFinancialSourceEvidence(symbol, limit),
     ]);
 
@@ -50,7 +50,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
         new NormalizedFinancialAdapter(preferred.records, preferred.source),
       );
     } else {
-      // No verified normalized facts — do NOT synthesize.
       const emptyFallback = {
         kind: preferred.source as any,
         async fetch() {
@@ -67,6 +66,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
           confidence: 0,
           warnings: [
             "Chưa có báo cáo tài chính đã xác minh (verified) cho mã này. Hệ thống không hiển thị số liệu synthetic.",
+            ...(preferred.warnings ?? []),
           ],
           quality: {
             actualCount: 0,
@@ -79,7 +79,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
       }
     }
 
-    // Hard block: never return pure estimate/synthetic on this public path.
     const verifiedOnly = canonical.statements.filter(
       (s) => s.provenance.kind === "actual" && s.provenance.status !== "degraded",
     );
@@ -117,14 +116,36 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
     }
 
     const periodLabels = canonical.statements.map((statement) => statement.period.label);
+
+    const fieldsForType = (() => {
+      const keys = new Set<string>();
+      for (const s of canonical.statements) {
+        for (const k of Object.keys(s.data ?? {})) keys.add(k);
+      }
+      return [...keys];
+    })();
+    const periodsFromCanonical = canonical.statements.map((s) => ({
+      period: s.period.label,
+      fiscalYear: s.period.fiscalYear,
+      data: s.data as Record<string, number>,
+      displayPeriod: s.period.label,
+      displayPeriodVi: s.period.label,
+    }));
+    const uiPeriods =
+      result.periods && result.periods.length > 0 ? result.periods : periodsFromCanonical;
+    const uiFields = result.fields && result.fields.length > 0 ? result.fields : fieldsForType;
+
     const latestKind = canonical.statements[0]?.provenance.kind ?? "unavailable";
     const validation = periodLabels.length > 0 ? validatePeriods(periodLabels) : { ok: true, issues: [] as string[] };
-    const hasVerified = canonical.statements.length > 0 && canonical.actual;
+    const hasVerified =
+      (preferred.providerBacked && preferred.records.length > 0 && canonical.statements.length > 0) ||
+      (canonical.statements.length > 0 && canonical.actual);
 
     return ok(
       {
         ...result,
-        periods: hasVerified ? result.periods : [],
+        periods: hasVerified ? uiPeriods : [],
+        fields: hasVerified ? uiFields : result.fields ?? [],
         canonicalStatements: canonical.statements,
         canonicalQuality: canonical.quality,
         sourceResult: {
@@ -147,8 +168,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
         targetCount: 0,
         validation,
         disclosure: hasVerified
-          ? "Bảng lấy từ normalized facts đã qua quality gate / nguồn provider. Vẫn cần phân biệt hợp nhất vs công ty mẹ và trạng thái kiểm toán."
-          : "Chưa có dữ liệu báo cáo tài chính đã xác minh cho mã này. Orca không hiển thị số liệu synthetic hoặc estimate tự sinh. Thiếu dữ liệu tốt hơn dữ liệu giả.",
+          ? "Bảng lấy từ normalized facts đã qua quality gate / nguồn provider (ưu tiên TCBS/doanh nghiệp, sau đó Vietstock)."
+          : `Chưa có BCTC verified sau khi thử TCBS → Vietstock. ${preferred.warnings?.slice(0, 3).join(" | ") || "Cấu hình TCBS_MCP_ACCESS_TOKEN hoặc VIETSTOCK_DATAFEED_URL."}`,
       },
       { cacheSeconds: 300 },
     );
