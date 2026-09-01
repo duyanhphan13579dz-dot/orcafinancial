@@ -45,6 +45,13 @@ function envFlagTrue(name: string): boolean {
   return v === "true" || v === "1";
 }
 
+function countFromExecute(result: { rows: Array<Record<string, unknown>> }): number {
+  const row = result.rows[0];
+  if (!row) return 0;
+  const c = row.c;
+  return typeof c === "number" ? c : Number(c ?? 0);
+}
+
 export async function runFinancialReleaseGate(options?: {
   symbol?: string;
   skipDb?: boolean;
@@ -136,20 +143,20 @@ export async function runFinancialReleaseGate(options?: {
         SELECT COUNT(*)::int AS c FROM financial_statements
         WHERE source ILIKE '%synthetic%' OR COALESCE(is_synthetic, false) = true
       `);
-      const syntheticInStatements = Number((synStmt as { rows?: Array<{ c: number }> }).rows?.[0]?.c ?? 0);
+      const syntheticInStatements = countFromExecute(synStmt);
 
       const synFacts = await db.execute(sql`
         SELECT COUNT(*)::int AS c FROM financial_normalized_facts
         WHERE source ILIKE '%synthetic%' OR COALESCE(is_synthetic, false) = true
       `);
-      const syntheticInFacts = Number((synFacts as { rows?: Array<{ c: number }> }).rows?.[0]?.c ?? 0);
+      const syntheticInFacts = countFromExecute(synFacts);
 
       const verFacts = await db.execute(sql`
         SELECT COUNT(*)::int AS c FROM financial_normalized_facts
         WHERE quality_status = 'accepted' AND verification_status = 'verified'
           AND COALESCE(is_synthetic, false) = false
       `);
-      const verifiedFactCount = Number((verFacts as { rows?: Array<{ c: number }> }).rows?.[0]?.c ?? 0);
+      const verifiedFactCount = countFromExecute(verFacts);
 
       checks.push({
         id: "db_no_synthetic_statements",
