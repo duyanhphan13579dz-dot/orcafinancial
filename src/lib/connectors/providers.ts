@@ -15,10 +15,6 @@ import {
   type Timeframe,
 } from "@/lib/connectors/core";
 
-/* ═══════════════════════════════════════════════════════════════════════
-   VNDirect dchart — PRIMARY (priority 1): history, quotes, indices, search
-   ═══════════════════════════════════════════════════════════════════════ */
-
 const VNDIRECT = "vndirect-dchart";
 type ProviderFetchOptions = { timeoutMs?: number; retries?: number };
 
@@ -128,10 +124,6 @@ export async function vndirectSearch(query: string, limit = 20): Promise<SymbolI
   });
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   Yahoo Finance — FALLBACK (priority 2) for VN equities (.VN suffix)
-   ═══════════════════════════════════════════════════════════════════════ */
-
 const YAHOO = "yahoo-finance";
 
 interface YahooChart {
@@ -184,10 +176,6 @@ export async function yahooHistory(symbol: string, from: number, to: number, res
     return bars;
   });
 }
-
-/* ═══════════════════════════════════════════════════════════════════════
-   Crypto providers — CoinGecko (primary) + Binance Vision (fallback)
-   ═══════════════════════════════════════════════════════════════════════ */
 
 export interface CryptoQuote {
   id: string;
@@ -261,4 +249,109 @@ export async function binancePrices(): Promise<CryptoQuote[]> {
     );
     return results;
   });
+}
+
+export async function cryptoPricesWithFallback(): Promise<CryptoQuote[]> {
+  try {
+    return await coingeckoPrices();
+  } catch (primaryErr) {
+    forProvider("crypto-chain").warn("coingecko_failed_trying_binance", {
+      error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
+    });
+    try {
+      return await binancePrices();
+    } catch (secondaryErr) {
+      markStale(
+        "crypto",
+        null,
+        `coingecko + binance both failed: ${secondaryErr instanceof Error ? secondaryErr.message : String(secondaryErr)}`,
+      );
+      return [];
+    }
+  }
+}
+
+const RSS_SOURCES = [
+  { name: "VnExpress", provider: "vnexpress-rss", url: "https://vnexpress.net/rss/kinh-doanh.rss" },
+  { name: "CafeF", provider: "cafef-rss", url: "https://cafef.vn/thi-truong-chung-khoan.rss" },
+  { name: "Vietstock", provider: "vietstock-rss", url: "https://vietstock.vn/830/chung-khoan/co-phieu.rss" },
+] as const;
+
+function stripCdata(s: string): string {
+  return s.replace(/<!\[CDATA\[/g, "").replace(/\]\]>/g, "").trim();
+}
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&/g, "&")
+    .replace(/</g, "<")
+    .replace(/>/g, ">")
+    .replace(/"/g, '"')
+    .replace(/&#39;|'/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
+function tag(block: string, name: string): string {
+  const m = block.match(new RegExp(`<${name}[^>]*>([\\s\\S]*?)<\\/${name}>`, "i"));
+  return m ? stripCdata(m[1]).trim() : "";
+}
+
+function parseRss(xml: string, sourceName: string, provider: string): NewsItem[] {
+  const items: NewsItem[] = [];
+  const blocks = xml.match(/<item>[\s\S]*?<\/item>/gi) ?? [];
+  for (const block of blocks) {
+    const title = decodeEntities(tag(block, "title"));
+    const link = tag(block, "link");
+    if (!title || !link) continue;
+    const rawDesc = tag(block, "description");
+    const imgMatch =
+      rawDesc.match(/<img[^>]+src=["']([^"']+)["']/i) ?? block.match(/<enclosure[^>]+url=["']([^"']+)["']/i);
+    const description = decodeEntities(rawDesc.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()).slice(0, 500);
+    const pubDate = tag(block, "pubDate");
+    const publishedAt = pubDate ? new Date(pubDate) : new Date();
+    const validated = DataValidator.news(
+      {
+        guid: tag(block, "guid") || link,
+        title,
+        link,
+        description,
+        imageUrl: imgMatch ? imgMatch[1] : null,
+        sourceName,
+        publishedAt: Number.isNaN(publishedAt.getTime()) ? new Date() : publishedAt,
+      },
+      { provider },
+    );
+    if (validated) items.push(validated);
+  }
+  return items;
+}
+
+const RSS_CACHE_MS = 5 * 60_000;
+
+export async function fetchAllRssNews(): Promise<{ items: NewsItem[]; errors: string[] }> {
+  const results = await Promise.allSettled(
+    RSS_SOURCES.map((src) =>
+      cached<NewsItem[]>(`rss:${src.provider}`, RSS_CACHE_MS, () =>
+        getBreaker(src.provider).exec(async () => {
+          const res = await fetchWithRetry(src.url, { timeoutMs: 15_000, provider: src.provider, retries: 3 });
+          const xml = await readTextSafe(res, src.provider, src.url);
+          const items = parseRss(xml, src.name, src.provider);
+          if (items.length === 0) {
+            throw new ProviderError(src.provider, "no items parsed", { rawSnippet: xml.slice(0, 200) });
+          }
+          return items;
+        }),
+      ),
+    ),
+  );
+  const items: NewsItem[] = [];
+  const errors: string[] = [];
+  for (const r of results) {
+    if (r.status === "fulfilled") items.push(...r.value);
+    else errors.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+  }
+  if (items.length === 0 && errors.length > 0) {
+    markStale("news", null, `all RSS feeds failed: ${errors.join("; ")}`);
+  }
+  return { items, errors };
 }
