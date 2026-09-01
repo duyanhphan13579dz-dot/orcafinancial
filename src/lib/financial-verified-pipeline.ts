@@ -237,6 +237,11 @@ export async function runVerifiedPipeline(
   };
 }
 
+function rowCountOf(res: unknown): number {
+  const r = res as { rowCount?: number | null } | null;
+  return Number(r?.rowCount ?? 0);
+}
+
 export async function quarantineSyntheticFacts(symbol?: string): Promise<{ updated: number }> {
   await ensureFinancialIngestionTables();
   const pattern = "%synthetic%";
@@ -247,14 +252,14 @@ export async function quarantineSyntheticFacts(symbol?: string): Promise<{ updat
       WHERE symbol = ${symbol.toUpperCase()}
         AND (source ILIKE ${pattern} OR COALESCE(is_synthetic, false) = true)
     `);
-    return { updated: Number((res as { rowCount?: number }).rowCount ?? 0) };
+    return { updated: rowCountOf(res) };
   }
   const res = await db.execute(sql`
     UPDATE financial_normalized_facts
     SET quality_status = 'rejected', verification_status = 'rejected'
     WHERE source ILIKE ${pattern} OR COALESCE(is_synthetic, false) = true
   `);
-  return { updated: Number((res as { rowCount?: number }).rowCount ?? 0) };
+  return { updated: rowCountOf(res) };
 }
 
 export async function countVerifiedFacts(symbol: string): Promise<number> {
