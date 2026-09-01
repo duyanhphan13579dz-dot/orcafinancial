@@ -3,7 +3,8 @@ import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { buildFinancialPeriodSet } from "@/lib/stock-intelligence/canonical";
 import { validatePeriods } from "@/lib/stock-intelligence/validation";
 import { getStatements } from "@/lib/company-service";
-import { getFinancialSourceEvidence, ensureLivePreferredFinancials } from "@/lib/financial-ingestion";
+import { getFinancialSourceEvidence } from "@/lib/financial-ingestion";
+import { ensureLivePreferredFinancials } from "@/lib/financial-live-ensure";
 import type { StatementType } from "@/lib/financial-statements";
 import {
   loadCanonicalStatements,
@@ -14,7 +15,7 @@ import {
 export const dynamic = "force-dynamic";
 
 /**
- * Public financial statements endpoint — Phase 0 + live verified ingest.
+ * Public financial statements — live verified ingest.
  * Priority: TCBS (company/broker) → Vietstock → configured datafeed.
  * Never synthesizes sector-model numbers.
  */
@@ -34,7 +35,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
     : "income";
 
   try {
-    // Live: if DB empty, pull TCBS then Vietstock, persist, reload.
     const preferred = await ensureLivePreferredFinancials(symbol, type, limit);
     const [result, sourceEvidence] = await Promise.all([
       getStatements(symbol, type, period, limit),
@@ -168,7 +168,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
         targetCount: 0,
         validation,
         disclosure: hasVerified
-          ? "Bảng lấy từ normalized facts đã qua quality gate / nguồn provider (ưu tiên TCBS/doanh nghiệp, sau đó Vietstock)."
+          ? "Bảng lấy từ nguồn provider đã xác minh (ưu tiên TCBS/doanh nghiệp, sau đó Vietstock)."
           : `Chưa có BCTC verified sau khi thử TCBS → Vietstock. ${preferred.warnings?.slice(0, 3).join(" | ") || "Cấu hình TCBS_MCP_ACCESS_TOKEN hoặc VIETSTOCK_DATAFEED_URL."}`,
       },
       { cacheSeconds: 300 },
