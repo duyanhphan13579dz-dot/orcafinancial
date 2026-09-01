@@ -16,7 +16,8 @@ export type ProviderFetchOptions = {
 const VNDIRECT_DCHART = "https://dchart-api.vndirect.com.vn/dchart";
 
 function resolutionToVndirect(resolution: Timeframe): string {
-  if (resolution === "1" || resolution === "5" || resolution === "15" || resolution === "30" || resolution === "60") {
+  // core Timeframe = "1" | "15" | "60" | "D"
+  if (resolution === "1" || resolution === "15" || resolution === "60") {
     return resolution;
   }
   return "D";
@@ -115,7 +116,7 @@ export async function yahooHistory(
 ): Promise<Ohlcv[]> {
   const ticker = symbol.includes(".") ? symbol : `${symbol}.VN`;
   const interval =
-    resolution === "1" || resolution === "5" || resolution === "15" || resolution === "30" || resolution === "60"
+    resolution === "1" || resolution === "15" || resolution === "60"
       ? `${resolution}m`
       : "1d";
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${from}&period2=${to}&interval=${interval}`;
