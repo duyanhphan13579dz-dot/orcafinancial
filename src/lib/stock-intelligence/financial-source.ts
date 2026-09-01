@@ -186,3 +186,33 @@ export class NormalizedFinancialAdapter implements FinancialSourceAdapter {
     return this.records.slice(0, limit);
   }
 }
+
+/**
+ * Adapter wrapping in-memory quarters. With ALLOW_SYNTHETIC_FINANCIALS off (production default),
+ * returns empty — Phase 0 Verified Financial Data policy.
+ * Call sites may still construct it for degraded/audit paths; no sector-synthetic numbers leak when gated.
+ */
+export class SyntheticFinancialAdapter implements FinancialSourceAdapter {
+  readonly kind = "synthetic" as const;
+
+  constructor(private readonly quarters: FinancialQuarter[]) {}
+
+  async fetch(_symbol: string, type: StatementType, limit: number): Promise<RawFinancialRecord[]> {
+    const allow =
+      process.env.ALLOW_SYNTHETIC_FINANCIALS === "true" ||
+      process.env.ALLOW_SYNTHETIC_FINANCIALS === "1" ||
+      process.env.NODE_ENV === "test";
+    if (!allow) {
+      return [];
+    }
+    return this.quarters.slice(0, limit).map((quarter) => ({
+      period: quarter.period,
+      fiscalYear: quarter.fiscalYear,
+      reportedCurrency: "VND",
+      data: (quarter[type] ?? {}) as unknown as Record<string, unknown>,
+      source: "sector-synthetic-v2",
+      retrievedAt: new Date().toISOString(),
+      kind: "estimate" as const,
+    }));
+  }
+}
