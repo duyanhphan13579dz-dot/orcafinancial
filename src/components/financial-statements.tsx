@@ -127,7 +127,7 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
   };
 
   useEffect(() => {
-    voidMicrotask(() => void load(type, period));
+    queueMicrotask(() => void load(type, period));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, period]);
 
