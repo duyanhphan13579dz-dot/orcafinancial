@@ -111,14 +111,30 @@ export function getLatestCompletedQuarter(asOf = new Date()): { fiscalYear: numb
 }
 
 /**
- * Build a full sequence of quarterly financials.
- * Uses real price/volume data to anchor scale and revenue trend.
+ * DEV / DEMO ONLY — synthesizes quarterly financials from price, volume and
+ * sector benchmarks. Must NEVER be used on production public paths
+ * (Stock Detail, Financial Tab, public API, AI analysis, research reports).
+ *
+ * Phase 0 containment (Verified Financial Data Master Plan):
+ * - Disabled unless ALLOW_SYNTHETIC_FINANCIALS=true (local UI testing only).
+ * - Prefer empty / unavailable over fabricated numbers.
  */
 export function generateQuarterlyFinancials(
   symbol: string,
   bars: Ohlcv[],
   numQuarters = 4,
 ): FinancialQuarter[] {
+  const allow =
+    process.env.ALLOW_SYNTHETIC_FINANCIALS === "true" ||
+    process.env.ALLOW_SYNTHETIC_FINANCIALS === "1" ||
+    process.env.NODE_ENV === "test";
+  if (!allow) {
+    throw new Error(
+      `Synthetic financial generation is disabled in this environment (symbol=${symbol}). ` +
+        `Set ALLOW_SYNTHETIC_FINANCIALS=true only for local demo/testing. ` +
+        `Production must serve verified filings only.`,
+    );
+  }
   const benchmark = getBenchmarkForSymbol(symbol);
   const closes = bars.map((b) => b.close);
   const avgVol = bars.slice(-60).reduce((s, b) => s + b.volume, 0) / Math.min(60, bars.length);
