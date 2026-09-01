@@ -1,14 +1,12 @@
 /**
- * Phase 2 — Source priority & synthetic detection
- *
- * Query must never pick synthetic over official filings just because
- * updatedAt is newer. Public API filters isSynthetic / priority.
+ * Source priority & synthetic detection
+ * Official company filings rank highest.
  */
 
 export const SOURCE_PRIORITY = {
   OFFICIAL_FILING: 100,
-  PROFESSIONAL_DATA: 90,
-  VERIFIED_PROVIDER: 80,
+  PROFESSIONAL_DATA: 90, // e.g. VnDirect authorized feed
+  VERIFIED_PROVIDER: 80, // Vietstock
   UNVERIFIED_PROVIDER: 40,
   SYNTHETIC: 0,
 } as const;
@@ -16,9 +14,9 @@ export const SOURCE_PRIORITY = {
 export type SourcePriorityLevel = keyof typeof SOURCE_PRIORITY;
 
 const SOURCE_ALIASES: Array<{ match: RegExp; level: SourcePriorityLevel }> = [
-  { match: /filing|ssc|hsx|hnx|cafef-filing|official/i, level: "OFFICIAL_FILING" },
-  { match: /fmp|daloopa|fiscal-?ai|professional/i, level: "PROFESSIONAL_DATA" },
-  { match: /tcbs|vietstock|cafef|verified/i, level: "VERIFIED_PROVIDER" },
+  { match: /filing|ssc|hsx|hnx|official|cafef-filing|company-ir/i, level: "OFFICIAL_FILING" },
+  { match: /vndirect|fmp|daloopa|fiscal-?ai|professional/i, level: "PROFESSIONAL_DATA" },
+  { match: /vietstock|cafef|verified/i, level: "VERIFIED_PROVIDER" },
   { match: /sector-synthetic|synthetic|model|estimate|benchmark/i, level: "SYNTHETIC" },
 ];
 
@@ -45,11 +43,6 @@ export function isSyntheticSource(source: string): boolean {
   );
 }
 
-/**
- * Pick the winning record among candidates for the same
- * (symbol, statementType, period, reportScope).
- * Higher sourcePriority wins; ties broken by verified status then newer timestamp.
- */
 export function pickPreferredRecord<
   T extends {
     source: string;
@@ -68,7 +61,6 @@ export function pickPreferredRecord<
     return { c, score: priority + verifiedBoost, ts };
   });
   scored.sort((a, b) => b.score - a.score || b.ts - a.ts);
-  // Never let synthetic win if any non-synthetic exists
   const nonSynthetic = scored.filter((s) => !isSyntheticSource(s.c.source));
   if (nonSynthetic.length > 0) return nonSynthetic[0].c;
   return scored[0].c;
