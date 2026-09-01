@@ -31,13 +31,70 @@ export interface FinancialSourceAdapter {
   fetch(symbol: string, type: StatementType, limit: number): Promise<RawFinancialRecord[]>;
 }
 
-function asNumberRecord(data: Record<string, unknown>): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const [k, v] of Object.entries(data)) {
-    const n = typeof v === "number" ? v : Number(v);
-    if (Number.isFinite(n)) out[k] = n;
+const FMP_ENDPOINT = "https://financialmodelingprep.com/stable";
+
+function asNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value.replace(/,/g, ""));
+    return Number.isFinite(parsed) ? parsed : null;
   }
-  return out;
+  return null;
+}
+
+function mapFmpPeriod(row: Record<string, unknown>): string | null {
+  const rawPeriod = typeof row.period === "string" ? row.period.trim().toUpperCase() : null;
+  const date = typeof row.date === "string" ? row.date : typeof row.filingDate === "string" ? row.filingDate : null;
+  if (rawPeriod && /^(Q[1-4]|H1|9M|FY)\/?\d{4}$/i.test(rawPeriod)) return rawPeriod;
+  if (!date) return null;
+  const match = /^(\d{4})-(\d{2})-/.exec(date);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const quarter = Math.max(1, Math.min(4, Math.ceil(month / 3)));
+  return `Q${quarter}/${year}`;
+}
+
+function fmpPath(type: StatementType): string {
+  if (type === "income") return "income-statement";
+  if (type === "balance") return "balance-sheet-statement";
+  return "cash-flow-statement";
+}
+
+export class FmpFinancialAdapter implements FinancialSourceAdapter {
+  readonly kind = "fmp" as const;
+
+  async fetch(symbol: string, type: StatementType, limit: number): Promise<RawFinancialRecord[]> {
+    const apiKey = process.env.FMP_API_KEY?.trim();
+    if (!apiKey) return [];
+    const url = `${FMP_ENDPOINT}/${fmpPath(type)}?symbol=${encodeURIComponent(symbol)}&period=quarter&limit=${Math.min(40, Math.max(1, limit))}&apikey=${apiKey}`;
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`FMP financials HTTP ${response.status}`);
+    const payload = (await response.json()) as unknown;
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.flatMap((row) => {
+      if (!row || typeof row !== "object") return [];
+      const record = row as Record<string, unknown>;
+      const period = mapFmpPeriod(record);
+      if (!period) return [];
+      const data: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(record)) {
+        const n = asNumber(value);
+        if (n != null) data[key] = n;
+      }
+      return [{
+        period,
+        fiscalYear: Number(period.slice(-4)),
+        reportedCurrency: typeof record.reportedCurrency === "string" ? record.reportedCurrency : "USD",
+        data,
+        source: "fmp",
+        retrievedAt: new Date().toISOString(),
+        filingDate: typeof record.filingDate === "string" ? record.filingDate : undefined,
+        unit: "as_reported",
+        kind: "actual" as const,
+      }];
+    });
+  }
 }
 
 export async function loadCanonicalStatements(
@@ -87,15 +144,13 @@ export async function loadCanonicalStatements(
               unit: record.unit ?? "modeled",
             });
     if (!actual || kind !== "actual") provenance.status = "degraded";
-    return [
-      {
-        symbol,
-        type,
-        period,
-        data: asNumberRecord(record.data),
-        provenance,
-      },
-    ];
+    return [{
+      symbol,
+      type,
+      period,
+      data: record.data as Record<string, number>,
+      provenance,
+    }];
   });
   const sourceTier: FinancialSourceResult["quality"]["sourceTier"] = actual
     ? source === "filing"
@@ -129,12 +184,5 @@ export class NormalizedFinancialAdapter implements FinancialSourceAdapter {
 
   async fetch(_symbol: string, _type: StatementType, limit: number): Promise<RawFinancialRecord[]> {
     return this.records.slice(0, limit);
-  }
-}
-
-export class EmptyFinancialAdapter implements FinancialSourceAdapter {
-  readonly kind: FinancialSourceKind = "synthetic";
-  async fetch(): Promise<RawFinancialRecord[]> {
-    return [];
   }
 }
