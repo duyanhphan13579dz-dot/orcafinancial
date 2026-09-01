@@ -40,7 +40,7 @@ async function runTest(name: string): Promise<{ ok: boolean; durationMs: number;
       case "cafef-rss":
       case "vietstock-rss": {
         const { items, errors } = await fetchAllRssNews();
-        const fromSrc = items.filter((i) => i.sourceName.toLowerCase().startsWith(name.split("-")[0])).length;
+        const fromSrc = items.filter((i) => i.source.toLowerCase().startsWith(name.split("-")[0])).length;
         return {
           ok: fromSrc > 0,
           durationMs: Date.now() - started,
