@@ -6,6 +6,7 @@ import { ensureQuarterlyFinancials, getStatements } from "@/lib/company-service"
 import { getFinancialSourceEvidence, loadPreferredFinancialRecords } from "@/lib/financial-ingestion";
 import type { StatementType } from "@/lib/financial-statements";
 import { loadCanonicalStatements, NormalizedFinancialAdapter, SyntheticFinancialAdapter } from "@/lib/stock-intelligence/financial-source";
+import { getSourcePriority } from "@/lib/financial-canonical-model";
 
 export const dynamic = "force-dynamic";
 
@@ -31,15 +32,39 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
       ensureQuarterlyFinancials(symbol, period === "yearly" ? Math.min(limit * 4, 4) : limit),
       getFinancialSourceEvidence(symbol, limit),
     ]);
-    const canonical = await loadCanonicalStatements(symbol, type, limit, preferred.records.length ? new NormalizedFinancialAdapter(preferred.records, preferred.source) : new SyntheticFinancialAdapter(quarters));
+
+    const sourcePriority = getSourcePriority(preferred.source);
+    const isSynthetic = sourcePriority === 0;
+
+    const adapter = preferred.records.length > 0
+      ? new NormalizedFinancialAdapter(preferred.records, preferred.source)
+      : new SyntheticFinancialAdapter(quarters);
+
+    const canonical = await loadCanonicalStatements(symbol, type, limit, adapter);
     const periodLabels = canonical.statements.map((statement) => statement.period.label);
-    const latestKind = canonical.statements[0]?.provenance.kind ?? "estimate";
     const validation = validatePeriods(periodLabels);
+
     return ok(
-      { ...result, canonicalStatements: canonical.statements, canonicalQuality: canonical.quality, sourceResult: { source: preferred.source, actual: canonical.actual, confidence: canonical.confidence, warnings: canonical.warnings }, sourceEvidence },
+      {
+        ...result,
+        canonicalStatements: canonical.statements,
+        canonicalQuality: canonical.quality,
+        sourceResult: {
+          source: preferred.source,
+          sourcePriority,
+          isSynthetic,
+          actual: canonical.actual,
+          confidence: canonical.confidence,
+          warnings: canonical.warnings,
+        },
+        sourceEvidence,
+      },
       {
         source: preferred.source,
-        providerBacked: true,
+        providerBacked: preferred.providerBacked,
+        sourcePriority,
+        isSynthetic,
+        verificationStatus: isSynthetic ? "UNVERIFIED" : "VERIFIED",
         kind: "verified_company_disclosure",
         confidence: canonical.confidence,
         financialPeriod: periodLabels.length > 0 ? buildFinancialPeriodSet(periodLabels) : null,
@@ -47,7 +72,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
         estimateCount: canonical.quality.estimateCount,
         targetCount: canonical.quality.targetCount,
         validation,
-        disclosure: "Báo cáo tài chính được ưu tiên trích xuất trực tiếp từ Báo cáo công bố thông tin chính thức của Doanh nghiệp (hoặc Vietstock làm nguồn thứ 3 đối soát), không sử dụng VNDirect. Dữ liệu đã được ORCA AI kiểm tra và đối soát thời gian thực.",
+        disclosure: "Báo cáo tài chính được ưu tiên trích xuất trực tiếp từ Báo cáo công bố thông tin chính thức của Doanh nghiệp (hoặc Vietstock làm nguồn thứ 3 đối soát). Dữ liệu đã được ORCA AI kiểm tra và đối soát thời gian thực.",
       },
       { cacheSeconds: 3 },
     );

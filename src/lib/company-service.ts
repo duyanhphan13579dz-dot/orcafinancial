@@ -18,7 +18,6 @@ import {
 } from "@/lib/company-profile";
 import { formatPeriodFromComposite } from "@/lib/format";
 import {
-  generateQuarterlyFinancials,
   getLatestCompletedQuarter,
   getStatementFields,
   type FinancialQuarter,
@@ -30,107 +29,11 @@ import { getHistory } from "@/lib/market";
 import { getNewsSentiment } from "@/lib/market";
 import { logger } from "@/lib/logger";
 
-/** Fetch (or generate) the full quarterly financial data for a symbol. */
+/** Fetch the full quarterly financial data for a symbol from verified source pipeline. */
 export async function ensureQuarterlyFinancials(symbol: string, numQuarters = 4): Promise<FinancialQuarter[]> {
-  // Check if we already have enough persisted
-  let existing: Array<typeof financialStatements.$inferSelect> = [];
-  try {
-    existing = await safeDbQuery("financial_statements_read", () =>
-      db
-        .select()
-        .from(financialStatements)
-        .where(eq(financialStatements.symbol, symbol))
-        .orderBy(desc(financialStatements.fiscalYear), desc(financialStatements.period)),
-    );
-  } catch (err) {
-    // A missing/unavailable DB must not prevent degraded, clearly disclosed reports.
-    logger.warn("financial_statements_db_unavailable_using_market_fallback", { symbol, error: String(err) });
-  }
-
-  const latestCompleted = getLatestCompletedQuarter();
-  existing = existing.filter((row) => !isFuturePeriod(row.period, row.fiscalYear));
-
-  // Synthetic rows are versioned. Do not let a previously persisted v1/v2 model
-  // mask the corrected period-specific generator; actual/provider rows remain
-  // eligible and are never treated as synthetic.
-  const hasLegacySynthetic = existing.some((row) => row.source === "sector-synthetic-v1" || row.source === "sector-synthetic-v2");
-  if (hasLegacySynthetic) {
-    existing = existing.filter((row) => row.source !== "sector-synthetic-v1" && row.source !== "sector-synthetic-v2");
-  }
-
-  const byKey = new Map<string, { type: StatementType; period: string; fiscalYear: number; data: any }>();
-  for (const row of existing) {
-    byKey.set(`${row.type}-${row.period}-${row.fiscalYear}`, row as any);
-  }
-
-  // If we have all 3 types × 4 quarters = 12 rows, use them.
-  const needed = numQuarters * 3;
-  let quarters: FinancialQuarter[];
-  if (existing.length >= needed) {
-    // Reconstruct from DB rows, always normalising the composite period label
-    // to "Q{quarter}/{fiscalYear}" so downstream consumers don't have to stitch.
-    const periodsSeen = new Map<string, Partial<FinancialQuarter>>();
-    for (const row of existing) {
-      const quarterNum = parseInt(row.period.replace(/^Q/i, ""), 10) || 0;
-      const key = `${row.period}-${row.fiscalYear}`;
-      const p = periodsSeen.get(key) ?? ({
-        period: `Q${quarterNum}/${row.fiscalYear}`,
-        quarter: quarterNum,
-        fiscalYear: row.fiscalYear,
-      } as Partial<FinancialQuarter>);
-      if (row.type === "income") p.income = row.data as any;
-      if (row.type === "balance") p.balance = row.data as any;
-      if (row.type === "cashflow") p.cashflow = row.data as any;
-      periodsSeen.set(key, p);
-    }
-    quarters = [...periodsSeen.values()]
-      .filter((q): q is FinancialQuarter => typeof q.fiscalYear === "number" && typeof q.quarter === "number")
-      .sort((a, b) => {
-        if (a.fiscalYear !== b.fiscalYear) return b.fiscalYear - a.fiscalYear;
-        return b.quarter - a.quarter;
-      });
-    const preset = getCompanyPreset(symbol);
-    const isUpToDate = quarters.length > 0 && quarters[0].fiscalYear === latestCompleted.fiscalYear && quarters[0].quarter === latestCompleted.quarter;
-    const matchesPresetScale = !preset || (quarters[0]?.income?.revenue && quarters[0].income.revenue >= preset.baseQuarterlyRevenue * 0.5);
-    if (isUpToDate && matchesPresetScale && quarters.length >= numQuarters && quarters.every((q) => q.income && q.balance && q.cashflow)) {
-      return quarters.slice(0, numQuarters);
-    }
-  }
-
-  // Otherwise regenerate from real bars
-  const to = Math.floor(Date.now() / 1000);
-  const { bars } = await getHistory(symbol, to - 86400 * 1100, to, "D");
-  if (bars.length < 60) throw new Error(`Insufficient history for ${symbol} to model financials (need ≥60 bars, got ${bars.length})`);
-
-  quarters = generateQuarterlyFinancials(symbol, bars, numQuarters);
-
-  // Persist asynchronously
-  void persistQuarterlyFinancials(symbol, quarters).catch((err) =>
-    logger.error("persist_financials_failed", { symbol, error: String(err) }),
-  );
-
-  return quarters;
-}
-
-async function persistQuarterlyFinancials(symbol: string, quarters: FinancialQuarter[]) {
-  for (const q of quarters) {
-    const period = `Q${q.quarter}`;
-    await safeDbQuery("financial_statements_upsert", () =>
-      db
-        .insert(financialStatements)
-        .values([
-          { symbol, type: "income", period, fiscalYear: q.fiscalYear, data: q.income, source: "sector-synthetic-v3", confidence: 0.75 },
-          { symbol, type: "balance", period, fiscalYear: q.fiscalYear, data: q.balance, source: "sector-synthetic-v3", confidence: 0.7 },
-          { symbol, type: "cashflow", period, fiscalYear: q.fiscalYear, data: q.cashflow, source: "sector-synthetic-v3", confidence: 0.72 },
-        ])
-        .onConflictDoUpdate({
-          target: [financialStatements.symbol, financialStatements.type, financialStatements.period, financialStatements.fiscalYear],
-          set: { data: sql`excluded.data`, updatedAt: new Date(), source: "sector-synthetic-v3" },
-          // Never replace provider/filing data with a degraded estimate.
-          where: sql`${financialStatements.source} LIKE 'sector-synthetic-%'`,
-        }),
-    );
-  }
+  const { loadPreferredQuarterlyFinancials } = await import("@/lib/financial-ingestion");
+  const preferred = await loadPreferredQuarterlyFinancials(symbol, numQuarters);
+  return preferred.quarters;
 }
 
 /** Get a single statement type (income/balance/cashflow) for N quarters. */

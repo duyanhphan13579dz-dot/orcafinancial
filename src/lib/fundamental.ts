@@ -14,8 +14,8 @@
  */
 
 import type { Ohlcv } from "@/lib/connectors/core";
-import { generateQuarterlyFinancials } from "@/lib/financial-statements";
 import { evaluateHealthDetail, type HealthDetail } from "@/lib/financial-health-detail";
+import { loadPreferredQuarterlyFinancials } from "@/lib/financial-ingestion";
 
 /* ═══════════════════════════════════════════════════════════════════════
    TYPES
@@ -278,7 +278,7 @@ function computeFinancialHealth(bars: Ohlcv[]): FinancialHealthResult {
    MAIN: GENERATE FULL FUNDAMENTAL REPORT
    ═══════════════════════════════════════════════════════════════════════ */
 
-export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): FundamentalReport {
+export function generateFundamentalReport(symbol: string, bars: Ohlcv[], quarters: import("@/lib/financial-statements").FinancialQuarter[] = []): FundamentalReport {
   const closes = bars.map((b) => b.close);
   const n = closes.length;
   const currentPrice = closes[n - 1];
@@ -286,7 +286,7 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
 
   // Quarterly market breakdown and canonical financial health input.
   const quarterlyMetrics = computeQuarterly(bars);
-  const financialQuarters = generateQuarterlyFinancials(symbol, bars, 8);
+  const financialQuarters = quarters;
   const healthDetail: HealthDetail = evaluateHealthDetail(symbol, financialQuarters);
 
   // EPS and BVPS are derived from the canonical synthetic statement sequence in this environment.

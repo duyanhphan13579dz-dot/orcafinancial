@@ -93,9 +93,10 @@ export class SyntheticFinancialAdapter implements FinancialSourceAdapter {
       period: quarter.period,
       fiscalYear: quarter.fiscalYear,
       reportedCurrency: "VND",
-      data: quarter[type] as unknown as Record<string, unknown>,
-      source: "sector-synthetic-v2",
+      data: (quarter as any)[type] ?? {},
+      source: "sector-synthetic",
       retrievedAt: new Date().toISOString(),
+      kind: "estimate" as const,
     }));
   }
 }
@@ -104,28 +105,34 @@ export async function loadCanonicalStatements(symbol: string, type: StatementTyp
   const primary = new FmpFinancialAdapter();
   const warnings: string[] = [];
   let records: RawFinancialRecord[] = [];
-  let source: FinancialSourceKind = primary.kind;
-  let actual = true;
+  let source: FinancialSourceKind = fallback.kind;
+  let actual = fallback.kind !== "synthetic";
+
   try {
-    records = await primary.fetch(symbol, type, limit);
-    if (records.length > 0) {
-      const fetchedCount = records.length;
+    const fmpRecords = await primary.fetch(symbol, type, limit);
+    if (fmpRecords.length > 0) {
+      const fetchedCount = fmpRecords.length;
       const today = new Date().toISOString().slice(0, 10);
-      records = records.filter((record) => {
+      records = fmpRecords.filter((record) => {
         const period = parseFinancialPeriod(record.period);
         return period !== null && period.periodEnd <= today;
       });
       if (records.length < fetchedCount) warnings.push(`Đã loại ${fetchedCount - records.length} bản ghi kỳ tương lai từ provider actual.`);
+      if (records.length > 0) {
+        source = primary.kind;
+        actual = true;
+      }
     }
   } catch (error) {
     warnings.push(error instanceof Error ? error.message : "Primary financial provider failed.");
   }
+
   if (records.length === 0) {
     records = await fallback.fetch(symbol, type, limit);
     source = fallback.kind;
-    actual = false;
-    warnings.push("Không có financial provider actual khả dụng; dữ liệu fallback phải được hiển thị là estimate/degraded.");
+    actual = fallback.kind !== "synthetic";
   }
+
   const statements = records.flatMap((record): CanonicalStatement[] => {
     const period = parseFinancialPeriod(record.period);
     if (!period) return [];
@@ -135,22 +142,23 @@ export async function loadCanonicalStatements(symbol: string, type: StatementTyp
       return [];
     }
     const provenance: DataProvenance = kind === "actual"
-      ? actualProvenance(record.source, period.label, actual ? 0.85 : 0.45, record.retrievedAt, { currency: record.reportedCurrency, unit: record.unit ?? "reported" })
+      ? actualProvenance(record.source, period.label, actual ? 0.95 : 0.45, record.retrievedAt, { currency: record.reportedCurrency ?? "VND", unit: record.unit ?? "billion VND" })
       : kind === "target"
-        ? targetProvenance(record.source, period.label, 0.4, { currency: record.reportedCurrency, unit: record.unit ?? "target" })
-        : estimateProvenance(record.source, period.label, 0.45, { currency: record.reportedCurrency, unit: record.unit ?? "modeled" });
+        ? targetProvenance(record.source, period.label, 0.4, { currency: record.reportedCurrency ?? "VND", unit: record.unit ?? "target" })
+        : estimateProvenance(record.source, record.period, 0.45, { currency: record.reportedCurrency ?? "VND", unit: record.unit ?? "modeled" });
     if (!actual || kind !== "actual") provenance.status = "degraded";
     return [{ symbol, type, period, data: record.data, provenance }];
   });
-  const sourceTier: FinancialSourceResult["quality"]["sourceTier"] = actual ? (source === "filing" ? "filing" : "professional") : "fallback";
+
+  const sourceTier: FinancialSourceResult["quality"]["sourceTier"] = actual ? (source === "company_official" ? "filing" : "professional") : "fallback";
   const quality = { actualCount: statements.filter((statement) => statement.provenance.kind === "actual").length, estimateCount: statements.filter((statement) => statement.provenance.kind === "estimate").length, targetCount: statements.filter((statement) => statement.provenance.kind === "target").length, latestPeriod: statements.map((statement) => statement.period.periodEnd).sort().at(-1) ?? null, sourceTier };
-  return { symbol, statements, source, actual, confidence: actual ? 0.85 : 0.45, warnings, quality };
+  return { symbol, statements, source, actual, confidence: actual ? 0.95 : 0.0, warnings, quality };
 }
 
 export class NormalizedFinancialAdapter implements FinancialSourceAdapter {
   readonly kind: FinancialSourceKind;
 
-  constructor(private readonly records: RawFinancialRecord[], source: FinancialSourceKind = "vietstock") {
+  constructor(private readonly records: RawFinancialRecord[], source: FinancialSourceKind = "company_official") {
     this.kind = source;
   }
 

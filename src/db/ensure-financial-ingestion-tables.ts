@@ -64,7 +64,7 @@ export function ensureFinancialIngestionTables(): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS financial_llm_symbol_idx ON financial_llm_outputs(symbol, analysis_type, updated_at);
-    `).then(() => undefined);
+    `).then(() => undefined).catch(() => undefined);
   }
   return ready;
 }
