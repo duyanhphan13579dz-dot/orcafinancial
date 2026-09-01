@@ -3,6 +3,12 @@ import { db } from "@/db";
 
 let ready: Promise<void> | null = null;
 
+/**
+ * Idempotent DDL for financial ingestion + Phase 2 remediation columns.
+ * - is_synthetic / source_priority on normalized facts & statements
+ * - canonical_unit metadata
+ * - report_scope already present on normalized facts
+ */
 export function ensureFinancialIngestionTables(): Promise<void> {
   if (!ready) {
     ready = db.execute(sql`
@@ -27,6 +33,7 @@ export function ensureFinancialIngestionTables(): Promise<void> {
       );
       CREATE INDEX IF NOT EXISTS fs_source_doc_symbol_idx ON financial_source_documents(symbol, retrieved_at);
       ALTER TABLE financial_source_documents ADD COLUMN IF NOT EXISTS source_content_hash VARCHAR(64);
+
       CREATE TABLE IF NOT EXISTS financial_normalized_facts (
         id SERIAL PRIMARY KEY,
         document_id INTEGER REFERENCES financial_source_documents(id),
@@ -50,6 +57,12 @@ export function ensureFinancialIngestionTables(): Promise<void> {
       );
       CREATE INDEX IF NOT EXISTS fs_normalized_symbol_idx ON financial_normalized_facts(symbol, fiscal_year, period);
       ALTER TABLE financial_normalized_facts ADD COLUMN IF NOT EXISTS verification_status VARCHAR(20) NOT NULL DEFAULT 'unverified';
+      -- Phase 2 columns
+      ALTER TABLE financial_normalized_facts ADD COLUMN IF NOT EXISTS is_synthetic BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE financial_normalized_facts ADD COLUMN IF NOT EXISTS source_priority INTEGER NOT NULL DEFAULT 40;
+      ALTER TABLE financial_normalized_facts ADD COLUMN IF NOT EXISTS canonical_unit VARCHAR(20) NOT NULL DEFAULT 'VND';
+      ALTER TABLE financial_normalized_facts ADD COLUMN IF NOT EXISTS data_version VARCHAR(20) NOT NULL DEFAULT 'v1';
+
       CREATE TABLE IF NOT EXISTS financial_llm_outputs (
         id SERIAL PRIMARY KEY,
         symbol VARCHAR(20) NOT NULL,
@@ -64,6 +77,14 @@ export function ensureFinancialIngestionTables(): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS financial_llm_symbol_idx ON financial_llm_outputs(symbol, analysis_type, updated_at);
+
+      -- Phase 2: legacy financial_statements table flags
+      ALTER TABLE financial_statements ADD COLUMN IF NOT EXISTS is_synthetic BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE financial_statements ADD COLUMN IF NOT EXISTS source_priority INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE financial_statements ADD COLUMN IF NOT EXISTS report_scope VARCHAR(20) NOT NULL DEFAULT 'consolidated';
+      ALTER TABLE financial_statements ADD COLUMN IF NOT EXISTS verification_status VARCHAR(20) NOT NULL DEFAULT 'unverified';
+      CREATE INDEX IF NOT EXISTS fs_stmt_synthetic_idx ON financial_statements(symbol, is_synthetic);
+      CREATE INDEX IF NOT EXISTS fs_stmt_priority_idx ON financial_statements(symbol, source_priority DESC);
     `).then(() => undefined);
   }
   return ready;
