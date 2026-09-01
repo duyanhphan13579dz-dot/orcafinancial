@@ -405,7 +405,7 @@ export async function runFinancialForensicAudit(symbolRaw: string): Promise<Fore
 
   const hasVerifiedPipeline = verifiedFacts.length > 0;
   const recommendation = !hasVerifiedPipeline
-    ? "Ingest từ Vietstock/CafeF/TCBS + chạy quality gate. Không serve synthetic."
+    ? "Ingest từ VnDirect/Vietstock/CafeF + chạy quality gate. Không serve synthetic."
     : syntheticRows.length > 0
       ? "Có verified facts nhưng DB còn synthetic rows — chạy financial-data-cleanup."
       : firstMismatch

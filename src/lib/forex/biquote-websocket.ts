@@ -218,6 +218,36 @@ export async function fetchBiquoteOhlc(
   return { bars, hasMore: bars.length >= limit, source: "biquote-ohlc" };
 }
 
+/**
+ * Fetch a single live quote directly from biquote.io.
+ * Derived pairs (e.g. EURVND) are computed from their two biquote legs.
+ * Returns null when the symbol is unknown to biquote.
+ */
+export async function fetchBiquoteRawQuote(symbol: string): Promise<ForexRawQuote | null> {
+  const normalized = symbol.toUpperCase();
+  const def = FOREX_BY_SYMBOL.get(normalized);
+  if (def?.derived) {
+    const [left, right] = await Promise.all([
+      fetchBiquoteRawQuote(def.derived.left),
+      fetchBiquoteRawQuote(def.derived.right),
+    ]);
+    return left && right ? combineDerivedQuote(normalized, left, right) : null;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4_000);
+  try {
+    const response = await fetch(`https://biquote.io/api/${encodeURIComponent(normalized)}`, {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`Biquote quote HTTP ${response.status}`);
+    return mapBiquoteRawTick(normalized, (await response.json()) as BiquoteTick);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function createBiquoteForexWebSocket(options: BiquoteForexOptions) {
   const symbol = options.symbol.toUpperCase();
   const timeframe = normalizeTimeframe(options.timeframe);

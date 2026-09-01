@@ -2,6 +2,7 @@ import {
   DataValidator,
   fetchWithRetry,
   getBreaker,
+  mapPool,
   ProviderError,
   readJsonSafe,
   type Ohlcv,
@@ -10,6 +11,7 @@ import { FOREX_BY_SYMBOL, FOREX_PAIRS, type ForexPairDef } from "./data";
 import { forProvider } from "@/lib/logger";
 import { alignBarsByTime, combineOhlc } from "./normalize";
 import type { ForexQuote } from "./types";
+import { fetchBiquoteOhlc, fetchBiquoteRawQuote } from "./biquote-websocket";
 import {
   enrichWithSecondary,
   secondaryOnlySnapshot,
@@ -423,37 +425,98 @@ async function fetchYahooPrimary(): Promise<{ quotes: ForexQuote[]; source: stri
   });
 }
 
+async function fetchBiquoteSnapshot(): Promise<{ quotes: ForexQuote[]; source: string }> {
+  const results = await mapPool(FOREX_PAIRS, 6, async (def) => {
+    try {
+      const q = await fetchBiquoteRawQuote(def.symbol);
+      return q ? ({ ...q } as ForexQuote) : null;
+    } catch {
+      return null;
+    }
+  });
+  const quotes = results
+    .map((r) => (r.status === "fulfilled" ? r.value : null))
+    .filter((q): q is ForexQuote => Boolean(q));
+  if (quotes.length < 3) {
+    throw new ProviderError("forex-snapshot", "biquote returned too few quotes");
+  }
+  return { quotes, source: "biquote" };
+}
+
+/**
+ * Forex quote pipeline — biquote.io is the primary live feed; Yahoo remains a
+ * safety fallback for the commodity/index legs biquote may not cover.
+ */
 export async function fetchForexSnapshot(): Promise<ForexSnapshotResult> {
   try {
-    const primary = await fetchYahooPrimary();
+    const biquote = await fetchBiquoteSnapshot();
+    // Fill any pairs biquote couldn't supply (e.g. commodities/index) from Yahoo.
+    let primaryQuotes = biquote.quotes;
+    let primarySource = biquote.source;
+    const have = new Set(primaryQuotes.map((q) => q.symbol));
+    const missing = FOREX_PAIRS.filter((p) => !have.has(p.symbol));
+    if (missing.length > 0) {
+      try {
+        const yahoo = await fetchYahooPrimary();
+        const gap = yahoo.quotes.filter((q) => !have.has(q.symbol));
+        if (gap.length > 0) {
+          primaryQuotes = [...primaryQuotes, ...gap];
+          primarySource = `${biquote.source}+yahoo-fill`;
+        }
+      } catch (err) {
+        log.warn("biquote_yahoo_fill_failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     try {
-      const merged = await enrichWithSecondary(primary.quotes, primary.source);
+      const merged = await enrichWithSecondary(primaryQuotes, primarySource);
       const { quotes, ...pipeline } = merged;
       return { quotes, source: merged.source, pipeline };
     } catch (e) {
-      log.warn("pipeline_enrich_failed_using_primary", {
+      log.warn("pipeline_biquote_enrich_failed_using_primary", {
         error: e instanceof Error ? e.message : String(e),
       });
-      return { quotes: primary.quotes, source: primary.source };
+      return { quotes: primaryQuotes, source: primarySource };
     }
-  } catch (primaryErr) {
-    log.warn("yahoo_primary_failed_trying_secondary", {
-      error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
+  } catch (biquoteErr) {
+    log.warn("biquote_primary_failed_trying_yahoo", {
+      error: biquoteErr instanceof Error ? biquoteErr.message : String(biquoteErr),
     });
     try {
-      const sec = await secondaryOnlySnapshot();
-      const { quotes, ...pipeline } = sec;
-      return { quotes, source: sec.source, pipeline };
-    } catch (secErr) {
-      throw new ProviderError(
-        "forex-snapshot",
-        `primary+secondary failed: ${String(primaryErr)} | ${String(secErr)}`,
-      );
+      const primary = await fetchYahooPrimary();
+      try {
+        const merged = await enrichWithSecondary(primary.quotes, primary.source);
+        const { quotes, ...pipeline } = merged;
+        return { quotes, source: merged.source, pipeline };
+      } catch (e) {
+        log.warn("pipeline_enrich_failed_using_primary", {
+          error: e instanceof Error ? e.message : String(e),
+        });
+        return { quotes: primary.quotes, source: primary.source };
+      }
+    } catch (primaryErr) {
+      log.warn("yahoo_primary_failed_trying_secondary", {
+        error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
+      });
+      try {
+        const sec = await secondaryOnlySnapshot();
+        const { quotes, ...pipeline } = sec;
+        return { quotes, source: sec.source, pipeline };
+      } catch (secErr) {
+        throw new ProviderError(
+          "forex-snapshot",
+          `primary+secondary failed: ${String(biquoteErr)} | ${String(primaryErr)} | ${String(secErr)}`,
+        );
+      }
     }
   }
 }
 
 const VALID = new Set(["1m", "5m", "15m", "1h", "4h", "1d", "1w", "1mo", "12mo"]);
+
+/** Timeframes the biquote.io OHLC endpoint serves directly. */
+const BIQUOTE_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "1d"]);
 
 function yahooParams(tf: string, limit: number, before?: number) {
   const interval =
@@ -615,6 +678,22 @@ export async function fetchForexBars(
   if (!VALID.has(timeframe)) throw new Error("Invalid timeframe");
 
   const minBars = timeframe === "12mo" ? 5 : 10;
+
+  // Primary: biquote.io direct (only the timeframes biquote serves natively).
+  if (BIQUOTE_TIMEFRAMES.has(timeframe)) {
+    try {
+      const history = await fetchBiquoteOhlc(symbol, timeframe, limit, before);
+      if (history.bars.length >= minBars) {
+        return { bars: history.bars, source: history.source };
+      }
+    } catch (e) {
+      log.warn("biquote_ohlc_failed_falling_back_to_yahoo", {
+        symbol,
+        timeframe,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
 
   const attempts: Array<Promise<{ bars: Ohlcv[]; source: string }>> = [
     getBreaker(YAHOO1)

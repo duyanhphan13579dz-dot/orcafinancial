@@ -182,9 +182,9 @@ describe("Phase 3/4 priority", () => {
   it("synthetic never wins", () => {
     const w = pickPreferredRecord([
       { source: "sector-synthetic-v2", verificationStatus: "verified", qualityStatus: "accepted" },
-      { source: "tcbs", verificationStatus: "unverified", qualityStatus: "pending" },
+      { source: "vndirect", verificationStatus: "unverified", qualityStatus: "pending" },
     ]);
-    expect(w?.source).toBe("tcbs");
+    expect(w?.source).toBe("vndirect");
     expect(SOURCE_PRIORITY.VERIFIED_PROVIDER).toBeGreaterThan(SOURCE_PRIORITY.SYNTHETIC);
     expect(isSyntheticSource("synthetic-fallback")).toBe(true);
   });

@@ -1,6 +1,6 @@
 import type { Ohlcv } from "@/lib/connectors/core";
 import { FOREX_BY_SYMBOL, FOREX_PAIRS } from "./data";
-import { combineDerivedQuote, fetchBiquoteOhlc, mapBiquoteRawTick, type BiquoteTick } from "./biquote-websocket";
+import { fetchBiquoteOhlc, fetchBiquoteRawQuote } from "./biquote-websocket";
 import type { ForexRawQuote } from "./types";
 import { getSessionInfo } from "./fx-intelligence";
 import { buildMacroContextLive } from "./macro";
@@ -12,17 +12,6 @@ type LiveQuote = NonNullable<ForexScalpingMarketData["quote"]>;
 
 function toOhlcv(bars: Array<Ohlcv & { isClosed?: boolean }>): Ohlcv[] {
   return bars.filter((bar) => bar.isClosed !== false).map(({ time, open, high, low, close, volume }) => ({ time, open, high, low, close, volume }));
-}
-
-async function fetchBiquoteRawQuote(symbol: string): Promise<ForexRawQuote | null> {
-  const def = FOREX_BY_SYMBOL.get(symbol);
-  if (def?.derived) {
-    const [left, right] = await Promise.all([fetchBiquoteRawQuote(def.derived.left), fetchBiquoteRawQuote(def.derived.right)]);
-    return left && right ? combineDerivedQuote(symbol, left, right) : null;
-  }
-  const response = await fetch(`https://biquote.io/api/${encodeURIComponent(symbol)}`, { cache: "no-store", signal: AbortSignal.timeout(4_000) });
-  if (!response.ok) throw new Error(`Biquote quote HTTP ${response.status}`);
-  return mapBiquoteRawTick(symbol, (await response.json()) as BiquoteTick);
 }
 
 function quoteForScalping(raw: ForexRawQuote | null, pipSize: number): LiveQuote | null {

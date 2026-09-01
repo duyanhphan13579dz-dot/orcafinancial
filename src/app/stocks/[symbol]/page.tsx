@@ -14,7 +14,7 @@ import type { Bar } from "@/components/candle-chart";
 
 import type { HealthDetail } from "@/components/financial-health-detail";
 import { StockMicrostructurePanel } from "@/components/stock-microstructure-panel";
-import type { StockMicrostructureSnapshot } from "@/lib/connectors/tcbs-microstructure";
+import type { StockMicrostructureSnapshot } from "@/lib/connectors/microstructure";
 
 import {
   SectionTitle,

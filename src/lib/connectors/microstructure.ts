@@ -1,6 +1,7 @@
 /**
  * Stock microstructure types.
- * TCBS provider removed — endpoint returns status "unavailable" until a verified provider is wired.
+ * The deep order-book / foreign-flow provider is not yet wired — endpoints
+ * return status "unavailable" until a verified VnDirect/exchange source is available.
  */
 
 export type MicrostructureStatus = "live" | "delayed" | "stale" | "unavailable";

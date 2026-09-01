@@ -82,6 +82,7 @@ export async function vndirectQuote(symbol: string, options: ProviderFetchOption
     prevClose: prev?.close ?? null,
     changePct: prev ? ((last.close - prev.close) / prev.close) * 100 : null,
     source: "vndirect-dchart",
+    confidence: 0.95,
   };
 }
 
@@ -100,6 +101,8 @@ export async function vndirectSearch(query: string, limit = 20): Promise<SymbolI
         symbol: String(row.code ?? row.symbol ?? "").toUpperCase(),
         name: String(row.companyName ?? row.name ?? row.code ?? ""),
         exchange: String(row.floor ?? row.exchange ?? ""),
+        type: "stock",
+        source: "vndirect",
       }))
       .filter((s) => s.symbol);
   } catch {
@@ -180,9 +183,18 @@ export async function binancePrices(): Promise<CryptoQuote[]> {
   const response = await fetchWithRetry(url, { timeoutMs: 8_000, retries: 1 });
   if (!response.ok) throw new Error(`Binance HTTP ${response.status}`);
   const rows = (await response.json()) as Array<Record<string, unknown>>;
-  const wanted = new Set(["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT"]);
+  const stable = new Set(["USDT", "USDC", "FDUSD", "TUSD", "DAI", "BUSD"]);
   return rows
-    .filter((row) => wanted.has(String(row.symbol ?? "")))
+    .filter((row) => {
+      const symbol = String(row.symbol ?? "");
+      if (!symbol.endsWith("USDT")) return false;
+      const base = symbol.slice(0, -4);
+      const price = Number(row.lastPrice);
+      const volume = Number(row.quoteVolume);
+      return !stable.has(base) && Number.isFinite(price) && price > 0 && Number.isFinite(volume) && volume >= 0;
+    })
+    .sort((a, b) => Number(b.quoteVolume ?? 0) - Number(a.quoteVolume ?? 0))
+    .slice(0, 20)
     .map((row) => ({
       symbol: String(row.symbol ?? "").replace(/USDT$/, ""),
       name: String(row.symbol ?? ""),
@@ -195,19 +207,25 @@ export async function binancePrices(): Promise<CryptoQuote[]> {
 }
 
 export async function cryptoPricesWithFallback(): Promise<CryptoQuote[]> {
+  // Crypto is pulled directly from Binance (per product policy); CoinGecko is
+  // only a degraded fallback when Binance is unreachable.
   try {
-    return await coingeckoPrices();
+    return await binancePrices();
   } catch {
-    return binancePrices();
+    return coingeckoPrices();
   }
 }
 
 export interface NewsItem {
+  guid: string;
   title: string;
   link: string;
-  publishedAt: string | null;
+  description: string;
+  imageUrl: string | null;
+  sourceName: string;
+  /** RSS feed id — kept for connector probe consumers. */
   source: string;
-  summary?: string;
+  publishedAt: Date;
 }
 
 function parseRssItems(xml: string, source: string): NewsItem[] {
@@ -218,15 +236,23 @@ function parseRssItems(xml: string, source: string): NewsItem[] {
     const link = block.match(/<link>([\s\S]*?)<\/link>/i);
     const pub = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i);
     const desc = block.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>|<description>([\s\S]*?)<\/description>/i);
+    const guid = block.match(/<guid[^>]*>([\s\S]*?)<\/guid>/i) ?? block.match(/<guid[^>]*\/>([\s\S]*?)<\/item>/i);
+    const enclosure = block.match(/<enclosure[^>]+url="([^"]*)"/i) ?? block.match(/<media:content[^>]+url="([^"]*)"/i) ?? block.match(/<media:thumbnail[^>]+url="([^"]*)"/i);
+    const img = block.match(/<img[^>]+src="([^"]*)"/i);
     const t = (title?.[1] ?? title?.[2] ?? "").trim();
     const l = (link?.[1] ?? "").trim();
     if (!t || !l) continue;
+    const publishedRaw = pub?.[1]?.trim();
+    const publishedAt = publishedRaw ? new Date(publishedRaw) : new Date();
     items.push({
+      guid: (guid?.[1] ?? l).trim(),
       title: t,
       link: l,
-      publishedAt: pub?.[1]?.trim() ?? null,
+      description: (desc?.[1] ?? desc?.[2] ?? "").replace(/<[^>]+>/g, " ").trim(),
+      imageUrl: (enclosure?.[1] ?? img?.[1] ?? null),
+      sourceName: source,
       source,
-      summary: (desc?.[1] ?? desc?.[2] ?? "").replace(/<[^>]+>/g, " ").trim() || undefined,
+      publishedAt: Number.isNaN(publishedAt.getTime()) ? new Date() : publishedAt,
     });
   }
   return items;
@@ -256,7 +282,4 @@ export async function fetchAllRssNews(): Promise<{ items: NewsItem[]; errors: st
   return { items, errors };
 }
 
-/** @deprecated TCBS market data removed — routes to VnDirect. */
-export async function tcbsQuote(symbol: string, options: ProviderFetchOptions = {}): Promise<Quote> {
-  return vndirectQuote(symbol, options);
-}
+

@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Public financial statements — live verified ingest.
- * Priority: TCBS (company/broker) → Vietstock → configured datafeed.
+ * Priority: official company filings → VnDirect → Vietstock → configured datafeed.
  * Never synthesizes sector-model numbers.
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: string }> }) {
@@ -168,8 +168,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
         targetCount: 0,
         validation,
         disclosure: hasVerified
-          ? "Bảng lấy từ nguồn provider đã xác minh (ưu tiên TCBS/doanh nghiệp, sau đó Vietstock)."
-          : `Chưa có BCTC verified sau khi thử TCBS → Vietstock. ${preferred.warnings?.slice(0, 3).join(" | ") || "Cấu hình TCBS_MCP_ACCESS_TOKEN hoặc VIETSTOCK_DATAFEED_URL."}`,
+          ? "Bảng lấy từ nguồn provider đã xác minh (ưu tiên VnDirect/doanh nghiệp, sau đó Vietstock)."
+          : `Chưa có BCTC verified sau khi thử VnDirect → Vietstock. ${preferred.warnings?.slice(0, 3).join(" | ") || "Cấu hình VNDIRECT_DATAFEED_URL hoặc VIETSTOCK_DATAFEED_URL."}`,
       },
       { cacheSeconds: 300 },
     );

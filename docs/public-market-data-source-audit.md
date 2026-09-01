@@ -1,4 +1,4 @@
-# Audit nguồn dữ liệu công khai ngoài TCBS
+# Audit nguồn dữ liệu công khai (VnDirect/Vietstock/Binance/Biquote)
 
 ## Kết luận sơ bộ
 

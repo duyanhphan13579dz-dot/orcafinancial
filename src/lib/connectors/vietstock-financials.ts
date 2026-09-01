@@ -1,6 +1,6 @@
 /**
  * Vietstock public financial statements client.
- * Priority tier: VERIFIED_PROVIDER (after official filing / TCBS when configured).
+ * Priority tier: VERIFIED_PROVIDER (after official company filing / VnDirect when configured).
  *
  * Uses finance.vietstock.vn session + antiforgery cookie to call report endpoints.
  * When endpoints require paid DataFeed, set VIETSTOCK_DATAFEED_URL + TOKEN instead.

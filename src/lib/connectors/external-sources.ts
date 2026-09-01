@@ -1,6 +1,6 @@
 import { ProviderError } from "./core";
 
-export type ExternalSourceId = "tcbs" | "cafef" | "vietstock";
+export type ExternalSourceId = "cafef" | "vietstock";
 export type ExternalSourceState = "enabled" | "disabled" | "degraded";
 
 export interface ExternalSourceConfig {
@@ -71,7 +71,6 @@ function sourceConfig(
 }
 
 export const EXTERNAL_SOURCE_CONFIGS: Record<ExternalSourceId, ExternalSourceConfig> = {
-  tcbs: sourceConfig("tcbs", "TCBS", "TCBS_API_URL", "TCBS_API_KEY", "TCBS_ENABLED"),
   cafef: sourceConfig("cafef", "CafeF", "CAFEF_API_URL", "CAFEF_API_KEY", "CAFEF_ENABLED"),
   vietstock: sourceConfig("vietstock", "Vietstock", "VIETSTOCK_API_URL", "VIETSTOCK_API_KEY", "VIETSTOCK_ENABLED"),
 };
@@ -154,7 +153,6 @@ export class ExternalDataSourceAdapter {
 }
 
 export const externalSourceAdapters: Record<ExternalSourceId, ExternalDataSourceAdapter> = {
-  tcbs: new ExternalDataSourceAdapter(EXTERNAL_SOURCE_CONFIGS.tcbs),
   cafef: new ExternalDataSourceAdapter(EXTERNAL_SOURCE_CONFIGS.cafef),
   vietstock: new ExternalDataSourceAdapter(EXTERNAL_SOURCE_CONFIGS.vietstock),
 };
@@ -193,7 +191,6 @@ export function isExternalSourceConfigured(id: ExternalSourceId): boolean {
 
 export function sourceEnvironmentContract(): Record<ExternalSourceId, { enabled: string; url: string; apiKey: string }> {
   return {
-    tcbs: { enabled: "TCBS_ENABLED", url: "TCBS_API_URL", apiKey: "TCBS_API_KEY" },
     cafef: { enabled: "CAFEF_ENABLED", url: "CAFEF_API_URL", apiKey: "CAFEF_API_KEY" },
     vietstock: { enabled: "VIETSTOCK_ENABLED", url: "VIETSTOCK_API_URL", apiKey: "VIETSTOCK_API_KEY" },
   };

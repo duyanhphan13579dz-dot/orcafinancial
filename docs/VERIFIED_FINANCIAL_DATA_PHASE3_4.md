@@ -8,7 +8,7 @@ Depends on: Phase 0 containment, Phase 1 forensic audit, Phase 2 canonical model
 Target flow (Master Plan §IV–V):
 
 ```
-Official filing / Vietstock / TCBS
+Official filing / VnDirect / Vietstock
   → Raw immutable (financial_source_documents)
   → Normalize (canonical VND, reportScope, sourcePriority)
   → Validation (accounting / period / unit / provenance)
@@ -74,7 +74,7 @@ Authorization: Bearer $FINANCIAL_AUDIT_SECRET
 
 1. Deploy Phase 3+4 code
 2. Ensure secrets: `FINANCIAL_AUDIT_SECRET` or `CRON_SECRET`
-3. Configure provider env: `VIETSTOCK_DATAFEED_URL`, `TCBS_API_KEY`, …
+3. Configure provider env: `VNDIRECT_DATAFEED_URL`, `VIETSTOCK_DATAFEED_URL`, …
 4. `POST /api/internal/financial-verified-pipeline?symbols=HPG&quarantine=1`
 5. `GET /api/internal/financial-audit/HPG`
 6. Fill `GOLDEN_METRICS[].expectedValue` from official BCTC
