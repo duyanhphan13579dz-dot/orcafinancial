@@ -20,7 +20,7 @@ html, body {
 }
 
 .font-display {
-  font-family: var(--font-display, "Bricolage Grotesque", ui-sans-serif, sans-serif);
+  font-family: var(--font-sans, "Be Vietnam Pro", ui-sans-serif, sans-serif);
   letter-spacing: -0.015em;
 }
 .font-mono, .num {
@@ -28,7 +28,7 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 .display-xl {
-  font-family: var(--font-display, "Bricolage Grotesque", sans-serif);
+  font-family: var(--font-sans, "Be Vietnam Pro", sans-serif);
   font-weight: 800;
   letter-spacing: -0.03em;
   line-height: 0.95;
