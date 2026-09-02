@@ -22,6 +22,7 @@ import { getBenchmarkForSymbol } from "@/lib/industry-benchmarks";
 import { getHistory, getQuote } from "@/lib/market";
 import { logger } from "@/lib/logger";
 import { buildFundamentalContext, type FundamentalContext } from "@/lib/fundamental-engine";
+import { buildStatementSource, type StatementSource } from "@/lib/fundamental-source";
 import { computeBusinessPerformance, type BusinessPerformance } from "@/lib/fundamental-performance";
 import { computeAdvancedHealth, type AdvancedHealth } from "@/lib/fundamental-health";
 import {
@@ -64,6 +65,12 @@ export interface FundamentalAnalytics {
     ltmMethod: string;
     ltmPeriod: string;
   };
+  /**
+   * Số liệu BCTC NGUỒN đã chuẩn hoá (số riêng quý + LTM + số dư bình quân).
+   * Đây chính là ngữ cảnh engine dùng để tính 3 khối dưới, nên bảng nguồn và
+   * bảng phân tích luôn khớp nhau từng dòng.
+   */
+  statement: StatementSource | null;
   performance: BusinessPerformance | null;
   health: AdvancedHealth | null;
   healthDetail: HealthDetail | null;
@@ -174,6 +181,7 @@ export function computeFundamentalAnalytics(
         ltmMethod: "unavailable",
         ltmPeriod: "—",
       },
+      statement: null,
       performance: null,
       health: null,
       healthDetail: null,
@@ -217,6 +225,12 @@ export function computeFundamentalAnalytics(
     ...new Set([...warnings, ...performance.warnings, ...health.warnings, ...valuation.warnings]),
   ];
 
+  const statement = buildStatementSource(inputs.symbol, ctx, {
+    source: inputs.source,
+    providerBacked: inputs.providerBacked,
+    loadedAt: inputs.loadedAt,
+  });
+
   return {
     symbol: inputs.symbol,
     generatedAt: new Date().toISOString(),
@@ -232,6 +246,7 @@ export function computeFundamentalAnalytics(
       ltmMethod: ctx.ltm.method,
       ltmPeriod: ctx.ltm.periodEnd,
     },
+    statement,
     performance,
     health,
     healthDetail,

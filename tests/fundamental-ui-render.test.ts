@@ -10,110 +10,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { computeFundamentalAnalytics } from "@/lib/fundamental-analytics-service";
 import type { FundamentalInputs } from "@/lib/fundamental-analytics-service";
 import type { FinancialQuarter } from "@/lib/financial-statements";
+import { fixtureQuarters } from "./helpers/financial-quarters";
 import { BusinessPerformanceCard } from "@/components/business-performance";
 import { AdvancedHealthCard } from "@/components/advanced-health";
 import { ValuationCard } from "@/components/valuation-panel";
 
-const SHARES = 350;
-
-function quarter(year: number, q: number, revenue: number): FinancialQuarter {
-  const grossProfit = revenue * 0.33;
-  const ebitda = revenue * 0.19;
-  const depreciation = ebitda * 0.3;
-  const operatingIncome = ebitda - depreciation;
-  const interestExpense = operatingIncome * 0.12;
-  const pretaxIncome = operatingIncome - interestExpense;
-  const incomeTax = pretaxIncome * 0.2;
-  const netIncome = pretaxIncome - incomeTax;
-  const receivables = revenue * 0.2;
-  const inventory = revenue * 0.14;
-  const currentAssets = receivables + inventory + revenue * 0.09;
-  const currentLiabilities = currentAssets / 1.4;
-  const totalAssets = revenue * 3.4;
-  const longTermDebt = totalAssets * 0.24;
-  const equity = totalAssets * 0.52;
-  const totalLiabilities = totalAssets - equity;
-  const operatingCashFlow = netIncome + depreciation;
-  const capex = revenue * 0.055;
-
-  return {
-    period: `Q${q}/${year}`,
-    quarter: q,
-    fiscalYear: year,
-    income: {
-      revenue,
-      costOfGoodsSold: revenue - grossProfit,
-      grossProfit,
-      operatingExpenses: grossProfit - operatingIncome,
-      operatingIncome,
-      interestExpense,
-      otherIncome: 0,
-      pretaxIncome,
-      incomeTax,
-      netIncome,
-      ebitda,
-      depreciation,
-      eps: Number((netIncome / SHARES).toFixed(3)),
-      sharesOutstanding: SHARES,
-    },
-    balance: {
-      cashAndEquivalents: revenue * 0.08,
-      shortTermInvestments: revenue * 0.02,
-      receivables,
-      inventory,
-      currentAssets,
-      fixedAssets: totalAssets - currentAssets,
-      longTermInvestments: 0,
-      totalAssets,
-      currentLiabilities,
-      shortTermDebt: currentLiabilities * 0.28,
-      debtDueWithin12m: currentLiabilities * 0.28,
-      debtMaturityBuckets: {
-        within12m: currentLiabilities * 0.28,
-        oneToThreeYears: longTermDebt * 0.45,
-        overThreeYears: longTermDebt * 0.55,
-      },
-      longTermDebt,
-      totalLiabilities,
-      equity,
-      retainedEarnings: equity * 0.42,
-      totalLiabilitiesEquity: totalAssets,
-      bookValuePerShare: Number((equity / SHARES).toFixed(3)),
-    },
-    cashflow: {
-      netIncome,
-      depreciation,
-      changeWorkingCapital: 0,
-      operatingCashFlow,
-      capex,
-      investingCashFlow: -capex,
-      debtIssuance: 0,
-      dividendsPaid: netIncome * 0.4,
-      financingCashFlow: -netIncome * 0.4,
-      netChangeCash: operatingCashFlow - capex - netIncome * 0.4,
-      freeCashFlow: operatingCashFlow - capex,
-    },
-  };
-}
-
-function dataset(): FinancialQuarter[] {
-  const rows: Array<[number, number, number]> = [
-    [2024, 1, 15200],
-    [2024, 2, 17400],
-    [2024, 3, 16100],
-    [2024, 4, 19800],
-    [2025, 1, 16800],
-    [2025, 2, 19100],
-    [2025, 3, 17600],
-    [2025, 4, 21500],
-  ];
-  return rows.map(([y, q, r]) => quarter(y, q, r)).reverse();
-}
-
 function makeInputs(overrides: Partial<FundamentalInputs> = {}): FundamentalInputs {
   return {
     symbol: "HPG",
-    quarters: dataset(),
+    quarters: fixtureQuarters(),
     source: "vndirect",
     providerBacked: true,
     price: 27.4,
@@ -175,7 +80,7 @@ describe("render thật các panel của tab Cơ bản", () => {
   });
 
   it("render được khi BCTC thiếu nhiều trường (nhiều chỉ số null)", () => {
-    const sparse = dataset().map((q) => ({
+    const sparse = fixtureQuarters().map((q: FinancialQuarter) => ({
       ...q,
       income: { ...q.income, ebitda: undefined as unknown as number, depreciation: undefined as unknown as number, interestExpense: undefined as unknown as number },
       balance: { ...q.balance, inventory: undefined as unknown as number, receivables: undefined as unknown as number, retainedEarnings: undefined as unknown as number },

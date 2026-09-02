@@ -16,6 +16,7 @@ import type { HealthDetail } from "@/components/financial-health-detail";
 import type { BusinessPerformanceVM } from "@/components/business-performance";
 import type { AdvancedHealthVM } from "@/components/advanced-health";
 import type { ValuationVM } from "@/components/valuation-panel";
+import type { StatementSourceVM } from "@/components/statement-source";
 import type { QuarterChartPoint } from "@/lib/fundamental-chart";
 import { StockMicrostructurePanel } from "@/components/stock-microstructure-panel";
 import type { StockMicrostructureSnapshot } from "@/lib/connectors/tcbs-microstructure";
@@ -121,6 +122,11 @@ const AdvancedHealthCard = dynamic(
 
 const ValuationCard = dynamic(
   () => import("@/components/valuation-panel").then((m) => m.ValuationCard),
+  { ssr: false, loading: PanelSkeleton },
+);
+
+const StatementSourceCard = dynamic(
+  () => import("@/components/statement-source").then((m) => m.StatementSourceCard),
   { ssr: false, loading: PanelSkeleton },
 );
 
@@ -233,6 +239,8 @@ interface FundamentalAnalyticsVM {
   generatedAt: string;
   computedInMs: number;
   available: boolean;
+  /** Số liệu BCTC nguồn đã chuẩn hoá — nguồn của 3 khối phân tích. */
+  statement: StatementSourceVM | null;
   performance: BusinessPerformanceVM | null;
   health: AdvancedHealthVM | null;
   healthDetail: HealthDetail | null;
@@ -764,6 +772,9 @@ export default function StockPage({
 
   const valuation =
     analytics?.valuation ?? null;
+
+  const statementSource =
+    analytics?.statement ?? null;
 
   const q =
     stock?.quote;
@@ -2031,6 +2042,30 @@ export default function StockPage({
         {tab ===
           "Cơ bản" && (
           <div className="space-y-6 max-w-6xl">
+
+            {/* ══ BÁO CÁO TÀI CHÍNH NGUỒN ══
+             * Hiển thị trước để mọi con số ở 3 khối phân tích bên dưới
+             * đều đối chiếu được về đúng dòng trên BCTC đã công bố. */}
+
+            {statementSource && (
+              <div>
+                <SectionTitle
+                  eyebrow="DỮ LIỆU GỐC"
+                  title={
+                    <>
+                      Báo cáo tài chính ·{" "}
+                      {statementSource.periodCount} kỳ ·{" "}
+                      {statementSource.unit}
+                    </>
+                  }
+                >
+                  {statementSource.basisLabel} · nguồn{" "}
+                  {statementSource.source}
+                </SectionTitle>
+
+                <StatementSourceCard statement={statementSource} />
+              </div>
+            )}
 
             {/* ══ HIỆU SUẤT KINH DOANH (engine LTM) ══ */}
 
