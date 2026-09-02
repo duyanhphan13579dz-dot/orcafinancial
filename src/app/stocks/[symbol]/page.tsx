@@ -18,6 +18,7 @@ import type { StockMicrostructureSnapshot } from "@/lib/connectors/microstructur
 import { createVndirectMicrostructureWebSocket } from "@/lib/connectors/vndirect-realtime-client";
 import { loadLiveFinancialData } from "@/lib/connectors/live-financials-client";
 import { evaluateHealthDetail } from "@/lib/financial-health-detail";
+import { buildFundamentalChart, type FundamentalChart } from "@/lib/fundamental-chart";
 import type { FinancialQuarter } from "@/lib/financial-statements";
 
 import {
@@ -726,12 +727,24 @@ export default function StockPage({
     );
 
   // Live financial health computed in-browser from the same figures that feed
-  // the "Tài chính" tab (VNDirect/doanh nghiệp → Vietstock). Takes precedence
-  // over the server-side detail because the host server may have no internet.
+  // the "Tài chính" tab (vnstock → VNDirect/doanh nghiệp → Vietstock). Takes
+  // precedence over the server-side detail because the host server may have no
+  // internet (and no verified DB rows) in the local/preview sandbox.
   const [
     liveHealth,
     setLiveHealth,
   ] = useState<HealthDetail | null>(
+    null,
+  );
+
+  // Live fundamental chart (quarters + industry + health gauge) computed
+  // in-browser. When live/extracted financials are available we prefer this over
+  // the server `/fundamental-chart` route so the whole "Cơ bản" tab renders even
+  // when the server cannot reach the company feeds or the DB is empty.
+  const [
+    liveChart,
+    setLiveChart,
+  ] = useState<FundamentalChart | null>(
     null,
   );
 
@@ -740,12 +753,17 @@ export default function StockPage({
     let cancelled = false;
     loadLiveFinancialData(symbol, "quarterly", 8)
       .then((data) => {
-        if (cancelled || data.quarters.length === 0) return;
-        const detail = evaluateHealthDetail(symbol, data.quarters as FinancialQuarter[]);
+        if (cancelled) return;
+        if (data.quarters.length === 0) return;
+        const quarters = data.quarters as FinancialQuarter[];
+        const detail = evaluateHealthDetail(symbol, quarters);
         if (!cancelled && detail.overall > 0) setLiveHealth(detail);
+        if (!cancelled) {
+          setLiveChart(buildFundamentalChart(symbol, quarters, detail.overall > 0 ? detail : null));
+        }
       })
       .catch(() => {
-        /* ignore — fall back to server detail */
+        /* ignore — fall back to server data */
       });
     return () => {
       cancelled = true;
@@ -756,9 +774,14 @@ export default function StockPage({
     stock?.quote;
 
   // Prefer the health score computed from live/extracted company financials
-  // (VNDirect → Vietstock) when available; otherwise use the server detail.
+  // (vnstock → VNDirect → Vietstock) when available; otherwise use the server detail.
   const healthDetailView =
     liveHealth ?? healthDetail;
+
+  // Prefer the live-extracted chart (rich, real company data) over the server
+  // route, which needs verified DB rows + server internet to produce quarters.
+  const chartDataView =
+    liveChart ?? chartData;
 
   /* ==========================================================
    * CHART STATE
@@ -2026,7 +2049,9 @@ export default function StockPage({
 
             {/* VISUAL ANALYST */}
 
-            {chartData && (
+            {chartDataView &&
+              chartDataView.quarters &&
+              chartDataView.quarters.length > 0 && (
               <div className="space-y-5">
 
                 <SectionTitle
@@ -2035,7 +2060,7 @@ export default function StockPage({
                     <>
                       Hiệu suất & định giá qua{" "}
                       {
-                        chartData
+                        chartDataView
                           .quarters
                           .length
                       }{" "}
@@ -2045,13 +2070,13 @@ export default function StockPage({
                 >
                   Nguồn:{" "}
                   {
-                    chartData
+                    chartDataView
                       .industry
                       .industry
                   }{" "}
                   ·{" "}
                   {
-                    chartData
+                    chartDataView
                       .industry
                       .sector
                   }
@@ -2067,7 +2092,7 @@ export default function StockPage({
 
                     <RevenueProfitChart
                       data={
-                        chartData.quarters
+                        chartDataView.quarters
                       }
                     />
                   </div>
@@ -2078,15 +2103,15 @@ export default function StockPage({
                       Đồng hồ sức khỏe tài chính
                     </div>
 
-                    {chartData.health ? (
+                    {chartDataView.health ? (
                       <HealthGauge
                         overall={
-                          chartData
+                          chartDataView
                             .health
                             .overall
                         }
                         rating={
-                          chartData
+                          chartDataView
                             .health
                             .rating
                         }
@@ -2109,10 +2134,10 @@ export default function StockPage({
 
                     <ROEvsIndustryChart
                       data={
-                        chartData.quarters
+                        chartDataView.quarters
                       }
                       industry={
-                        chartData.industry
+                        chartDataView.industry
                       }
                     />
                   </div>
@@ -2125,7 +2150,7 @@ export default function StockPage({
 
                     <MarginsTrendChart
                       data={
-                        chartData.quarters
+                        chartDataView.quarters
                       }
                     />
                   </div>
@@ -2141,7 +2166,7 @@ export default function StockPage({
 
                     <EPSTrendChart
                       data={
-                        chartData.quarters
+                        chartDataView.quarters
                       }
                     />
                   </div>
@@ -2154,7 +2179,7 @@ export default function StockPage({
 
                     <IndustryCompareBars
                       comparisons={
-                        chartData.comparisons
+                        chartDataView.comparisons
                       }
                     />
                   </div>
@@ -2200,9 +2225,11 @@ export default function StockPage({
             {/* LEGACY FUNDAMENTAL */}
 
             {!fundamental &&
-              !chartData && (
+              (!chartDataView ||
+                !chartDataView.quarters ||
+                chartDataView.quarters.length === 0) && (
                 <div className="panel p-8 text-center text-sm text-slate-500">
-                  Đang tính toán từ dữ liệu giá thật…
+                  Đang tính toán từ báo cáo tài chính thật…
                 </div>
               )}
 

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, fail, handleError, ok } from "@/lib/api";
 import { ensureQuarterlyFinancials } from "@/lib/company-service";
+import { loadLiveQuarterlyFinancials } from "@/lib/connectors/live-financials-server";
 import { evaluateHealthDetail } from "@/lib/financial-health-detail";
 import { buildDataQualitySnapshot, validateFinancialQuarters } from "@/lib/stock-intelligence/validation";
 
@@ -14,11 +15,23 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
   if (!/^[A-Z0-9]{1,15}$/.test(symbol)) return fail("Invalid symbol", 400);
 
   try {
-    const qs = await ensureQuarterlyFinancials(symbol, 8);
+    // Prefer verified DB rows; fall back to live company feeds when empty so
+    // the health detail stays populated before ingestion has run.
+    let qs = await ensureQuarterlyFinancials(symbol, 8);
+    const source = qs.length > 0 ? "verified-db" : "live";
+    if (qs.length === 0) {
+      const live = await loadLiveQuarterlyFinancials(symbol, 8);
+      qs = live.quarters;
+    }
+
     const detail = evaluateHealthDetail(symbol, qs);
     const validation = validateFinancialQuarters(qs);
     const quality = buildDataQualitySnapshot(qs, validation, { expectedPeriods: 8, staleAfterDays: 120 });
-    return ok(detail, { source: "sector-synthetic-v1", kind: "estimate", currentStatePeriod: detail.asOfPeriod, quartersUsed: qs.length, validation, quality }, { cacheSeconds: 300 });
+    return ok(
+      detail,
+      { source, kind: qs.length > 0 ? "actual" : "estimate", currentStatePeriod: detail.asOfPeriod, quartersUsed: qs.length, validation, quality },
+      { cacheSeconds: 300 },
+    );
   } catch (err) {
     return handleError(err, `financial-health-detail:${symbol}`);
   }
