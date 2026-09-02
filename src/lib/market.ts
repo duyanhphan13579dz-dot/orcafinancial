@@ -20,10 +20,11 @@ import {
   yahooHistory,
   type CryptoQuote,
 } from "@/lib/connectors/providers";
+import { getVndirectRealtimeIndices } from "@/lib/connectors/vndirect-realtime-index";
 import { scoreSentimentHybrid } from "@/lib/llm";
 import { logger } from "@/lib/logger";
 import { analyzeSentiment } from "@/lib/sentiment";
-import { SECTOR_DEFINITIONS, type MarketPulse, type MarketSnapshot, type MarketStatus, type OvernightMarketItem, type OvernightMarketSnapshot, type SectorSnapshot } from "@/types/market";
+import { SECTOR_DEFINITIONS, type MarketIndex, type MarketPulse, type MarketSnapshot, type MarketStatus, type OvernightMarketItem, type OvernightMarketSnapshot, type SectorSnapshot } from "@/types/market";
 
 export const FEATURED_SYMBOLS = [
   "VNM", "VIC", "VHM", "HPG", "FPT", "MWG", "VCB", "TCB", "BID", "CTG",
@@ -53,6 +54,7 @@ const HIST_INTRA_TTL_MS = Number(process.env.MARKET_HIST_INTRA_TTL_MS) || 30_000
 const OVERVIEW_AUX_TIMEOUT_MS = Number(process.env.MARKET_OVERVIEW_AUX_TIMEOUT_MS) || 450;
 const SECTOR_QUOTE_TIMEOUT_MS = Number(process.env.MARKET_SECTOR_QUOTE_TIMEOUT_MS) || 1_800;
 const OVERVIEW_TOTAL_TIMEOUT_MS = Number(process.env.MARKET_OVERVIEW_TOTAL_TIMEOUT_MS) || 2_500;
+const OVERVIEW_INDEX_TIMEOUT_MS = Number(process.env.MARKET_OVERVIEW_INDEX_TIMEOUT_MS) || 1_500;
 const OVERNIGHT_TTL_MS = Number(process.env.OVERNIGHT_MARKET_TTL_MS) || 45_000;
 const OVERNIGHT_TIMEOUT_MS = Number(process.env.OVERNIGHT_MARKET_TIMEOUT_MS) || 1_200;
 
@@ -104,6 +106,26 @@ function snapshotToQuote(row: typeof priceSnapshots.$inferSelect, stale = false)
     source: `${row.source}-${stale ? "stale-" : ""}snapshot`,
     confidence: Number(row.confidence ?? 0.9),
   };
+}
+
+/**
+ * Load persisted VNDirect index snapshots (the primary realtime path was
+ * already attempted; this is the last resort). Index codes MUST NOT go through
+ * `getQuotes` because that falls back to Yahoo's `*.VN` tickers, which return
+ * inaccurate headline index values.
+ */
+async function loadLiveIndexSnapshots(symbols: string[]): Promise<Quote[]> {
+  const out: Quote[] = [];
+  if (symbols.length === 0) return out;
+  try {
+    const fresh = await loadFreshSnapshots(symbols);
+    if (fresh.size > 0) return symbols.map((s) => fresh.get(s)).filter((q): q is Quote => Boolean(q));
+    const stale = await loadStaleSnapshots(symbols);
+    return symbols.map((s) => stale.get(s)).filter((q): q is Quote => Boolean(q));
+  } catch (err) {
+    logger.warn("index_snapshot_load_failed", { error: String(err) });
+    return out;
+  }
 }
 
 async function loadFreshSnapshots(symbols: string[]): Promise<Map<string, Quote>> {
@@ -455,10 +477,14 @@ function emptyOverview(): MarketSnapshot {
 export async function getMarketOverview(): Promise<MarketSnapshot> {
   const refresh = cachedWithStaleFallback<MarketSnapshot>("market:overview:v4", OVERVIEW_TTL_MS, async () => {
     const started = Date.now();
+    // Indices are pulled DIRECTLY from VNDirect's live market feed (the MI
+    // message on the realtime WebSocket) — not through the generic stock quote
+    // path, which used stale dchart daily closes and an inaccurate Yahoo
+    // fallback. So we keep index codes out of `coreSymbols`.
     const indexCodes = INDICES.map((i) => i.code);
-    const coreSymbols = [...new Set([...indexCodes, ...FEATURED_SYMBOLS])];
+    const coreSymbols = [...new Set([...FEATURED_SYMBOLS])];
     const requestedSymbols = [...new Set([...coreSymbols, ...SECTOR_SYMBOLS])];
-    const [coreQuotes, sectorOnlyQuotes, cryptoResult] = await Promise.all([
+    const [coreQuotes, sectorOnlyQuotes, cryptoResult, realtimeIndices] = await Promise.all([
       getQuotes(coreSymbols, { persist: false, allowStale: true, fast: true, concurrency: 8 }),
       withDeadline(
         getQuotes(SECTOR_SYMBOLS, { persist: false, allowStale: true, fast: true, concurrency: 12 }),
@@ -473,16 +499,32 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
         logger.warn("crypto_failed", { error: String(err) });
         return [] as CryptoQuote[];
       }),
+      // Direct-from-VNDirect realtime index feed. If it fails, fall back to
+      // the DB snapshot layer (never to Yahoo for indices).
+      withDeadline(
+        getVndirectRealtimeIndices().catch((err) => {
+          logger.warn("index_realtime_failed", { error: String(err) });
+          return [] as MarketIndex[];
+        }),
+        OVERVIEW_INDEX_TIMEOUT_MS,
+        [] as MarketIndex[],
+        "realtime-indices",
+      ).catch(() => [] as MarketIndex[]),
     ]);
     const quoteBySymbol = new Map([...coreQuotes, ...sectorOnlyQuotes].map((quote) => [quote.symbol, quote]));
-    const indexQuotes = indexCodes.map((symbol) => quoteBySymbol.get(symbol)).filter((quote): quote is Quote => Boolean(quote));
     const quotes = FEATURED_SYMBOLS.map((symbol) => quoteBySymbol.get(symbol)).filter((quote): quote is Quote => Boolean(quote));
     const sectorQuotes = SECTOR_SYMBOLS.map((symbol) => quoteBySymbol.get(symbol)).filter((quote): quote is Quote => Boolean(quote));
-    const indexByCode = new Map(indexQuotes.map((q) => [q.symbol, q]));
-    const indices = INDICES.map((idx) => {
-      const q = indexByCode.get(idx.code);
-      return q ? { ...idx, ...q, primary: idx.code === "VNINDEX" } : null;
-    }).filter((x): x is NonNullable<typeof x> => x !== null);
+    // Prefer the live VNDirect index feed; fall back to persisted VNDirect
+    // snapshots. Never route index codes through `getQuotes`, whose Yahoo
+    // fallback produced the inaccurate headline numbers.
+    const indexSnapshots = await loadLiveIndexSnapshots(indexCodes);
+    const indexByCode = new Map(indexSnapshots.map((q) => [q.symbol, q]));
+    const indices: MarketIndex[] = realtimeIndices.length > 0
+      ? realtimeIndices
+      : INDICES.map((idx) => {
+          const q = indexByCode.get(idx.code);
+          return q ? { ...idx, ...q, primary: idx.code === "VNINDEX" } : null;
+        }).filter((x): x is NonNullable<typeof x> => x !== null);
     const breadth = buildBreadth(quotes, "featured");
     const [marketUniverse, newsResult, overnight] = await Promise.all([
       withDeadline(loadMarketSnapshots(), OVERVIEW_AUX_TIMEOUT_MS, [], "market-breadth"),
@@ -506,8 +548,8 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
     }));
     const generatedAt = new Date().toISOString();
     const sources = [...new Set([...indices, ...quotes, ...sectorQuotes].map((q) => q.source.replace(/-snapshot$/, "")))];
-    const availableSymbols = new Set([...indexQuotes, ...quotes, ...sectorQuotes].map((q) => q.symbol));
-    const missingSymbols = requestedSymbols.filter((symbol) => !availableSymbols.has(symbol));
+    const availableSymbols = new Set([...indices, ...quotes, ...sectorQuotes].map((q) => q.symbol));
+    const missingSymbols = [...requestedSymbols, ...indexCodes].filter((symbol) => !availableSymbols.has(symbol));
     void logJob("market_overview", "ok", `indices=${indices.length} quotes=${quotes.length} sectorQuotes=${sectorQuotes.length} sectors=${sectors.length} overnight=${overnight.items.filter((item) => item.value != null).length}`, Date.now() - started);
     return {
       indices,
@@ -515,7 +557,7 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
       marketBreadth,
       largeCapBreadth,
       sectors,
-      pulse: buildPulse(indexQuotes, marketBreadth, sectors, totalVolume),
+      pulse: buildPulse(indices, marketBreadth, sectors, totalVolume),
       liquidity: { totalVolume, averageVolume: quotes.length ? totalVolume / quotes.length : 0, status: totalVolume > 0 ? "up" : "flat" },
       foreignFlow: { status: "unknown", value: null },
       topGainers: sorted.slice(0, 5),
@@ -532,7 +574,7 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
       })),
       overnight,
       news: newsItems,
-      quality: { generatedAt, ageSeconds: 0, partial: missingSymbols.length > 0, missingSymbols, stale: [...indexQuotes, ...quotes, ...sectorQuotes].some((q) => q.source.includes("-stale-snapshot")), sources, confidence: [...quotes, ...sectorQuotes].length > 0 ? Math.min(...[...quotes, ...sectorQuotes].map((q) => q.confidence)) : 0 },
+      quality: { generatedAt, ageSeconds: 0, partial: missingSymbols.length > 0, missingSymbols, stale: [...indices, ...quotes, ...sectorQuotes].some((q) => q.source.includes("-stale-snapshot")), sources, confidence: [...quotes, ...sectorQuotes].length > 0 ? Math.min(...[...quotes, ...sectorQuotes].map((q) => q.confidence)) : 0 },
       generatedAt,
     };
   }, { shouldCache: (snapshot) => snapshot.quotes.length > 0 || snapshot.sectorQuotes.length > 0 || snapshot.indices.length > 0, fallback: emptyOverview() });
