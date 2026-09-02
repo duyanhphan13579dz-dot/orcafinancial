@@ -17,9 +17,12 @@ import { MemoCryptoSentimentPanel } from "@/components/crypto-sentiment-panel";
 import { api, changeColor, fmtNum, fmtPct } from "@/lib/client";
 import { isDocumentVisible, whenVisible } from "@/lib/client-visibility";
 import {
-  createBinanceWebSocket,
-  type BinanceKline,
-} from "@/lib/crypto/binance-websocket";
+  createBinanceChartWebSocket,
+  type BinanceChartBar,
+  type BinanceChartHistory,
+  type BinanceChartStatus,
+  type BinanceLiveTicker,
+} from "@/lib/crypto/binance-chart-websocket";
 import { computeLeverageLevels } from "@/lib/crypto/leverage-levels";
 import type {
   FuturesIntelligence,
@@ -117,7 +120,10 @@ export default function CryptoDetail() {
     "connecting" | "connected" | "reconnecting" | "disconnected" | "error"
   >("connecting");
   const [wsPrice, setWsPrice] = useState<number | null>(null);
-  const [wsKline, setWsKline] = useState<BinanceKline | null>(null);
+  const [wsTicker, setWsTicker] = useState<BinanceLiveTicker | null>(null);
+  const [wsKline, setWsKline] = useState<BinanceChartBar | null>(null);
+  const [wsHistoryBars, setWsHistoryBars] = useState<Bar[]>([]);
+  const chartConnRef = useRef<ReturnType<typeof createBinanceChartWebSocket> | null>(null);
   const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
   const [historyHasMore, setHistoryHasMore] = useState(true);
   const [orderFlow, setOrderFlow] = useState<OrderFlowIntelligence | null>(null);
@@ -298,6 +304,19 @@ export default function CryptoDetail() {
     setHistoryLoadingMore(true);
     const before = historyBeforeRef.current;
     try {
+      if (chartConnRef.current) {
+        // Pull older history directly from Binance WebSocket API.
+        const page = await chartConnRef.current.loadHistory(200, before * 1000);
+        const older = page.bars;
+        if (!older.length) {
+          setHistoryHasMore(false);
+          return;
+        }
+        setWsHistoryBars((current) => mergeBars(older, current));
+        historyBeforeRef.current = older[0]?.time ?? before;
+        setHistoryHasMore(page.hasMore);
+        return;
+      }
       const page = await api<{ bars: Bar[] }>(
         `/crypto/${encodeURIComponent(symbol)}/ohlcv?timeframe=${encodeURIComponent(timeframe)}&limit=200&before=${before}`,
         { timeoutMs: 8_000 },
@@ -327,24 +346,55 @@ export default function CryptoDetail() {
   useEffect(() => {
     if (!symbol) return;
     let cancelled = false;
-    let connection: ReturnType<typeof createBinanceWebSocket> | null = null;
+    // Chart + live stream are pulled **directly from Binance WebSocket** so the
+    // chart loads even when the app's server can't reach Binance over REST.
+    chartConnRef.current?.disconnect();
+    chartConnRef.current = null;
     queueMicrotask(() => {
       if (cancelled) return;
-      const binanceSymbol = bundle?.coin?.binanceSymbol || `${symbol}USDT`;
       setWsPrice(null);
       setWsKline(null);
+      setWsHistoryBars([]);
       setWsStatus("connecting");
-      connection = createBinanceWebSocket({
-        symbol: binanceSymbol,
-        timeframe,
-        onTicker: (ticker) => setWsPrice(ticker.price),
-        onKline: (kline) => setWsKline(kline),
-        onStatus: (status) => setWsStatus(status),
-      });
     });
+    const binanceSymbol = bundle?.coin?.binanceSymbol || `${symbol}USDT`;
+    const connection = createBinanceChartWebSocket({
+      symbol: binanceSymbol,
+      timeframe,
+      onTicker: (ticker) => {
+        setWsTicker(ticker);
+        setWsPrice(ticker.price);
+      },
+      onKline: (kline) => setWsKline(kline),
+      onHistory: (history: BinanceChartHistory) => {
+        if (cancelled) return;
+        const bars = history.bars;
+        setWsHistoryBars(bars);
+        historyBeforeRef.current = bars[0]?.time ?? null;
+        setHistoryHasMore(history.hasMore || bars.length >= 120);
+        setChartSource(history.source);
+      },
+      onStatus: (status: BinanceChartStatus) => {
+        const mapped =
+          status === "live" || status === "connected"
+            ? "connected"
+            : status === "loading-history" || status === "connecting"
+              ? "connecting"
+              : status === "reconnecting" || status === "stale"
+                ? "reconnecting"
+                : status === "error"
+                  ? "error"
+                  : "disconnected";
+        setWsStatus(mapped);
+      },
+    });
+    chartConnRef.current = connection;
+    // Initial chart history from Binance's WebSocket API (browser-side).
+    void connection.loadHistory(120).catch(() => undefined);
     return () => {
       cancelled = true;
-      connection?.disconnect();
+      connection.disconnect();
+      if (chartConnRef.current === connection) chartConnRef.current = null;
     };
   }, [symbol, timeframe, bundle?.coin?.binanceSymbol]);
 
@@ -362,26 +412,30 @@ export default function CryptoDetail() {
         timestamp: new Date().toISOString(),
       }),
       price: wsPrice,
+      change24h: wsTicker?.change24h ?? rest?.change24h ?? null,
+      volume24h: wsTicker?.volume24h ?? rest?.volume24h ?? null,
       source: "Binance WebSocket",
       timestamp: new Date().toISOString(),
     };
-  }, [bundle?.price, wsPrice]);
+  }, [bundle?.price, wsPrice, wsTicker]);
 
   const chartBars = useMemo(() => {
-    if (bars.length === 0 || !wsKline) return bars;
+    // Prefer the Binance WebSocket history (direct source) over the REST fallback.
+    const base = wsHistoryBars.length > 0 ? wsHistoryBars : bars;
+    if (base.length === 0 || !wsKline) return base;
     const realtimeBar: Bar = {
-      time: Math.floor(wsKline.startTime / 1000),
+      time: wsKline.time,
       open: wsKline.open,
       high: wsKline.high,
       low: wsKline.low,
       close: wsKline.close,
       volume: wsKline.volume,
     };
-    const last = bars[bars.length - 1];
-    if (last && last.time === realtimeBar.time) return [...bars.slice(0, -1), realtimeBar];
-    if (last && realtimeBar.time > last.time) return [...bars, realtimeBar];
-    return bars;
-  }, [bars, wsKline]);
+    const last = base[base.length - 1];
+    if (last && last.time === realtimeBar.time) return [...base.slice(0, -1), realtimeBar];
+    if (last && realtimeBar.time > last.time) return [...base, realtimeBar];
+    return base;
+  }, [bars, wsHistoryBars, wsKline]);
 
   const coin = bundle?.coin;
   const analysis = bundle?.analysis;

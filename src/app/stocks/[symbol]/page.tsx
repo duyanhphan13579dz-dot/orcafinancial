@@ -15,6 +15,7 @@ import type { Bar } from "@/components/candle-chart";
 import type { HealthDetail } from "@/components/financial-health-detail";
 import { StockMicrostructurePanel } from "@/components/stock-microstructure-panel";
 import type { StockMicrostructureSnapshot } from "@/lib/connectors/microstructure";
+import { createVndirectMicrostructureWebSocket } from "@/lib/connectors/vndirect-realtime-client";
 
 import {
   SectionTitle,
@@ -627,12 +628,33 @@ export default function StockPage({
       `/stocks/${symbol}/analysis`,
       60000,
     );
-  const { data: microstructure } =
+  const { data: pollMicrostructure } =
     usePoll<StockMicrostructureSnapshot>(
       tab === "Tổng quan" ? `/stocks/${symbol}/microstructure` : null,
       10000,
       { softTtlMs: 5000, hardTtlMs: 30000, timeoutMs: 7000 },
     );
+
+  // Sổ lệnh + khối ngoại kéo trực tiếp từ VNDirect realtime WebSocket (browser
+  // connects straight to VNDirect, so it works even when the server can't reach
+  // VNDirect). The polled server endpoint remains a degraded fallback.
+  const [liveMicro, setLiveMicro] =
+    useState<StockMicrostructureSnapshot | null>(null);
+  useEffect(() => {
+    if (tab !== "Tổng quan" || !symbol) {
+      queueMicrotask(() => setLiveMicro(null));
+      return;
+    }
+    const conn = createVndirectMicrostructureWebSocket({
+      symbol,
+      onSnapshot: (snapshot) => {
+        // Only accept frames for the currently-viewed symbol.
+        if (snapshot.symbol === symbol) setLiveMicro(snapshot);
+      },
+    });
+    return () => conn.disconnect();
+  }, [tab, symbol]);
+  const microstructure = liveMicro ?? pollMicrostructure;
 
   const {
     data: fundamental,
