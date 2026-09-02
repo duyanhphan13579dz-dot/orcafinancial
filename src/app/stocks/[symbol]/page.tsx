@@ -16,6 +16,9 @@ import type { HealthDetail } from "@/components/financial-health-detail";
 import { StockMicrostructurePanel } from "@/components/stock-microstructure-panel";
 import type { StockMicrostructureSnapshot } from "@/lib/connectors/microstructure";
 import { createVndirectMicrostructureWebSocket } from "@/lib/connectors/vndirect-realtime-client";
+import { loadLiveFinancialData } from "@/lib/connectors/live-financials-client";
+import { evaluateHealthDetail } from "@/lib/financial-health-detail";
+import type { FinancialQuarter } from "@/lib/financial-statements";
 
 import {
   SectionTitle,
@@ -722,8 +725,40 @@ export default function StockPage({
       120000,
     );
 
+  // Live financial health computed in-browser from the same figures that feed
+  // the "Tài chính" tab (VNDirect/doanh nghiệp → Vietstock). Takes precedence
+  // over the server-side detail because the host server may have no internet.
+  const [
+    liveHealth,
+    setLiveHealth,
+  ] = useState<HealthDetail | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (tab !== "Cơ bản" && tab !== "Tổng quan") return;
+    let cancelled = false;
+    loadLiveFinancialData(symbol, "quarterly", 8)
+      .then((data) => {
+        if (cancelled || data.quarters.length === 0) return;
+        const detail = evaluateHealthDetail(symbol, data.quarters as FinancialQuarter[]);
+        if (!cancelled && detail.overall > 0) setLiveHealth(detail);
+      })
+      .catch(() => {
+        /* ignore — fall back to server detail */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, tab]);
+
   const q =
     stock?.quote;
+
+  // Prefer the health score computed from live/extracted company financials
+  // (VNDirect → Vietstock) when available; otherwise use the server detail.
+  const healthDetailView =
+    liveHealth ?? healthDetail;
 
   /* ==========================================================
    * CHART STATE
@@ -2129,7 +2164,7 @@ export default function StockPage({
 
             {/* HEALTH DETAIL */}
 
-            {healthDetail && (
+            {healthDetailView && (
               <div>
 
                 <SectionTitle
@@ -2137,11 +2172,11 @@ export default function StockPage({
                   title="Phân tích sức khỏe tài chính chi tiết"
                 >
                   {
-                    healthDetail
+                    healthDetailView
                       .groups.length
                   }{" "}
                   nhóm ·{" "}
-                  {healthDetail.groups.reduce(
+                  {healthDetailView.groups.reduce(
                     (
                       total,
                       group,
@@ -2156,7 +2191,7 @@ export default function StockPage({
 
                 <HealthDetailCard
                   detail={
-                    healthDetail
+                    healthDetailView
                   }
                 />
               </div>

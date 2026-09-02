@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/client";
+import { loadLiveFinancialsResponse } from "@/lib/connectors/live-financials-client";
 
 type StatementType = "income" | "balance" | "cashflow";
 type PeriodType = "quarterly" | "yearly";
@@ -31,6 +32,18 @@ interface FinancialsResponse {
   periods: Array<{ period: string; fiscalYear: number; data: Record<string, number> }>;
   fields: string[];
   sourceEvidence?: FinancialSourceEvidence[];
+}
+
+function liveSourceName(source: string | null | undefined): string {
+  if (source === "vndirect") return "VNDirect (doanh nghiệp)";
+  if (source === "vietstock") return "Vietstock";
+  return source ?? "";
+}
+
+function sourceUrlFor(source: string, symbol: string): string {
+  if (source === "vndirect") return `https://dstock.vndirect.com.vn/lich-su-gia/${symbol}`;
+  if (source === "vietstock") return `https://finance.vietstock.vn/${symbol}/tai-chinh.htm`;
+  return "";
 }
 
 const FIELD_LABELS: Record<StatementType, Record<string, { label: string; unit: string; highlight?: boolean; indent?: boolean; subtotal?: boolean }>> = {
@@ -94,6 +107,7 @@ function fmtValue(v: number, unit: string): string {
 }
 
 function sourceName(source: string): string {
+  if (source === "vndirect") return "VNDirect";
   if (source === "vietstock") return "Vietstock";
   if (source === "cafef") return "CafeF";
   return source;
@@ -111,12 +125,55 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<FinancialsResponse | null>(null);
+  const [liveSource, setLiveSource] = useState<string | null>(null);
+  const [sourceUrl, setSourceUrl] = useState<string | null>(null);
 
   const load = async (t: StatementType, p: PeriodType) => {
     setLoading(true);
     setError(null);
+    setLiveSource(null);
+    setSourceUrl(null);
     try {
       const limit = p === "yearly" ? 3 : 4;
+
+      // 1) Live extraction straight from VNDirect (doanh nghiệp) → Vietstock
+      //    in the browser, which works even when the host server has no internet.
+      const live = await loadLiveFinancialsResponse(symbol, t, p === "yearly" ? "yearly" : "quarterly", limit);
+      if (live.liveSource && live.periods.length > 0) {
+        setLiveSource(live.liveSource);
+        setSourceUrl(
+          live.liveSource === "vndirect"
+            ? `https://dstock.vndirect.com.vn/lich-su-gia/${symbol}`
+            : `https://finance.vietstock.vn/${symbol}/tai-chinh.htm`,
+        );
+        setData({
+          symbol: live.symbol,
+          type: t,
+          periods: live.periods,
+          fields: live.fields,
+          sourceEvidence: [
+            {
+              id: 1,
+              source: live.liveSource,
+              documentType: "Báo cáo tài chính (trực tiếp)",
+              documentUrl: sourceUrlFor(live.liveSource, symbol),
+              period: live.periods[0]?.period ?? null,
+              reportType: t,
+              retrievedAt: new Date().toISOString(),
+              contentType: "api",
+              parserVersion: "live-extract-v1",
+              status: "accepted",
+              factCount: live.fields.length,
+              acceptedFactCount: live.fields.length,
+              evidence: "metadata-only",
+              verificationStatus: "unverified",
+            },
+          ],
+        });
+        return;
+      }
+
+      // 2) Fall back to the verified ingestion pipeline API.
       const res = await api<FinancialsResponse>(`/stocks/${symbol}/financials?type=${t}&period=${p}&limit=${limit}`);
       setData(res.data);
     } catch (err) {
@@ -170,9 +227,46 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
         </div>
 
         {error && <div className="text-sm text-rose-400 mb-3">{error}</div>}
-        {loading && <div className="text-sm text-slate-500 mb-3">Đang tải báo cáo…</div>}
+        {loading && <div className="text-sm text-slate-500 mb-3">Đang tải báo cáo trực tiếp từ doanh nghiệp…</div>}
 
-        {data && (
+        {liveSource && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-cyan-800/50 bg-cyan-950/20 px-3 py-2 text-[11px]">
+            <span className="flex items-center gap-1.5 font-medium text-cyan-200">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Nguồn: {liveSourceName(liveSource)}
+            </span>
+            <span className="text-slate-500">— số liệu trích xuất trực tiếp từ báo cáo của doanh nghiệp, không tự tạo / không làm giả.</span>
+            {sourceUrl && (
+              <a
+                href={sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="ml-auto shrink-0 rounded border border-cyan-700/60 px-2 py-0.5 text-[10px] text-cyan-300 hover:bg-cyan-500/10"
+              >
+                Mở nguồn đối chiếu ↗
+              </a>
+            )}
+          </div>
+        )}
+
+        {!loading && !error && data && data.periods.length === 0 && (
+          <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 px-4 py-3 text-[12px] text-slate-400 leading-relaxed">
+            Chưa lấy được báo cáo tài chính từ nguồn doanh nghiệp (VNDirect) hoặc Vietstock cho mã này.
+            Orca <b className="text-slate-300">không tự tạo báo cáo</b> và không làm giả số liệu.
+            {sourceUrlFor("vndirect", symbol) && (
+              <>
+                {" "}
+                Bạn có thể{" "}
+                <a href={sourceUrlFor("vndirect", symbol)} target="_blank" rel="noreferrer" className="text-cyan-300 underline">
+                  mở báo cáo gốc trên VNDirect
+                </a>{" "}
+                để đối chiếu.
+              </>
+            )}
+          </div>
+        )}
+
+        {data && data.periods.length > 0 && (
           <div className="stock-table-wrap">
             <table className="w-full text-xs">
               <thead>
@@ -269,7 +363,7 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
         )}
 
         <div className="mt-4 rounded-lg border border-slate-800/80 bg-slate-950/20 px-3 py-2 text-[10px] text-slate-500 leading-relaxed">
-          Đơn vị: tỷ VND (trừ EPS và BVPS tính bằng nghìn VND/cp). Chỉ hiển thị số liệu đã xác minh (verified). Nếu chưa có dữ liệu verified, bảng sẽ trống — Orca không dùng số liệu synthetic. Khi có sourceEvidence, bảng được chuẩn hóa từ tài liệu nguồn; vẫn cần phân biệt hợp nhất/công ty mẹ, kiểm toán/soát xét và ngày công bố.
+          Đơn vị: tỷ VND (trừ EPS và BVPS tính bằng nghìn VND/cp). Số liệu được trích xuất trực tiếp từ nguồn doanh nghiệp (VNDirect — ưu tiên) hoặc Vietstock; nếu không có dữ liệu, bảng sẽ trống — Orca không dùng số liệu synthetic. Vẫn cần phân biệt hợp nhất/công ty mẹ, kiểm toán/soát xét và ngày công bố.
         </div>
       </div>
     </div>
