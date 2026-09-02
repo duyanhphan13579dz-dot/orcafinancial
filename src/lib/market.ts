@@ -538,7 +538,14 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
       topVolume,
       sectorQuotes,
       quotes,
-      crypto: cryptoResult,
+      crypto: cryptoResult.map((coin) => ({
+        id: coin.symbol.toLowerCase(),
+        symbol: coin.symbol,
+        priceUsd: coin.priceUsd,
+        // CryptoSnapshot yêu cầu number; nhà cung cấp trả null khi thiếu dữ liệu 24h.
+        change24hPct: coin.changePct24h ?? 0,
+        source: coin.source,
+      })),
       overnight,
       news: newsItems,
       quality: { generatedAt, ageSeconds: 0, partial: missingSymbols.length > 0, missingSymbols, stale: [...indexQuotes, ...quotes, ...sectorQuotes].some((q) => q.source.includes("-stale-snapshot")), sources, confidence: [...quotes, ...sectorQuotes].length > 0 ? Math.min(...[...quotes, ...sectorQuotes].map((q) => q.confidence)) : 0 },
@@ -666,6 +673,16 @@ interface NewsListPayload {
 
 const newsListCache = new Map<string, { at: number; value: NewsListPayload }>();
 
+/**
+ * Feed RSS chỉ đưa chuỗi <pubDate>, còn cột news.published_at là NOT NULL.
+ * Thiếu hoặc không parse được thì lấy thời điểm sync thay vì bỏ tin.
+ */
+function parsePublishedAt(raw: string | null): Date {
+  if (!raw) return new Date();
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
 export async function syncNews(): Promise<{ inserted: number; errors: string[] }> {
   const started = Date.now();
   const { items, errors } = await fetchAllRssNews();
@@ -684,30 +701,34 @@ export async function syncNews(): Promise<{ inserted: number; errors: string[] }
     const chunk = items.slice(i, i + chunkSize);
     await Promise.all(
       chunk.map(async (item) => {
+        const body = item.summary ?? "";
+        // RSS không có guid riêng: link là khoá tự nhiên và trùng khớp
+        // unique index news_guid_uq.
+        const guid = item.link.slice(0, 900);
         const matched = new Set<string>();
-        for (const m of `${item.title} ${item.description}`.matchAll(TICKER_RE)) {
+        for (const m of `${item.title} ${body}`.matchAll(TICKER_RE)) {
           if (knownSymbols.has(m[1])) matched.add(m[1]);
         }
-        const sentimentScore = analyzeSentiment(`${item.title} ${item.description}`);
+        const sentimentScore = analyzeSentiment(`${item.title} ${body}`);
         try {
           const res = await db
             .insert(news)
             .values({
-              guid: item.guid.slice(0, 900),
+              guid,
               title: item.title,
               link: item.link,
-              description: item.description,
-              imageUrl: item.imageUrl,
-              sourceName: item.sourceName,
+              description: body,
+              imageUrl: null,
+              sourceName: item.source.slice(0, 60),
               symbols: [...matched].join(" "),
               sentiment: sentimentScore,
-              publishedAt: item.publishedAt,
+              publishedAt: parsePublishedAt(item.publishedAt),
             })
             .onConflictDoNothing({ target: news.guid })
             .returning({ id: news.id });
           if (res.length > 0) inserted += 1;
         } catch (err) {
-          logger.error("news_insert_failed", { guid: item.guid, error: String(err) });
+          logger.error("news_insert_failed", { guid, error: String(err) });
         }
       }),
     );
