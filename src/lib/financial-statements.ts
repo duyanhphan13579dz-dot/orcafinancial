@@ -46,6 +46,11 @@ export interface BalanceData {
   longTermInvestments: number;
   totalAssets: number;
   currentLiabilities: number;
+  /**
+   * Phải trả người bán. Không phải nhà cung cấp nào cũng tách riêng; khi thiếu,
+   * `payablesOf()` suy ra từ currentLiabilities − nợ vay ngắn hạn.
+   */
+  payables?: number;
   /** Optional debt maturity fields; absent when the filing does not disclose a schedule. */
   shortTermDebt?: number;
   debtDueWithin12m?: number;
