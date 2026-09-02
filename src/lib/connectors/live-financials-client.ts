@@ -14,6 +14,7 @@
  * Priority: doanh nghiệp (VNDirect) → Vietstock.
  */
 
+import { fetchVnstockFinancialStatements } from "@/lib/connectors/vnstock-financials";
 import type { FinancialQuarter } from "@/lib/financial-statements";
 
 /* ────────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ export interface FinancialsResponseLike {
 export interface LiveFinancialsData {
   symbol: string;
   quarters: FinancialQuarter[];
-  source: "vndirect" | "vietstock" | null;
+  source: "vndirect" | "vietstock" | "vnstock-vci" | "vnstock-kbs" | null;
   warnings: string[];
 }
 
@@ -670,6 +671,93 @@ async function loadVietstock(symbol: string, period: "quarterly" | "yearly", lim
 }
 
 /* ────────────────────────────────────────────────────────────
+ * Vnstock (vnstocks.com free tier → VCI/KBS broker feeds)
+ * Top-priority source when it returns real published data.
+ * ──────────────────────────────────────────────────────────── */
+
+async function loadVnstock(symbol: string, period: "quarterly" | "yearly", limit: number): Promise<{ quarters: FinancialQuarter[]; warnings: string[]; source: "vnstock-vci" | "vnstock-kbs" | null }> {
+  const warnings: string[] = [];
+  try {
+    const result = await fetchVnstockFinancialStatements(symbol, limit);
+    warnings.push(...result.warnings);
+    // Vnstock returns financial data in hundreds of billions of VND (billions).
+    // Map into the canonical FinancialQuarter shape.
+    const quarters: FinancialQuarter[] = [];
+    for (const q of result.quarters) {
+      const m = /^Q([1-4])\/(\d{4})$/.exec(q.period);
+      const quarter = m ? Number(m[1]) : 0;
+      const inc = q.income ?? {};
+      const bal = q.balance ?? {};
+      const cf = q.cashflow ?? {};
+      const ocf = cf.operatingCashFlow ?? null;
+      const inv = cf.investingCashFlow ?? null;
+      const capex = cf.capex ?? null;
+      const fcf =
+        ocf != null && inv != null ? ocf + inv : ocf != null && capex != null ? ocf - capex : null;
+      quarters.push({
+        period: q.period,
+        quarter,
+        fiscalYear: q.fiscalYear,
+        income: {
+          revenue: inc.revenue ?? 0,
+          costOfGoodsSold: inc.costOfGoodsSold ?? 0,
+          grossProfit: inc.grossProfit ?? 0,
+          operatingExpenses: inc.operatingExpenses ?? 0,
+          operatingIncome: inc.operatingIncome ?? 0,
+          interestExpense: inc.interestExpense ?? 0,
+          otherIncome: inc.otherIncome ?? 0,
+          pretaxIncome: inc.pretaxIncome ?? 0,
+          incomeTax: inc.incomeTax ?? 0,
+          netIncome: inc.netIncome ?? 0,
+          ebitda: inc.ebitda ?? 0,
+          depreciation: inc.depreciation ?? 0,
+          eps: inc.eps ?? 0,
+          sharesOutstanding: 0,
+        },
+        balance: {
+          cashAndEquivalents: bal.cashAndEquivalents ?? 0,
+          shortTermInvestments: bal.shortTermInvestments ?? 0,
+          receivables: bal.receivables ?? 0,
+          inventory: bal.inventory ?? 0,
+          currentAssets: bal.currentAssets ?? 0,
+          fixedAssets: bal.fixedAssets ?? 0,
+          longTermInvestments: bal.longTermInvestments ?? 0,
+          totalAssets: bal.totalAssets ?? 0,
+          currentLiabilities: bal.currentLiabilities ?? 0,
+          shortTermDebt: bal.shortTermDebt,
+          debtDueWithin12m: bal.debtDueWithin12m,
+          longTermDebt: bal.longTermDebt ?? 0,
+          totalLiabilities: bal.totalLiabilities ?? 0,
+          equity: bal.equity ?? 0,
+          retainedEarnings: bal.retainedEarnings ?? 0,
+          totalLiabilitiesEquity: bal.totalLiabilitiesEquity ?? 0,
+          bookValuePerShare: bal.bookValuePerShare ?? 0,
+        },
+        cashflow: {
+          netIncome: cf.netIncome ?? 0,
+          depreciation: cf.depreciation ?? 0,
+          changeWorkingCapital: 0,
+          operatingCashFlow: ocf ?? 0,
+          capex: capex ?? 0,
+          investingCashFlow: inv ?? 0,
+          debtIssuance: 0,
+          dividendsPaid: cf.dividendsPaid ?? 0,
+          financingCashFlow: cf.financingCashFlow ?? 0,
+          netChangeCash: cf.netChangeCash ?? 0,
+          freeCashFlow: fcf ?? 0,
+        },
+      });
+    }
+    const usable = quarters.filter((q) => q.income.revenue > 0 || q.income.netIncome !== 0 || q.balance.totalAssets > 0);
+    const src = result.source === "vnstock-kbs" ? "vnstock-kbs" : "vnstock-vci";
+    return { quarters: usable.slice(0, limit), warnings, source: usable.length > 0 ? src : null };
+  } catch (e) {
+    warnings.push(e instanceof Error ? e.message : "vnstock fetch failed");
+    return { quarters: [], warnings, source: null };
+  }
+}
+
+/* ────────────────────────────────────────────────────────────
  * Public API + module cache
  * ──────────────────────────────────────────────────────────── */
 
@@ -680,15 +768,20 @@ export function loadLiveFinancialData(symbol: string, period: "quarterly" | "yea
   const existing = cache.get(key);
   if (existing) return existing;
   const promise = (async () => {
+    // vnstock free tier (VCI→KBS) is the preferred real-data source.
+    const vs = await loadVnstock(symbol, period, limit);
+    if (vs.quarters.length > 0) {
+      return { symbol, quarters: vs.quarters, source: vs.source, warnings: vs.warnings };
+    }
     const vnd = await loadVndirect(symbol, period, limit);
     if (vnd.quarters.length > 0) {
-      return { symbol, quarters: vnd.quarters, source: "vndirect" as const, warnings: vnd.warnings };
+      return { symbol, quarters: vnd.quarters, source: "vndirect" as const, warnings: [...vs.warnings, ...vnd.warnings] };
     }
-    const vs = await loadVietstock(symbol, period, limit);
-    if (vs.quarters.length > 0) {
-      return { symbol, quarters: vs.quarters, source: "vietstock" as const, warnings: vs.warnings };
+    const viet = await loadVietstock(symbol, period, limit);
+    if (viet.quarters.length > 0) {
+      return { symbol, quarters: viet.quarters, source: "vietstock" as const, warnings: [...vs.warnings, ...vnd.warnings, ...viet.warnings] };
     }
-    return { symbol, quarters: [], source: null, warnings: [...vnd.warnings, ...vs.warnings] };
+    return { symbol, quarters: [], source: null, warnings: [...vs.warnings, ...vnd.warnings, ...viet.warnings] };
   })();
   cache.set(key, promise);
   return promise;
@@ -704,7 +797,7 @@ export function quartersToResponse(
   symbol: string,
   type: FinancialsResponseLike["type"],
   quarters: FinancialQuarter[],
-  source: "vndirect" | "vietstock" | null,
+  source: "vndirect" | "vietstock" | "vnstock-vci" | "vnstock-kbs" | null,
   warnings: string[],
 ): FinancialsResponseLike {
   const fields = STATEMENT_FIELDS[type];

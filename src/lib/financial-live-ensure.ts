@@ -14,7 +14,7 @@ export async function ensureLivePreferredFinancials(
   limit = 8,
 ): Promise<{
   records: import("@/lib/stock-intelligence/financial-source").RawFinancialRecord[];
-  source: "filing" | "vndirect" | "vietstock" | "cafef";
+  source: "filing" | "vndirect" | "vietstock" | "cafef" | "vnstock-vci" | "vnstock-kbs";
   providerBacked: boolean;
   ingested: boolean;
   warnings: string[];

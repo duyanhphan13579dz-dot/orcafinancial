@@ -15,7 +15,9 @@ export type SourcePriorityLevel = keyof typeof SOURCE_PRIORITY;
 
 const SOURCE_ALIASES: Array<{ match: RegExp; level: SourcePriorityLevel }> = [
   { match: /filing|ssc|hsx|hnx|official|cafef-filing|company-ir/i, level: "OFFICIAL_FILING" },
-  { match: /vndirect|fmp|daloopa|fiscal-?ai|professional/i, level: "PROFESSIONAL_DATA" },
+  // vnstock free tier pulls directly from the publisher/broker feeds (VCI, KBS),
+  // so it ranks with the professional signal providers alongside VNDirect.
+  { match: /vnstock|vndirect|fmp|daloopa|fiscal-?ai|professional|vci|kbs/i, level: "PROFESSIONAL_DATA" },
   { match: /vietstock|cafef|verified/i, level: "VERIFIED_PROVIDER" },
   { match: /sector-synthetic|synthetic|model|estimate|benchmark/i, level: "SYNTHETIC" },
 ];

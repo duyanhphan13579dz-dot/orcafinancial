@@ -7,9 +7,10 @@ import { getLatestCompletedQuarter } from "@/lib/financial-statements";
 import { fetchVndirectFinancialStatements } from "@/lib/connectors/vndirect-financials";
 import { fetchVietstockFinancialStatements } from "@/lib/connectors/vietstock-financials";
 import { fetchCafefFinancialStatements } from "@/lib/connectors/cafef-financials";
+import { fetchVnstockFinancialStatements } from "@/lib/connectors/vnstock-financials";
 import { sourcePriorityOf as sharedSourcePriorityOf } from "@/lib/financial-source-priority";
 
-export type IngestionSource = "vndirect" | "vietstock" | "cafef" | "filing";
+export type IngestionSource = "vndirect" | "vietstock" | "cafef" | "filing" | "vnstock-vci" | "vnstock-kbs";
 export type StatementType = "income" | "balance" | "cashflow";
 export type DocumentType = "financial_statement" | "analysis_report";
 
@@ -254,6 +255,25 @@ class CafefFinancialAdapter implements SourceAdapter {
   }
 }
 
+class VnstockFinancialAdapter implements SourceAdapter {
+  source = "vnstock-vci" as const;
+
+  async fetch(symbol: string, limit: number): Promise<{ documents: SourceDocument[]; warnings: string[] }> {
+    try {
+      // fetchVnstockFinancialStatements returns vnstock-vci or vnstock-kbs and
+      // already prefers VCI (free tier) with KBS fallback.
+      const result = await fetchVnstockFinancialStatements(symbol, limit);
+      const source: IngestionSource = result.source === "vnstock-kbs" ? "vnstock-kbs" : "vnstock-vci";
+      return {
+        documents: quartersToDocuments(source, result.symbol, result.sourceUrl, result.quarters, limit),
+        warnings: result.warnings ?? [],
+      };
+    } catch (e) {
+      return { documents: [], warnings: [`vnstock: ${e instanceof Error ? e.message : String(e)}`] };
+    }
+  }
+}
+
 class ConfiguredJsonAdapter implements SourceAdapter {
   constructor(public readonly source: IngestionSource) {}
 
@@ -398,6 +418,9 @@ export async function ingestFinancialSources(symbols: string[], limit = 8): Prom
   await ensureFinancialIngestionTables();
   const normalizedSymbols = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter((s) => /^[A-Z0-9]{1,15}$/.test(s)))].slice(0, 100);
   const adapters: SourceAdapter[] = [
+    // vnstock free tier first — it is the signal chain's preferred provider when
+    // it returns real published figures (VCI → KBS → VNDirect → Vietstock).
+    new VnstockFinancialAdapter(),
     new VndirectFinancialAdapter(),
     new VietstockFinancialAdapter(),
     new CafefFinancialAdapter(),
@@ -535,7 +558,7 @@ export async function loadPreferredFinancialRecords(
   symbol: string,
   statementType: StatementType,
   limit = 8,
-): Promise<{ records: import("@/lib/stock-intelligence/financial-source").RawFinancialRecord[]; source: "filing" | "vndirect" | "vietstock" | "cafef"; providerBacked: boolean }> {
+): Promise<{ records: import("@/lib/stock-intelligence/financial-source").RawFinancialRecord[]; source: "filing" | "vndirect" | "vietstock" | "cafef" | "vnstock-vci" | "vnstock-kbs"; providerBacked: boolean }> {
   await ensureFinancialIngestionTables();
   const rows = await db
     .select()
@@ -557,8 +580,9 @@ export async function loadPreferredFinancialRecords(
   }));
   if (records.length) {
     const src = (records[0].source || "").toLowerCase();
-    const source: "filing" | "vndirect" | "vietstock" | "cafef" =
+    const source: "filing" | "vndirect" | "vietstock" | "cafef" | "vnstock-vci" | "vnstock-kbs" =
       src.includes("filing") || src.includes("official") ? "filing"
+      : src.includes("vnstock") ? (src.includes("kbs") ? "vnstock-kbs" : "vnstock-vci")
       : src.includes("vndirect") ? "vndirect"
       : src.includes("cafef") ? "cafef"
       : "vietstock";

@@ -62,6 +62,8 @@ function dstockReportUrl(symbol: string, type: StatementType): string {
 function liveSourceName(source: string | null | undefined): string {
   if (source === "vndirect") return "VNDirect (doanh nghiệp)";
   if (source === "vietstock") return "Vietstock";
+  if (source === "vnstock-vci") return "Vnstock (Vietcap VCI)";
+  if (source === "vnstock-kbs") return "Vnstock (KBS)";
   return source ?? "";
 }
 
@@ -129,6 +131,8 @@ function sourceName(source: string): string {
   if (source === "vndirect") return "VNDirect";
   if (source === "vietstock") return "Vietstock";
   if (source === "cafef") return "CafeF";
+  if (source === "vnstock-vci") return "Vnstock (Vietcap)";
+  if (source === "vnstock-kbs") return "Vnstock (KBS)";
   return source;
 }
 
@@ -204,7 +208,13 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
       const live = await loadLiveFinancialsResponse(symbol, t, period, limit);
       if (live.liveSource && live.periods.length > 0) {
         setLiveSource(live.liveSource);
-        setSourceUrl(live.liveSource === "vndirect" ? dstockReportUrl(symbol, t) : `https://finance.vietstock.vn/${symbol}/tai-chinh.htm`);
+        setSourceUrl(
+          live.liveSource === "vndirect"
+            ? dstockReportUrl(symbol, t)
+            : live.liveSource === "vnstock-vci" || live.liveSource === "vnstock-kbs"
+              ? `https://vnstocks.com`
+              : `https://finance.vietstock.vn/${symbol}/tai-chinh.htm`,
+        );
         setData({
           symbol: live.symbol,
           type: t,
