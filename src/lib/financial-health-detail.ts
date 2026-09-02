@@ -87,7 +87,24 @@ function scoreAvg(indicators: IndicatorDetail[]): number {
   return Math.round(avg(scores));
 }
 
-export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): HealthDetail {
+export interface HealthDetailOptions {
+  /**
+   * Hệ số năm hoá áp dụng cho số liệu của quý mới nhất.
+   *  - BCTC trình bày RIÊNG TỪNG QUÝ  → 4  (mặc định, giữ hành vi cũ)
+   *  - BCTC LUỸ KẾ đến quý n          → 4/n
+   * Truyền hệ số sai sẽ phóng đại ROE/ROA/vòng quay tài sản lên nhiều lần.
+   */
+  annualizationFactor?: number;
+}
+
+export function evaluateHealthDetail(
+  symbol: string,
+  qs: FinancialQuarter[],
+  options: HealthDetailOptions = {},
+): HealthDetail {
+  const annualization = Number.isFinite(options.annualizationFactor) && (options.annualizationFactor as number) > 0
+    ? (options.annualizationFactor as number)
+    : 4;
   const latest = qs[0];
   const prev = qs[1];
   const yearAgo = qs.find((quarter) => quarter.quarter === latest?.quarter && quarter.fiscalYear === (latest?.fiscalYear ?? 0) - 1);
@@ -111,12 +128,12 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
   const interestCoverage = inc.interestExpense > 0 ? inc.operatingIncome / inc.interestExpense : null;
 
   const ebitdaMargin = inc.revenue > 0 ? inc.ebitda / inc.revenue : null;
-  const assetTurnover = bal.totalAssets > 0 ? (inc.revenue * 4) / bal.totalAssets : null; // annualised
-  const inventoryTurnover = bal.inventory > 0 && inc.revenue > 0 ? (inc.costOfGoodsSold * 4) / bal.inventory : null;
-  const dso = inc.revenue > 0 && bal.receivables > 0 ? (bal.receivables / (inc.revenue * 4)) * 365 : null;
+  const assetTurnover = bal.totalAssets > 0 ? (inc.revenue * annualization) / bal.totalAssets : null; // annualised
+  const inventoryTurnover = bal.inventory > 0 && inc.revenue > 0 ? (inc.costOfGoodsSold * annualization) / bal.inventory : null;
+  const dso = inc.revenue > 0 && bal.receivables > 0 ? (bal.receivables / (inc.revenue * annualization)) * 365 : null;
 
-  const roe = averageEquity > 0 ? (inc.netIncome * 4) / averageEquity * 100 : null; // annualised %
-  const roa = averageAssets > 0 ? (inc.netIncome * 4) / averageAssets * 100 : null;
+  const roe = averageEquity > 0 ? (inc.netIncome * annualization) / averageEquity * 100 : null; // annualised %
+  const roa = averageAssets > 0 ? (inc.netIncome * annualization) / averageAssets * 100 : null;
   const netMargin = inc.revenue > 0 ? inc.netIncome / inc.revenue * 100 : null;
   const grossMargin = inc.revenue > 0 ? inc.grossProfit / inc.revenue * 100 : null;
 
@@ -129,9 +146,9 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
   const dividendPayout = Math.abs(inc.netIncome) > 0 ? cf.dividendsPaid / inc.netIncome : null;
   const fcfConversion = Math.abs(inc.netIncome) > 0 ? cf.freeCashFlow / inc.netIncome : null;
   const netDebt = bal.totalLiabilities - bal.cashAndEquivalents - bal.shortTermInvestments;
-  const netDebtToEbitda = inc.ebitda > 0 ? netDebt / (inc.ebitda * 4) : null;
+  const netDebtToEbitda = inc.ebitda > 0 ? netDebt / (inc.ebitda * annualization) : null;
   const investedCapital = bal.equity + bal.longTermDebt - bal.cashAndEquivalents - bal.shortTermInvestments;
-  const roic = investedCapital > 0 ? (inc.operatingIncome * 4 * (1 - 0.2)) / investedCapital * 100 : null;
+  const roic = investedCapital > 0 ? (inc.operatingIncome * annualization * (1 - 0.2)) / investedCapital * 100 : null;
   const workingCapitalIntensity = inc.revenue > 0 ? (bal.receivables + bal.inventory - bal.currentLiabilities) / inc.revenue * 100 : null;
   const debtDueWithin12m = bal.debtDueWithin12m ?? bal.shortTermDebt ?? null;
   const debtMaturityCoverage = debtDueWithin12m !== null ? (bal.cashAndEquivalents + cf.operatingCashFlow) / Math.max(debtDueWithin12m, 1) : null;
@@ -204,8 +221,8 @@ export function evaluateHealthDetail(symbol: string, qs: FinancialQuarter[]): He
     ind("ebitdaGrowthQoQ", "Tăng trưởng EBITDA QoQ", ebitdaGrowth, "%", ebitdaGrowth !== null ? ramp(ebitdaGrowth, -5, 20) : null),
     ind("revGrowthYoY", "Tăng trưởng doanh thu YoY", revGrowthYoY, "%", revGrowthYoY !== null ? ramp(revGrowthYoY, -10, 20) : null),
     ind("niGrowthYoY", "Tăng trưởng LN ròng YoY", niGrowthYoY, "%", niGrowthYoY !== null ? ramp(niGrowthYoY, -20, 30) : null),
-    ind("ytdRevenue", "Doanh thu YTD", ytdRevenue, "tỷ", ytdRevenue !== null ? ramp(ytdRevenue, 0, Math.max(1, inc.revenue * 4)) : null),
-    ind("ytdNetIncome", "LN ròng YTD", ytdNetIncome, "tỷ", ytdNetIncome !== null ? ramp(ytdNetIncome, 0, Math.max(1, Math.abs(inc.netIncome) * 4)) : null),
+    ind("ytdRevenue", "Doanh thu YTD", ytdRevenue, "tỷ", ytdRevenue !== null ? ramp(ytdRevenue, 0, Math.max(1, inc.revenue * annualization)) : null),
+    ind("ytdNetIncome", "LN ròng YTD", ytdNetIncome, "tỷ", ytdNetIncome !== null ? ramp(ytdNetIncome, 0, Math.max(1, Math.abs(inc.netIncome) * annualization)) : null),
   ];
   const growthScore = scoreAvg(growthInds);
   const growthNarrative = growthScore >= 70

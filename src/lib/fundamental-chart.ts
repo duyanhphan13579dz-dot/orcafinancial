@@ -52,11 +52,23 @@ export interface FundamentalChart {
   comparisons: Array<{ metric: string; label: string; company: number; industry: number; unit: string }>;
 }
 
+export interface FundamentalChartOptions {
+  /**
+   * Hệ số năm hoá cho quý mới nhất: 4 khi BCTC là số riêng từng quý,
+   * 4/n khi BCTC ở dạng luỹ kế đến quý n.
+   */
+  annualizationFactor?: number;
+}
+
 export function buildFundamentalChart(
   symbol: string,
   qs: FinancialQuarter[],
   health?: HealthDetail | null,
+  options: FundamentalChartOptions = {},
 ): FundamentalChart {
+  const annualization = Number.isFinite(options.annualizationFactor) && (options.annualizationFactor as number) > 0
+    ? (options.annualizationFactor as number)
+    : 4;
   const bench = getBenchmarkForSymbol(symbol);
 
   const quarters: QuarterChartPoint[] = qs.map((q, index) => {
@@ -66,8 +78,8 @@ export function buildFundamentalChart(
     const previous = qs[index + 1];
     const averageEquity = previous ? (bal.equity + previous.balance.equity) / 2 : bal.equity;
     const averageAssets = previous ? (bal.totalAssets + previous.balance.totalAssets) / 2 : bal.totalAssets;
-    const roe = averageEquity > 0 ? (inc.netIncome * 4) / averageEquity * 100 : 0;
-    const roa = averageAssets > 0 ? (inc.netIncome * 4) / averageAssets * 100 : 0;
+    const roe = averageEquity > 0 ? (inc.netIncome * annualization) / averageEquity * 100 : 0;
+    const roa = averageAssets > 0 ? (inc.netIncome * annualization) / averageAssets * 100 : 0;
     const gm = inc.revenue > 0 ? (inc.grossProfit / inc.revenue) * 100 : 0;
     const nm = inc.revenue > 0 ? (inc.netIncome / inc.revenue) * 100 : 0;
     const em = inc.revenue > 0 ? (inc.ebitda / inc.revenue) * 100 : 0;

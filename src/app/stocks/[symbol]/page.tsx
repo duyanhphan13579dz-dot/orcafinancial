@@ -13,6 +13,10 @@ import dynamic from "next/dynamic";
 import type { Bar } from "@/components/candle-chart";
 
 import type { HealthDetail } from "@/components/financial-health-detail";
+import type { BusinessPerformanceVM } from "@/components/business-performance";
+import type { AdvancedHealthVM } from "@/components/advanced-health";
+import type { ValuationVM } from "@/components/valuation-panel";
+import type { QuarterChartPoint } from "@/lib/fundamental-chart";
 import { StockMicrostructurePanel } from "@/components/stock-microstructure-panel";
 import type { StockMicrostructureSnapshot } from "@/lib/connectors/tcbs-microstructure";
 
@@ -101,6 +105,23 @@ const EPSTrendChart = dynamic(
 const IndustryCompareBars = dynamic(
   () => import("@/components/fundamental-charts").then((m) => m.IndustryCompareBars),
   { ssr: false },
+);
+
+/* ── Engine LTM: hiệu suất kinh doanh / sức khỏe tài chính / định giá ── */
+
+const BusinessPerformanceCard = dynamic(
+  () => import("@/components/business-performance").then((m) => m.BusinessPerformanceCard),
+  { ssr: false, loading: PanelSkeleton },
+);
+
+const AdvancedHealthCard = dynamic(
+  () => import("@/components/advanced-health").then((m) => m.AdvancedHealthCard),
+  { ssr: false, loading: PanelSkeleton },
+);
+
+const ValuationCard = dynamic(
+  () => import("@/components/valuation-panel").then((m) => m.ValuationCard),
+  { ssr: false, loading: PanelSkeleton },
 );
 
 /* ============================================================
@@ -204,6 +225,38 @@ interface TechnicalData {
 interface HealthBreakdown {
   score: number;
   detail: string;
+}
+
+/** Payload của GET /stocks/:symbol/fundamental-analytics (engine LTM v2). */
+interface FundamentalAnalyticsVM {
+  symbol: string;
+  generatedAt: string;
+  computedInMs: number;
+  available: boolean;
+  performance: BusinessPerformanceVM | null;
+  health: AdvancedHealthVM | null;
+  healthDetail: HealthDetail | null;
+  valuation: ValuationVM | null;
+  chart: FundamentalChartVM | null;
+  warnings: string[];
+}
+
+interface FundamentalChartVM {
+  symbol: string;
+  quarters: QuarterChartPoint[];
+  industry: {
+    sector: string;
+    industry: string;
+    roePct: number;
+    roaPct: number;
+    netMarginPct: number;
+    grossMarginPct: number;
+    ebitdaMarginPct: number;
+    debtEquity: number;
+    assetTurnover: number;
+  };
+  health: { overall: number; rating: string; gauge: Array<{ name: string; score: number }> } | null;
+  comparisons: Array<{ metric: string; label: string; company: number; industry: number; unit: string }>;
 }
 
 interface FundamentalData {
@@ -680,25 +733,37 @@ export default function StockPage({
     tab === "Cơ bản" ||
     tab === "Tổng quan";
 
+  /**
+   * MỘT request duy nhất cho cả khối "Cơ bản": hiệu suất kinh doanh + sức khỏe
+   * tài chính (Altman Z / Piotroski F / Beneish M) + định giá + dữ liệu biểu đồ.
+   * Phía server đã cache 10 phút và dùng chung kết quả với /fundamental,
+   * /fundamental-chart, /financial-health-detail nên không phát sinh thêm
+   * lượt đọc DB nào (trước đây tab này bắn 3 request riêng biệt).
+   */
   const {
-    data: chartData,
+    data: analytics,
   } =
-    usePoll<any>(
+    usePoll<FundamentalAnalyticsVM>(
       onFundamentalTab
-        ? `/stocks/${symbol}/fundamental-chart`
+        ? `/stocks/${symbol}/fundamental-analytics`
         : null,
       120000,
     );
 
-  const {
-    data: healthDetail,
-  } =
-    usePoll<HealthDetail>(
-      tab === "Cơ bản"
-        ? `/stocks/${symbol}/financial-health-detail`
-        : null,
-      120000,
-    );
+  const chartData =
+    analytics?.chart ?? null;
+
+  const healthDetail =
+    analytics?.healthDetail ?? null;
+
+  const performance =
+    analytics?.performance ?? null;
+
+  const advancedHealth =
+    analytics?.health ?? null;
+
+  const valuation =
+    analytics?.valuation ?? null;
 
   const q =
     stock?.quote;
@@ -1967,6 +2032,31 @@ export default function StockPage({
           "Cơ bản" && (
           <div className="space-y-6 max-w-6xl">
 
+            {/* ══ HIỆU SUẤT KINH DOANH (engine LTM) ══ */}
+
+            {performance && (
+              <div>
+                <SectionTitle
+                  eyebrow="HIỆU SUẤT KINH DOANH"
+                  title={
+                    <>
+                      5 trụ cột ·{" "}
+                      {performance.groups.reduce(
+                        (total, group) =>
+                          total + group.metrics.length,
+                        0,
+                      )}{" "}
+                      chỉ số · LTM đến {performance.asOfPeriod}
+                    </>
+                  }
+                >
+                  Điểm {performance.overall}/100 · hạng {performance.rating}
+                </SectionTitle>
+
+                <BusinessPerformanceCard performance={performance} />
+              </div>
+            )}
+
             {/* VISUAL ANALYST */}
 
             {chartData && (
@@ -2137,6 +2227,53 @@ export default function StockPage({
                     healthDetail
                   }
                 />
+              </div>
+            )}
+
+            {/* ══ SỨC KHỎE TÀI CHÍNH NÂNG CAO ══ */}
+
+            {advancedHealth && (
+              <div>
+                <SectionTitle
+                  eyebrow="MÔ HÌNH CHẤM ĐIỂM CHUẨN QUỐC TẾ"
+                  title="Altman Z' · Piotroski F · Beneish M"
+                >
+                  Z&apos; ={" "}
+                  {advancedHealth.altman.zScore ?? "—"} · F ={" "}
+                  {advancedHealth.piotroski.fScore ?? "—"}/9 · M ={" "}
+                  {advancedHealth.beneish.mScore ?? "—"}
+                </SectionTitle>
+
+                <AdvancedHealthCard health={advancedHealth} />
+              </div>
+            )}
+
+            {/* ══ ĐỊNH GIÁ DOANH NGHIỆP ══ */}
+
+            {valuation && (
+              <div>
+                <SectionTitle
+                  eyebrow="ĐỊNH GIÁ DOANH NGHIỆP"
+                  title={
+                    <>
+                      {valuation.methods.length} phương pháp · WACC{" "}
+                      {valuation.wacc.value !== null
+                        ? `${(valuation.wacc.value * 100).toFixed(2)}%`
+                        : "—"}
+                    </>
+                  }
+                >
+                  Giá {valuation.price !== null
+                    ? valuation.price.toLocaleString("vi-VN")
+                    : "—"}{" "}
+                  nghìn VND · Mục tiêu{" "}
+                  {valuation.targetPrice.mid !== null
+                    ? valuation.targetPrice.mid.toFixed(0)
+                    : "—"}{" "}
+                  nghìn VND · {valuation.rating}
+                </SectionTitle>
+
+                <ValuationCard valuation={valuation} />
               </div>
             )}
 

@@ -397,3 +397,147 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
     disclaimer: "Các chỉ số tài chính được ước tính từ dữ liệu giá thật. Để có số liệu chính xác, cần báo cáo tài chính chính thức. Không phải lời khuyên đầu tư.",
   };
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+ * Ánh xạ engine chuẩn (LTM/BCTC verified) → shape FundamentalReport cũ.
+ *
+ * `generateFundamentalReport` ở trên là đường dự phòng chỉ dùng giá/khối lượng
+ * (P/E, P/B mặc định 14x / 2.0x — chỉ là proxy). Khi đã có BCTC đã xác minh,
+ * luôn dùng hàm này để số liệu là số THẬT.
+ * ════════════════════════════════════════════════════════════════════════ */
+
+import type { BusinessPerformance } from "@/lib/fundamental-performance";
+import type { ValuationResult as EngineValuation } from "@/lib/fundamental-valuation";
+import type { FundamentalAnalytics } from "@/lib/fundamental-analytics-service";
+
+export interface FundamentalReportV2 extends FundamentalReport {
+  /** Phiên bản engine đã sinh báo cáo. */
+  engineVersion: "ltm-verified-v2" | "price-proxy-v1";
+  asOfPeriod: string;
+  dataAvailable: boolean;
+  coverage: { computed: number; total: number; pct: number };
+  warnings: string[];
+}
+
+export function buildFundamentalReportFromAnalytics(
+  analytics: FundamentalAnalytics,
+  currentPrice: number,
+): FundamentalReportV2 {
+  const performance: BusinessPerformance | null = analytics.performance;
+  const valuation: EngineValuation | null = analytics.valuation;
+
+  const pickMetric = (groupKey: string, metricKey: string) =>
+    performance?.groups.find((g) => g.key === groupKey)?.metrics.find((m) => m.key === metricKey)?.value ?? null;
+
+  // EPS LTM (nghìn VND/CP) do engine định giá tính từ LN ròng LTM ÷ số CP lưu hành.
+  const eps = valuation?.epsLtm ?? performanceEps(performance);
+
+  const health = analytics.healthDetail;
+  const financialHealth: FinancialHealthResult =
+    health && health.groups.length > 0
+      ? {
+          overallScore: health.overall,
+          rating: health.rating,
+          breakdown: Object.fromEntries(
+            health.groups.map((group) => [
+              group.key,
+              {
+                score: group.score,
+                detail: `${group.narrative} Trọng số ${(group.weight * 100).toFixed(0)}%; đóng góp ${group.weighted.toFixed(2)} điểm.`,
+              },
+            ]),
+          ) as FinancialHealthResult["breakdown"],
+          indicators: Object.fromEntries(
+            health.groups.flatMap((group) =>
+              group.indicators.map((indicator) => [indicator.key, indicator.value]),
+            ),
+          ) as FinancialHealthResult["indicators"],
+        }
+      : {
+          overallScore: 0,
+          rating: "E",
+          breakdown: {} as FinancialHealthResult["breakdown"],
+          indicators: {} as unknown as FinancialHealthResult["indicators"],
+        };
+
+  const intrinsic = valuation?.targetPrice ?? null;
+  const valuationOut: ValuationResult = {
+    currentPrice,
+    pe: multipleOf(valuation, "pe"),
+    pb: multipleOf(valuation, "pb"),
+    evEbitda: multipleOf(valuation, "evEbitda"),
+    pcf: multipleOf(valuation, "pFcf"),
+    ddm: valuation?.ddm.valuePerShare ?? null,
+    dcf: valuation?.dcf.available
+      ? {
+          base: valuation.dcf.scenarios.base ?? 0,
+          optimistic: valuation.dcf.scenarios.optimistic ?? 0,
+          pessimistic: valuation.dcf.scenarios.pessimistic ?? 0,
+        }
+      : null,
+    grahamNumber: valuation?.grahamNumber ?? null,
+    reverseDcfGrowth: valuation?.reverseDcf.impliedGrowthPct ?? null,
+    intrinsicValueRange:
+      intrinsic && intrinsic.low !== null && intrinsic.mid !== null && intrinsic.high !== null
+        ? { low: intrinsic.low, mid: intrinsic.mid, high: intrinsic.high }
+        : null,
+    verdictVi: valuation?.verdictVi ?? "Chưa có BCTC đã xác minh — không ước tính giá trị nội tại.",
+    targetPriceBridge: {
+      currentPrice,
+      dcf: valuation?.dcf.valuePerShare ?? null,
+      multiples: multipleOf(valuation, "pe") !== null && eps !== null ? multipleOf(valuation, "pe")! * eps : null,
+      dividend: valuation?.ddm.valuePerShare ?? null,
+      blended: intrinsic?.mid ?? null,
+    },
+    sensitivity: valuation
+      ? [
+          { variable: "wacc", down: valuation.sensitivity.cells.find((c) => c.wacc === valuation.sensitivity.waccSteps[0] && c.terminalGrowth === valuation.wacc.value)?.valuePerShare ?? 0, base: valuation.dcf.valuePerShare ?? 0, up: valuation.sensitivity.cells.find((c) => c.wacc === valuation.sensitivity.waccSteps[valuation.sensitivity.waccSteps.length - 1] && c.terminalGrowth === valuation.wacc.value)?.valuePerShare ?? 0 },
+          { variable: "terminalGrowth", down: valuation.sensitivity.cells.find((c) => c.terminalGrowth === valuation.sensitivity.growthSteps[0] && c.wacc === valuation.wacc.value)?.valuePerShare ?? 0, base: valuation.dcf.valuePerShare ?? 0, up: valuation.sensitivity.cells.find((c) => c.terminalGrowth === valuation.sensitivity.growthSteps[valuation.sensitivity.growthSteps.length - 1] && c.wacc === valuation.wacc.value)?.valuePerShare ?? 0 },
+          { variable: "pe", down: valuation.targetPrice.low ?? 0, base: valuation.targetPrice.mid ?? 0, up: valuation.targetPrice.high ?? 0 },
+        ]
+      : [],
+    methodology: valuation?.methodology ?? [],
+  };
+
+  const dupont = performance
+    ? calculateDuPont(
+        performance.dupont3.netProfitMarginPct ?? 0,
+        performance.dupont3.assetTurnover ?? 0,
+        performance.dupont3.equityMultiplier ?? 0,
+      )
+    : null;
+
+  return {
+    symbol: analytics.symbol,
+    currentPrice,
+    quarterlyMetrics: [],
+    eps,
+    roe: pickMetric("returns", "roe"),
+    roa: pickMetric("returns", "roa"),
+    ros: pickMetric("margin", "netMargin"),
+    cagr3y: pickMetric("growth", "revenueCagr"),
+    dupont,
+    financialHealth,
+    valuation: valuationOut,
+    generatedAt: analytics.generatedAt,
+    dataSource: `BCTC đã xác minh (${analytics.inputs.source}); ${analytics.inputs.quarters} kỳ; LTM theo phương pháp ${analytics.inputs.ltmMethod}; giá từ thị trường.`,
+    disclaimer:
+      "Số liệu tính từ báo cáo tài chính đã xác minh theo chuẩn LTM (12 tháng gần nhất). Không phải lời khuyên đầu tư.",
+    engineVersion: "ltm-verified-v2",
+    asOfPeriod: analytics.inputs.ltmPeriod,
+    dataAvailable: analytics.available,
+    coverage: performance?.coverage ?? { computed: 0, total: 0, pct: 0 },
+    warnings: analytics.warnings,
+  };
+}
+
+function multipleOf(valuation: EngineValuation | null, key: string): number | null {
+  if (!valuation) return null;
+  return valuation.multiples.find((m) => m.key === key)?.value ?? null;
+}
+
+function performanceEps(performance: BusinessPerformance | null): number | null {
+  if (!performance) return null;
+  const latest = performance.series[0];
+  return latest?.eps ?? null;
+}
