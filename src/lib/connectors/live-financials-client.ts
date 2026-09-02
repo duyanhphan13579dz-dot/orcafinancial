@@ -131,7 +131,7 @@ export const INCOME_TARGETS: Matcher[] = [
   ["eps", ["lai co ban tren co phieu"], "single"],
 ];
 
-const BALANCE_TARGETS: Matcher[] = [
+export const BALANCE_TARGETS: Matcher[] = [
   ["cashAndEquivalents", ["tien va cac khoan tuong duong tien", "tien va tuong duong tien"], "single"],
   ["shortTermInvestments", ["dau tu tai chinh ngan han", "dau tu ngan han"], "single"],
   ["receivables", ["cac khoan phai thu ngan han", "phai thu ngan han"], "sum"],
@@ -151,7 +151,7 @@ const BALANCE_TARGETS: Matcher[] = [
   ["bookValuePerShare", ["gia tri so sach tren co phieu", "bvps"], "single"],
 ];
 
-const CASHFLOW_TARGETS: Matcher[] = [
+export const CASHFLOW_TARGETS: Matcher[] = [
   ["operatingCashFlow", ["luu chuyen tien thuan tu hoat dong kinh doanh"], "single"],
   ["investingCashFlow", ["luu chuyen tien thuan tu hoat dong dau tu"], "single"],
   ["financingCashFlow", ["luu chuyen tien thuan tu hoat dong tai chinh"], "single"],

@@ -34,16 +34,35 @@ interface FinancialsResponse {
   sourceEvidence?: FinancialSourceEvidence[];
 }
 
+// Response shape from the same-origin dstock server route.
+interface DstockResponse {
+  available: boolean;
+  symbol: string;
+  type: StatementType;
+  periods: Array<{ period: string; fiscalYear: number; data: Record<string, number> }>;
+  fields: string[];
+  source: "vndirect";
+  sourceName: string;
+  sourceUrl: string;
+  unit: string;
+  warnings: string[];
+}
+
+// Per-statement dstock report URL (the exact 3 pages the user named).
+const DSTOCK_REPORT: Record<StatementType, string> = {
+  income: "bao-cao-ket-qua-kinh-doanh",
+  balance: "bang-can-doi-ke-toan",
+  cashflow: "bao-cao-luu-chuyen-tien-te",
+};
+
+function dstockReportUrl(symbol: string, type: StatementType): string {
+  return `https://dstock.vndirect.com.vn/${DSTOCK_REPORT[type]}/${symbol}`;
+}
+
 function liveSourceName(source: string | null | undefined): string {
   if (source === "vndirect") return "VNDirect (doanh nghiệp)";
   if (source === "vietstock") return "Vietstock";
   return source ?? "";
-}
-
-function sourceUrlFor(source: string, symbol: string): string {
-  if (source === "vndirect") return `https://dstock.vndirect.com.vn/lich-su-gia/${symbol}`;
-  if (source === "vietstock") return `https://finance.vietstock.vn/${symbol}/tai-chinh.htm`;
-  return "";
 }
 
 const FIELD_LABELS: Record<StatementType, Record<string, { label: string; unit: string; highlight?: boolean; indent?: boolean; subtotal?: boolean }>> = {
@@ -135,17 +154,57 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
     setSourceUrl(null);
     try {
       const limit = p === "yearly" ? 3 : 4;
+      const period = p === "yearly" ? "yearly" : "quarterly";
 
-      // 1) Live extraction straight from VNDirect (doanh nghiệp) → Vietstock
-      //    in the browser, which works even when the host server has no internet.
-      const live = await loadLiveFinancialsResponse(symbol, t, p === "yearly" ? "yearly" : "quarterly", limit);
+      // 1) Same-origin dstock route. The route handler fetches VNDirect's
+      //    finfo-api feed (which backs the dstock report pages) on the server,
+      //    avoiding the CORS that blocks a browser from reading VNDirect
+      //    cross-origin. This is the primary path on production where the
+      //    server has outbound internet.
+      try {
+        const d = await api<DstockResponse>(
+          `/stocks/${symbol}/financials/dstock?type=${t}&period=${period}&limit=${limit}`,
+        );
+        if (d.data.available && d.data.periods.length > 0) {
+          setLiveSource(d.data.source);
+          setSourceUrl(d.data.sourceUrl);
+          setData({
+            symbol: d.data.symbol,
+            type: t,
+            periods: d.data.periods,
+            fields: d.data.fields,
+            sourceEvidence: [
+              {
+                id: 1,
+                source: d.data.source,
+                documentType: "Báo cáo tài chính (trực tiếp)",
+                documentUrl: d.data.sourceUrl,
+                period: d.data.periods[0]?.period ?? null,
+                reportType: t,
+                retrievedAt: new Date().toISOString(),
+                contentType: "api",
+                parserVersion: "dstock-v1",
+                status: "accepted",
+                factCount: d.data.fields.length,
+                acceptedFactCount: d.data.fields.length,
+                evidence: "document-url",
+                verificationStatus: "unverified",
+              },
+            ],
+          });
+          return;
+        }
+      } catch {
+        // The sandbox dev server has no outbound internet → the route returns
+        // unavailable or errors. Fall through to the browser connector below.
+      }
+
+      // 2) Browser-side live extraction straight from VNDirect (doanh nghiệp)
+      //    → Vietstock. Works when the host server cannot reach VNDirect.
+      const live = await loadLiveFinancialsResponse(symbol, t, period, limit);
       if (live.liveSource && live.periods.length > 0) {
         setLiveSource(live.liveSource);
-        setSourceUrl(
-          live.liveSource === "vndirect"
-            ? `https://dstock.vndirect.com.vn/lich-su-gia/${symbol}`
-            : `https://finance.vietstock.vn/${symbol}/tai-chinh.htm`,
-        );
+        setSourceUrl(live.liveSource === "vndirect" ? dstockReportUrl(symbol, t) : `https://finance.vietstock.vn/${symbol}/tai-chinh.htm`);
         setData({
           symbol: live.symbol,
           type: t,
@@ -156,7 +215,7 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
               id: 1,
               source: live.liveSource,
               documentType: "Báo cáo tài chính (trực tiếp)",
-              documentUrl: sourceUrlFor(live.liveSource, symbol),
+              documentUrl: dstockReportUrl(symbol, t),
               period: live.periods[0]?.period ?? null,
               reportType: t,
               retrievedAt: new Date().toISOString(),
@@ -173,7 +232,7 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
         return;
       }
 
-      // 2) Fall back to the verified ingestion pipeline API.
+      // 3) Fall back to the verified ingestion pipeline API.
       const res = await api<FinancialsResponse>(`/stocks/${symbol}/financials?type=${t}&period=${p}&limit=${limit}`);
       setData(res.data);
     } catch (err) {
@@ -251,18 +310,21 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
 
         {!loading && !error && data && data.periods.length === 0 && (
           <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 px-4 py-3 text-[12px] text-slate-400 leading-relaxed">
-            Chưa lấy được báo cáo tài chính từ nguồn doanh nghiệp (VNDirect) hoặc Vietstock cho mã này.
+            Chưa lấy được báo cáo tài chính từ nguồn doanh nghiệp (VNDirect) cho mã này.
             Orca <b className="text-slate-300">không tự tạo báo cáo</b> và không làm giả số liệu.
-            {sourceUrlFor("vndirect", symbol) && (
-              <>
-                {" "}
-                Bạn có thể{" "}
-                <a href={sourceUrlFor("vndirect", symbol)} target="_blank" rel="noreferrer" className="text-cyan-300 underline">
-                  mở báo cáo gốc trên VNDirect
-                </a>{" "}
-                để đối chiếu.
-              </>
-            )}
+            {(() => {
+              const url = dstockReportUrl(symbol, type);
+              return (
+                <>
+                  {" "}
+                  Bạn có thể{" "}
+                  <a href={url} target="_blank" rel="noreferrer" className="text-cyan-300 underline">
+                    mở báo cáo gốc trên VNDirect
+                  </a>{" "}
+                  để đối chiếu.
+                </>
+              );
+            })()}
           </div>
         )}
 
