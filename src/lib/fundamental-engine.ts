@@ -195,7 +195,11 @@ export function sortQuartersOldestFirst(quarters: FinancialQuarter[]): Financial
  *
  * Có thể ép bằng biến môi trường FINANCIAL_STATEMENT_BASIS.
  */
-export function detectStatementBasis(quarters: FinancialQuarter[]): StatementBasis {
+export function detectStatementBasis(
+  quarters: FinancialQuarter[],
+  override?: StatementBasis,
+): StatementBasis {
+  if (override === "standalone" || override === "cumulative-ytd") return override;
   const forced = (process.env.FINANCIAL_STATEMENT_BASIS ?? "").trim().toLowerCase();
   if (forced === "standalone" || forced === "cumulative-ytd" || forced === "cumulative") {
     return forced === "cumulative" ? "cumulative-ytd" : (forced as StatementBasis);
@@ -692,8 +696,12 @@ export interface FundamentalContext {
   warnings: string[];
 }
 
-export function buildFundamentalContext(symbol: string, quarters: FinancialQuarter[]): FundamentalContext {
-  const basis = detectStatementBasis(quarters);
+export function buildFundamentalContext(
+  symbol: string,
+  quarters: FinancialQuarter[],
+  options?: { basis?: StatementBasis },
+): FundamentalContext {
+  const basis = detectStatementBasis(quarters, options?.basis);
   const normalized = toStandaloneQuarters(quarters, basis);
   const descending = [...normalized].sort(
     (a, b) => periodIndex(b.fiscalYear, b.quarter) - periodIndex(a.fiscalYear, a.quarter),
@@ -706,6 +714,11 @@ export function buildFundamentalContext(symbol: string, quarters: FinancialQuart
       : null;
 
   const ltm = buildLtmWindow(normalized);
+  // sharesOutstanding là số DƯ (không phải dòng tiền) nên không nằm trong
+  // tổng LTM — chuyển tiếp từ quý mới nhất để EPS/BVPS/vốn hoá tính được.
+  if (ltm.income.sharesOutstanding == null && latest?.income.sharesOutstanding != null) {
+    ltm.income = { ...ltm.income, sharesOutstanding: latest.income.sharesOutstanding };
+  }
   const latestIdx = latest ? periodIndex(latest.fiscalYear, latest.quarter) : 0;
 
   // LTM liền trước: dịch cửa sổ lùi 4 quý.

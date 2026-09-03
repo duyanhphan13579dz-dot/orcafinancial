@@ -10,10 +10,14 @@ import {
   balanceFromStatementRows,
   cashflowFromStatementRows,
   quartersFromFinfoRows,
+  toFinancialQuarters,
+  injectSharesOutstanding,
   FINFO_PARSER_VERSION,
+  type FinfoQuarter,
   type FinfoRatioRow,
   type FinfoStatementRow,
 } from "@/lib/finfo-ratios";
+import { detectStatementBasis } from "@/lib/fundamental-engine";
 
 const TY = 1e9;
 
@@ -360,6 +364,78 @@ describe("finfo parser — BCTC hợp nhất (consol-v2)", () => {
     expect(result.quarters[0].cashflow.capex).toBeCloseTo(-24853.957, 2);
     expect(result.quarters[0].cashflow.debtIssuance).toBeCloseTo(72076.878, 2);
     expect(result.warnings.some((w) => w.includes("sao lưu"))).toBe(true);
+    vi.useRealTimers();
+  });
+});
+
+describe("cầu nối engine Cơ bản — toFinancialQuarters / injectSharesOutstanding", () => {
+  const q = (period: string, quarter: number, income: Record<string, number>, balance: Record<string, number> = {}): FinfoQuarter => ({
+    period,
+    fiscalYear: Number(period.slice(2)),
+    reportDate: period,
+    income,
+    balance,
+    cashflow: {},
+  });
+
+  it("kỳ 31/12 lũy kế được tách riêng quý = cả năm − (Q1+Q2+Q3)", () => {
+    const quarters = [
+      q("Q1/2025", 1, { revenue: 28000, netIncome: 900 }),
+      q("Q2/2025", 2, { revenue: 30000, netIncome: 1000 }),
+      q("Q3/2025", 3, { revenue: 39135.103, netIncome: 2385.154 }),
+      q("Q4/2025", 4, { revenue: 162226.62, netIncome: 3499.674 }, { totalAssets: 1118622.625 }),
+      q("Q2/2026", 2, { revenue: 117936.034, netIncome: 14763.96 }),
+    ];
+    const { quarters: out, warnings } = toFinancialQuarters(quarters);
+    expect(warnings).toHaveLength(0);
+    const q4 = out.find((x) => x.period === "Q4/2025")!;
+    expect(q4.quarter).toBe(4);
+    expect(q4.income.revenue).toBeCloseTo(162226.62 - 28000 - 30000 - 39135.103, 3);
+    expect(q4.income.netIncome).toBeCloseTo(3499.674 - 900 - 1000 - 2385.154, 3);
+    expect(q4.balance.totalAssets).toBeCloseTo(1118622.625, 3); // cân đối giữ nguyên
+    // chuỗi sau map toàn số riêng quý + khai báo basis → engine không unwind nhầm
+    expect(detectStatementBasis(out, "standalone")).toBe("standalone");
+  });
+
+  it("thiếu Q1–Q3 cùng năm → loại kỳ 31/12, có cảnh báo (không bịa số riêng quý)", () => {
+    const quarters = [
+      q("Q3/2025", 3, { revenue: 39135.103 }),
+      q("Q4/2025", 4, { revenue: 162226.62 }),
+      q("Q2/2026", 2, { revenue: 117936.034 }),
+    ];
+    const { quarters: out, warnings } = toFinancialQuarters(quarters);
+    expect(out.map((x) => x.period)).toEqual(["Q2/2026", "Q3/2025"]);
+    expect(warnings.some((w) => w.includes("31/12/2025"))).toBe(true);
+  });
+
+  it("số CP lưu hành suy từ vốn góp 14110 (mệnh giá 10.000đ): VIC = 3.880,48 triệu", () => {
+    const quarters = [
+      q("Q3/2025", 3, {}, { paidInCapital: 38804.764 }),
+      q("Q2/2026", 2, {}, { paidInCapital: 77334.919 }),
+    ] as unknown as import("@/lib/financial-statements").FinancialQuarter[];
+    const noProfile = injectSharesOutstanding(quarters, null);
+    expect(noProfile.via).toBe("paidInCapital");
+    expect(noProfile.quarters[0].income.sharesOutstanding).toBeCloseTo(3880.4764, 3);
+    expect(noProfile.quarters[1].income.sharesOutstanding).toBeCloseTo(7733.4919, 3);
+    const withProfile = injectSharesOutstanding(quarters, 5000);
+    expect(withProfile.via).toBe("profile");
+    expect(withProfile.quarters[0].income.sharesOutstanding).toBe(5000);
+  });
+
+  it("snapshot VIC khi nguồn bị chặn → chuỗi riêng quý + số CP cho engine Cơ bản", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-03T00:00:00Z"));
+    const fetchMock = vi.fn(async () => new Response("blocked", { status: 403 }));
+    const finfo = await fetchVndirectFinfoFinancialStatements("VIC", 12, fetchMock as unknown as typeof fetch);
+    const mapped = toFinancialQuarters(finfo.quarters);
+    // snapshot có 4 kỳ nhưng thiếu Q1–Q3/2025 → Q4/2025 (lũy kế) bị loại
+    expect(mapped.quarters.map((x) => x.period)).toEqual(["Q2/2026", "Q1/2026", "Q3/2025"]);
+    const withShares = injectSharesOutstanding(mapped.quarters, null);
+    expect(withShares.via).toBe("paidInCapital");
+    const q2 = withShares.quarters.find((x) => x.period === "Q2/2026")!;
+    expect(q2.income.sharesOutstanding).toBeCloseTo(7733.4919, 3);
+    // EPS quý (nghìn VND) = LNST mẹ riêng quý ÷ số CP (triệu)
+    expect((q2.income.netIncomeParent ?? 0) / (q2.income.sharesOutstanding ?? 1)).toBeCloseTo(10002.615 / 7733.4919, 3);
     vi.useRealTimers();
   });
 });

@@ -16,6 +16,8 @@
 
 import { cached, type Ohlcv } from "@/lib/connectors/core";
 import { ensureQuarterlyFinancials } from "@/lib/company-service";
+import { fetchVndirectFinfoFinancialStatements } from "@/lib/connectors/vndirect-financials";
+import { injectSharesOutstanding, toFinancialQuarters } from "@/lib/finfo-ratios";
 import { loadPreferredQuarterlyFinancials } from "@/lib/financial-ingestion";
 import { buildDataQualitySnapshot, validateFinancialQuarters } from "@/lib/stock-intelligence/validation";
 import { getBenchmarkForSymbol } from "@/lib/industry-benchmarks";
@@ -43,6 +45,8 @@ export interface FundamentalInputs {
   quarters: FinancialQuarter[];
   source: string;
   providerBacked: boolean;
+  /** "standalone" khi quarters đến từ finfo (reportType QUARTER = riêng quý). */
+  basis?: "standalone";
   price: number | null;
   beta: number | null;
   priceSource: string;
@@ -106,7 +110,13 @@ async function loadPrice(symbol: string): Promise<{ price: number | null; source
 
 async function loadQuarters(
   symbol: string,
-): Promise<{ quarters: FinancialQuarter[]; source: string; providerBacked: boolean; warnings: string[] }> {
+): Promise<{
+  quarters: FinancialQuarter[];
+  source: string;
+  providerBacked: boolean;
+  basis?: "standalone";
+  warnings: string[];
+}> {
   const warnings: string[] = [];
   try {
     const preferred = await loadPreferredQuarterlyFinancials(symbol, ANALYTICS_QUARTERS);
@@ -122,6 +132,29 @@ async function loadQuarters(
     if (fallback.length > 0) return { quarters: fallback, source: "financial_statements", providerBacked: true, warnings };
   } catch (err) {
     warnings.push(`ensureQuarterlyFinancials: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  // BCTC verified (TCBS/Vietstock/CafeF) trống → dùng BCTC VNDirect finfo
+  // (nguồn của tab Báo cáo tài chính, có snapshot nguyên văn khi nguồn sống
+  // bị chặn). reportType QUARTER = số riêng quý → khai báo basis rõ, không để
+  // heuristics đoán nhầm chuỗi tăng trưởng thành lũy kế.
+  try {
+    const finfo = await fetchVndirectFinfoFinancialStatements(symbol, ANALYTICS_QUARTERS);
+    warnings.push(...finfo.warnings);
+    if (finfo.quarters.length > 0) {
+      const mapped = toFinancialQuarters(finfo.quarters);
+      warnings.push(...mapped.warnings);
+      if (mapped.quarters.length > 0) {
+        return {
+          quarters: mapped.quarters,
+          source: "vndirect-finfo",
+          providerBacked: true,
+          basis: "standalone",
+          warnings,
+        };
+      }
+    }
+  } catch (err) {
+    warnings.push(`vndirect-finfo: ${err instanceof Error ? err.message : String(err)}`);
   }
   return { quarters: [], source: "none", providerBacked: false, warnings };
 }
@@ -140,15 +173,26 @@ export async function loadFundamentalInputs(symbol: string): Promise<Fundamental
     })(),
   ]);
 
+  const profileShares =
+    profile && Number.isFinite(profile.sharesOutstandingMillions) && profile.sharesOutstandingMillions > 0
+      ? profile.sharesOutstandingMillions
+      : null;
+  const withShares = injectSharesOutstanding(quarterResult.quarters, profileShares);
+  const shareWarnings =
+    withShares.via === "paidInCapital"
+      ? ["Số CP lưu hành suy từ vốn góp chủ sở hữu (mệnh giá 10.000đ) — dùng cho EPS/BVPS/vốn hoá."]
+      : [];
+
   return {
     symbol,
-    quarters: quarterResult.quarters,
+    quarters: withShares.quarters,
     source: quarterResult.source,
     providerBacked: quarterResult.providerBacked,
+    basis: quarterResult.basis,
     price: priceResult.price,
     beta: profile && Number.isFinite(profile.beta) && profile.beta > 0 ? profile.beta : null,
     priceSource: priceResult.source,
-    loadWarnings: quarterResult.warnings,
+    loadWarnings: [...quarterResult.warnings, ...shareWarnings],
     loadedAt: new Date().toISOString(),
   };
 }
@@ -195,7 +239,9 @@ export function computeFundamentalAnalytics(
     };
   }
 
-  const ctx: FundamentalContext = buildFundamentalContext(inputs.symbol, inputs.quarters);
+  const ctx: FundamentalContext = buildFundamentalContext(inputs.symbol, inputs.quarters, {
+    basis: inputs.basis,
+  });
   const performance = computeBusinessPerformance(ctx);
   const health = computeAdvancedHealth(ctx);
   const valuation = computeValuation(ctx, {

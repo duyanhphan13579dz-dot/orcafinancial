@@ -107,6 +107,7 @@ export const FINFO_BALANCE_ITEM_CODES: Record<string, number> = {
   longTermDebt: 13300, // 330 Nợ dài hạn
   totalLiabilities: 13000, // 300 NỢ PHẢI TRẢ
   equity: 14000, // 400 VỐN CHỦ SỞ HỮU
+  paidInCapital: 14110, // 411 Vốn góp của chủ sở hữu (mệnh giá) — suy ra số CP
 };
 
 /**
@@ -287,6 +288,129 @@ export function cashflowFromStatementRows(rows: FinfoStatementRow[]): Record<str
     out.debtIssuance = debtParts.reduce<number>((s, v) => s + (v ?? 0), 0) / TY;
   }
   return out;
+}
+
+/* ────────────────────────────────────────────────────────────
+ * Cầu nối sang engine phân tích "Cơ bản" (fundamental-engine)
+ * ──────────────────────────────────────────────────────────── */
+
+import type { FinancialQuarter } from "@/lib/financial-statements";
+
+const FLOW_SUBTRACT_KEYS = [
+  "totalRevenue",
+  "revenue",
+  "costOfGoodsSold",
+  "grossProfit",
+  "operatingIncome",
+  "pretaxIncome",
+  "netIncome",
+  "netIncomeParent",
+  "minorityInterest",
+  "operatingCashFlow",
+  "capex",
+  "investingCashFlow",
+  "dividendsPaid",
+  "debtIssuance",
+] as const;
+
+/**
+ * FinfoQuarter[] → FinancialQuarter[] cho engine "Cơ bản".
+ * finfo reportType QUARTER = số RIÊNG từng quý, TRỪ kỳ 31/12 là luỹ kế cả
+ * năm → tách riêng quý Q4 = cả năm − (Q1+Q2+Q3 cùng năm); nếu thiếu Q1–Q3
+ * thì loại kỳ 31/12 khỏi chuỗi (không bịa số riêng quý).
+ */
+export function toFinancialQuarters(
+  quarters: Array<Omit<FinfoQuarter, "reportDate">>,
+): { quarters: FinancialQuarter[]; warnings: string[] } {
+  const warnings: string[] = [];
+  const parsed = quarters
+    .map((q) => {
+      const m = q.period.match(/^Q([1-4])\/(20\d{2})$/);
+      return m ? { ...q, quarter: Number(m[1]), fiscalYearParsed: Number(m[2]) } : null;
+    })
+    .filter((q): q is Omit<FinfoQuarter, "reportDate"> & { quarter: number; fiscalYearParsed: number } => q != null);
+  const byYearQuarter = new Map<string, (typeof parsed)[number]>();
+  for (const q of parsed) byYearQuarter.set(`${q.fiscalYearParsed}-Q${q.quarter}`, q);
+
+  const out: FinancialQuarter[] = [];
+  for (const q of parsed) {
+    if (q.quarter === 4) {
+      const q1 = byYearQuarter.get(`${q.fiscalYearParsed}-Q1`);
+      const q2 = byYearQuarter.get(`${q.fiscalYearParsed}-Q2`);
+      const q3 = byYearQuarter.get(`${q.fiscalYearParsed}-Q3`);
+      if (!q1 || !q2 || !q3) {
+        warnings.push(
+          `Kỳ 31/12/${q.fiscalYearParsed} là số lũy kế cả năm nhưng thiếu Q1–Q3 để tách riêng quý — loại khỏi chuỗi phân tích.`,
+        );
+        continue;
+      }
+      const income: Record<string, number> = { ...q.income };
+      const cashflow: Record<string, number> = { ...q.cashflow };
+      for (const key of FLOW_SUBTRACT_KEYS) {
+        const fy = income[key];
+        if (fy != null) {
+          const s = [q1, q2, q3].reduce<number>((sum, p) => sum + (p.income[key] ?? 0), 0);
+          income[key] = fy - s;
+        }
+        const fyCf = cashflow[key];
+        if (fyCf != null) {
+          const s = [q1, q2, q3].reduce<number>((sum, p) => sum + (p.cashflow[key] ?? 0), 0);
+          cashflow[key] = fyCf - s;
+        }
+      }
+      out.push({
+        period: q.period,
+        quarter: 4,
+        fiscalYear: q.fiscalYearParsed,
+        income: income as unknown as FinancialQuarter["income"],
+        balance: { ...q.balance } as unknown as FinancialQuarter["balance"],
+        cashflow: cashflow as unknown as FinancialQuarter["cashflow"],
+      });
+      continue;
+    }
+    out.push({
+      period: q.period,
+      quarter: q.quarter,
+      fiscalYear: q.fiscalYearParsed,
+      income: { ...q.income } as unknown as FinancialQuarter["income"],
+      balance: { ...q.balance } as unknown as FinancialQuarter["balance"],
+      cashflow: { ...q.cashflow } as unknown as FinancialQuarter["cashflow"],
+    });
+  }
+  out.sort((a, b) => b.fiscalYear - a.fiscalYear || b.quarter - a.quarter);
+  return { quarters: out, warnings };
+}
+
+/**
+ * Số CP lưu hành (triệu) cho engine EPS/BVPS/vốn hoá:
+ *  1) ưu tiên hồ sơ doanh nghiệp (profile);
+ *  2) nếu không, suy từ vốn góp chủ sở hữu (mã 14110, mệnh giá 10.000đ):
+ *     triệu CP = tỷ VND × 1e9 ÷ 10.000 ÷ 1e6 = tỷ VND ÷ 10
+ *     (VIC: 38.804,764 tỷ → 3.880,4764 triệu CP ✓).
+ */
+export function injectSharesOutstanding(
+  quarters: FinancialQuarter[],
+  profileShares: number | null,
+): { quarters: FinancialQuarter[]; via: "profile" | "paidInCapital" | null } {
+  const sharesOf = (q: FinancialQuarter): number | null => {
+    const pic = (q.balance as unknown as Record<string, number>).paidInCapital;
+    return typeof pic === "number" && pic > 0 ? pic / 10 : null;
+  };
+  const profileOk = profileShares != null && profileShares > 0 ? profileShares : null;
+  let fallback: number | null = null;
+  for (const q of quarters) {
+    fallback = sharesOf(q);
+    if (fallback != null) break;
+  }
+  const via = profileOk != null ? "profile" : fallback != null ? "paidInCapital" : null;
+  if (via == null) return { quarters, via: null };
+  const out = quarters.map((q) => {
+    if ((q.income as unknown as Record<string, number>).sharesOutstanding != null) return q;
+    const shares = via === "profile" ? profileOk : (sharesOf(q) ?? fallback);
+    if (shares == null) return q;
+    return { ...q, income: { ...q.income, sharesOutstanding: shares } };
+  });
+  return { quarters: out, via };
 }
 
 /**
