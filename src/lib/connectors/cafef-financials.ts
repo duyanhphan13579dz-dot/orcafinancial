@@ -42,13 +42,18 @@ function parsePeriod(row: Json): { period: string; fiscalYear: number } | null {
   return null;
 }
 
-function rowsFrom(payload: unknown): Json[] {
+function rowsFrom(payload: unknown, depth = 0): Json[] {
   if (Array.isArray(payload)) return payload.filter((x) => x && typeof x === "object") as Json[];
-  if (payload && typeof payload === "object") {
+  if (payload && typeof payload === "object" && depth < 3) {
     const obj = payload as Json;
-    for (const key of ["data", "Data", "items", "list", "result"]) {
+    for (const key of ["data", "Data", "items", "list", "result", "Rows", "rows"]) {
       const v = obj[key];
       if (Array.isArray(v)) return v.filter((x) => x && typeof x === "object") as Json[];
+      // CafeF's real AJAX envelope nests the array one level deeper: { Data: { Data: [...] } }.
+      if (v && typeof v === "object") {
+        const nested = rowsFrom(v, depth + 1);
+        if (nested.length > 0) return nested;
+      }
     }
   }
   return [];
