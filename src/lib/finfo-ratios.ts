@@ -2,7 +2,7 @@
  * VNDirect finfo PUBLIC client — dùng chung cho server lẫn browser.
  *
  * Khảo sát trực tiếp API (2026-09-03, đối chiếu BCTC chuẩn của người dùng):
- *  - /v4/financial_statements?q=code:{SYM}~modelType:2~reportType:QUARTER
+ *  - /v4/financial_statements?q=code:{SYM}~reportType:QUARTER (income: modelType 2 non-bank, 102 ngân hàng)
  *    ~fiscalDate:{YYYY-MM-DD} = BÁO CÁO KẾT QUẢ KINH DOANH HỢP NHẤT, số RIÊNG
  *    quý (verified với VIC Q1+Q2/2026: itemCode 23003 = LNST hợp nhất
  *    14.764/5.611 tỷ; 23800 = LNTT 22.169/11.537; 23000 = LNST công ty mẹ
@@ -27,7 +27,7 @@ import { FINFO_SNAPSHOT_AS_OF, FINFO_STATEMENTS_SNAPSHOT } from "@/lib/finfo-sna
 export const FINFO_API_BASE = "https://api-finfo.vndirect.com.vn";
 
 /** Phiên bản parser BCTC — bump khi đổi cơ sở số liệu để DB tự nạp lại. */
-export const FINFO_PARSER_VERSION = "consol-v3";
+export const FINFO_PARSER_VERSION = "consol-v4";
 
 export interface FinfoRatioRow {
   code?: string;
@@ -68,19 +68,24 @@ interface FieldSpec {
 }
 
 /**
- * Chỉ tiêu KQKD HỢP NHẤT từ /v4/financial_statements modelType 2
- * (reportType QUARTER = số riêng quý; tại 31/12 = lũy kế cả năm).
+ * Chỉ tiêu KQKD HỢP NHẤT từ /v4/financial_statements (reportType QUARTER =
+ * số riêng quý; tại 31/12 = lũy kế cả năm).
+ *  - modelType 2  = doanh nghiệp thường;
+ *  - modelType 102 = NGÂN HÀNG (template riêng: không giá vốn/LN gộp; doanh
+ *    thu thuần = 421900 — verified khớp itemName "Doanh thu thuần quý" của
+ *    /v4/ratios mã NET_SALES_QR trên TCB; các mã lợi nhuận 23xxx dùng chung).
+ * (modelType 101/103 = cân đối/lưu chuyển tiền tệ ngân hàng — không dùng ở đây.)
  */
-export const FINFO_INCOME_ITEM_CODES: Record<string, number> = {
-  totalRevenue: 21000,
-  revenue: 21001,
-  costOfGoodsSold: 22100,
-  grossProfit: 23100,
-  operatingIncome: 23110,
-  pretaxIncome: 23800,
-  netIncome: 23003,
-  netIncomeParent: 23000,
-  minorityInterest: 23500,
+export const FINFO_INCOME_ITEM_CODES: Record<string, number[]> = {
+  totalRevenue: [21000],
+  revenue: [21001, 421900],
+  costOfGoodsSold: [22100],
+  grossProfit: [23100],
+  operatingIncome: [23110],
+  pretaxIncome: [23800],
+  netIncome: [23003],
+  netIncomeParent: [23000],
+  minorityInterest: [23500],
 };
 
 export const FIELD_SPECS: FieldSpec[] = [
@@ -148,7 +153,8 @@ export function finfoRatiosUrl(symbol: string, reportDate: string): string {
 }
 
 export function finfoStatementsUrl(symbol: string, fiscalDate: string): string {
-  return `${FINFO_API_BASE}/v4/financial_statements?q=code:${symbol.toUpperCase()}~modelType:2~reportType:QUARTER~fiscalDate:${fiscalDate}&size=2000`;
+  // Không lọc modelType: non-bank dùng model 2, ngân hàng dùng model 102.
+  return `${FINFO_API_BASE}/v4/financial_statements?q=code:${symbol.toUpperCase()}~reportType:QUARTER~fiscalDate:${fiscalDate}&size=2000`;
 }
 
 /**
@@ -158,7 +164,7 @@ export function finfoStatementsUrl(symbol: string, fiscalDate: string): string {
  * /v4/ratios vì endpoint đó lẫn cả dòng ngày giao dịch (size bị cắt mất quý).
  */
 export function finfoStatementsRangeUrl(symbol: string, fromDate: string): string {
-  return `${FINFO_API_BASE}/v4/financial_statements?q=code:${symbol.toUpperCase()}~modelType:2~reportType:QUARTER~fiscalDate:gte:${fromDate}&size=3000`;
+  return `${FINFO_API_BASE}/v4/financial_statements?q=code:${symbol.toUpperCase()}~reportType:QUARTER~fiscalDate:gte:${fromDate}&size=3000`;
 }
 
 function valuesByCode(rows: FinfoRatioRow[]): Map<string, number> {
@@ -171,12 +177,16 @@ function valuesByCode(rows: FinfoRatioRow[]): Map<string, number> {
   return map;
 }
 
-/** KQKD hợp nhất (tỷ VND) từ rows modelType 2 của /v4/financial_statements. */
+/** modelType chứa KQKD: 2 = doanh nghiệp, 102 = ngân hàng. */
+export const FINFO_INCOME_MODEL_TYPES = new Set([2, 102]);
+
+/** KQKD hợp nhất (tỷ VND) từ rows modelType 2/102 của /v4/financial_statements. */
 export function incomeFromStatementRows(rows: FinfoStatementRow[]): Record<string, number> {
   const byItem = new Map<number, number>();
   for (const row of rows) {
     if (
-      row?.modelType === 2 &&
+      row?.modelType != null &&
+      FINFO_INCOME_MODEL_TYPES.has(row.modelType) &&
       typeof row.itemCode === "number" &&
       typeof row.numericValue === "number" &&
       Number.isFinite(row.numericValue)
@@ -185,9 +195,14 @@ export function incomeFromStatementRows(rows: FinfoStatementRow[]): Record<strin
     }
   }
   const out: Record<string, number> = {};
-  for (const [field, code] of Object.entries(FINFO_INCOME_ITEM_CODES)) {
-    const v = byItem.get(code);
-    if (v != null) out[field] = v / TY;
+  for (const [field, codes] of Object.entries(FINFO_INCOME_ITEM_CODES)) {
+    for (const code of codes) {
+      const v = byItem.get(code);
+      if (v != null) {
+        out[field] = v / TY;
+        break;
+      }
+    }
   }
   return out;
 }

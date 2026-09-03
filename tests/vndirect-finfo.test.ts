@@ -162,13 +162,35 @@ describe("finfo parser — BCTC hợp nhất (consol-v2)", () => {
     expect(income.minorityInterest).toBeCloseTo(4761.345, 2);
   });
 
-  it("bỏ qua rows không phải modelType 2 (không lẫn bảng cân đối)", () => {
+  it("bỏ qua rows ngoài modelType 2/102 (không lẫn cân đối/lưu chuyển)", () => {
     const mixed = [
       ...vicStatementRows("2026-06-30"),
       { itemCode: 11300, numericValue: 3.16214505e14, modelType: 1 } as FinfoStatementRow,
       { itemCode: 23003, numericValue: 9.99e13, modelType: 3 } as FinfoStatementRow,
+      { itemCode: 431460, numericValue: 1.4472278e13, modelType: 103 } as FinfoStatementRow,
+      { itemCode: 411400, numericValue: 4.97858712e14, modelType: 101 } as FinfoStatementRow,
     ];
     expect(incomeFromStatementRows(mixed).netIncome).toBeCloseTo(14763.96, 2);
+  });
+
+  it("ngân hàng (TCB): modelType 102, doanh thu thuần = 421900, lợi nhuận 23xxx", () => {
+    const rows: FinfoStatementRow[] = [
+      { itemCode: 421900, numericValue: 1.0763002e13, modelType: 102, fiscalDate: "2026-06-30" },
+      { itemCode: 23800, numericValue: 9.670016e12, modelType: 102, fiscalDate: "2026-06-30" },
+      { itemCode: 23003, numericValue: 7.726642e12, modelType: 102, fiscalDate: "2026-06-30" },
+      { itemCode: 23000, numericValue: 7.350059e12, modelType: 102, fiscalDate: "2026-06-30" },
+      { itemCode: 23500, numericValue: 3.76583e11, modelType: 102, fiscalDate: "2026-06-30" },
+      // nhiễu: cân đối/lưu chuyển ngân hàng không được lẫn vào income
+      { itemCode: 411400, numericValue: 1.14958312e14, modelType: 101, fiscalDate: "2026-06-30" },
+      { itemCode: 431460, numericValue: 5.8388254e13, modelType: 103, fiscalDate: "2026-06-30" },
+    ];
+    const income = incomeFromStatementRows(rows);
+    expect(income.revenue).toBeCloseTo(10763.002, 2); // khớp NET_SALES_QR ratios
+    expect(income.pretaxIncome).toBeCloseTo(9670.016, 2);
+    expect(income.netIncome).toBeCloseTo(7726.642, 2);
+    expect(income.netIncomeParent).toBeCloseTo(7350.059, 2);
+    expect(income.minorityInterest).toBeCloseTo(376.583, 2);
+    expect(income.costOfGoodsSold).toBeUndefined(); // bank không có giá vốn
   });
 
   it("quarter: income hợp nhất + cân đối _AQ + CFO hiệu lũy kế", () => {
@@ -250,8 +272,8 @@ describe("finfo parser — BCTC hợp nhất (consol-v2)", () => {
     expect(result.warnings.some((w) => w.includes("sao lưu"))).toBe(false);
   });
 
-  it("parser version = consol-v3 (DB raw-v1/consol-v2 bị coi là stale và nạp lại)", () => {
-    expect(FINFO_PARSER_VERSION).toBe("consol-v3");
+  it("parser version = consol-v4 (DB raw-v1/consol-v2/v3 bị coi là stale và nạp lại)", () => {
+    expect(FINFO_PARSER_VERSION).toBe("consol-v4");
   });
 
   it("rớt request lần đầu ở quý xa → retry lấy đủ, bảng vẫn đủ cột", async () => {
