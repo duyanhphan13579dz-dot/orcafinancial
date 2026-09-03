@@ -1,6 +1,7 @@
 import { desc, eq, ilike, or, sql, and, gte, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { companies, jobLogs, news, priceSnapshots, priceSnapshotHistory } from "@/db/schema";
+import { freshIndexQuotes } from "@/lib/index-quotes";
 import {
   cached,
   cachedWithStaleFallback,
@@ -491,7 +492,18 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
       }),
     ]);
     const quoteBySymbol = new Map([...coreQuotes, ...sectorOnlyQuotes].map((quote) => [quote.symbol, quote]));
-    const indexQuotes = indexCodes.map((symbol) => quoteBySymbol.get(symbol)).filter((quote): quote is Quote => Boolean(quote));
+    // Chỉ số phải đến từ NGUỒN DUY NHẤT (dchart bar mới nhất) để dashboard và
+    // trang chi tiết không bao giờ lệch nhau; chỉ khi hỏng mới dùng getQuotes.
+    const freshIdx = await withDeadline(
+      freshIndexQuotes(indexCodes).catch(() => [] as Quote[]),
+      2_500,
+      [] as Quote[],
+      "index-quotes",
+    );
+    const freshIdxByCode = new Map(freshIdx.map((q) => [q.symbol, q]));
+    const indexQuotes = indexCodes
+      .map((symbol) => freshIdxByCode.get(symbol) ?? quoteBySymbol.get(symbol))
+      .filter((quote): quote is Quote => Boolean(quote));
     const quotes = FEATURED_SYMBOLS.map((symbol) => quoteBySymbol.get(symbol)).filter((quote): quote is Quote => Boolean(quote));
     const sectorQuotes = SECTOR_SYMBOLS.map((symbol) => quoteBySymbol.get(symbol)).filter((quote): quote is Quote => Boolean(quote));
     const indexByCode = new Map(indexQuotes.map((q) => [q.symbol, q]));

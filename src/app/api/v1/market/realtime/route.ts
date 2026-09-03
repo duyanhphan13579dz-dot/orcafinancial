@@ -12,6 +12,7 @@ import { NextRequest } from "next/server";
 import { checkRateLimit } from "@/lib/api";
 import { getQuotes } from "@/lib/market";
 import { fetchCafefRealtimeQuotes } from "@/lib/connectors/cafef-realtime";
+import { freshIndexQuotes, isIndexCode } from "@/lib/index-quotes";
 import {
   createRealtimeMarketFeed,
   type RealtimeQuote,
@@ -23,9 +24,18 @@ export const maxDuration = 300;
 const DEFAULT_SYMBOLS = ["VNM", "VIC", "VHM", "HPG", "FPT", "MWG", "VCB", "TCB", "BID", "SSI"];
 
 async function loadVndirectRestQuotes(symbols: string[]): Promise<RealtimeQuote[]> {
-  const quotes = await getQuotes(symbols, { persist: false, allowStale: true, fast: true });
+  // Chỉ số dùng chung NGUỒN DUY NHẤT freshIndexQuotes (đồng nhất dashboard ↔
+  // trang chi tiết ↔ SSE); cổ phiếu vẫn qua getQuotes.
+  const idx = symbols.filter((s) => isIndexCode(s));
+  const stockSyms = symbols.filter((s) => !isIndexCode(s));
+  const [idxQuotes, quotes] = await Promise.all([
+    idx.length > 0 ? freshIndexQuotes(idx) : Promise.resolve([]),
+    stockSyms.length > 0
+      ? getQuotes(stockSyms, { persist: false, allowStale: true, fast: true })
+      : Promise.resolve([]),
+  ]);
   const now = Date.now();
-  return quotes
+  return [...idxQuotes, ...quotes]
     .filter((q) => q.close > 0)
     .map((q) => ({
       symbol: q.symbol,
