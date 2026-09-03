@@ -5,7 +5,7 @@ import {
 } from "@/lib/connectors/vndirect-financials";
 import {
   finfoRatiosUrl,
-  finfoStatementsUrl,
+  finfoStatementsRangeUrl,
   incomeFromStatementRows,
   quartersFromFinfoRows,
   FINFO_PARSER_VERSION,
@@ -21,8 +21,7 @@ const TY = 1e9;
  * LNST hợp nhất Q2 14.764 / Q1 5.611; LNST công ty mẹ 10.003 / 7.276;
  * LNTT 22.169 / 11.537; thiểu số 4.761 / −1.665.
  */
-function vicStatementRows(date: string): FinfoStatementRow[] {
-  const rows: Record<string, Array<[number, number]>> = {
+const STATEMENT_FIXTURE: Record<string, Array<[number, number]>> = {
     "2026-06-30": [
       [21000, 1.17964878e14],
       [21001, 1.17936034e14],
@@ -67,8 +66,10 @@ function vicStatementRows(date: string): FinfoStatementRow[] {
       [23000, 2.5e12],
       [23500, -6e11],
     ],
-  };
-  return (rows[date] ?? []).map(([itemCode, numericValue]) => ({
+};
+
+function vicStatementRows(date: string): FinfoStatementRow[] {
+  return (STATEMENT_FIXTURE[date] ?? []).map(([itemCode, numericValue]) => ({
     itemCode,
     numericValue,
     modelType: 2,
@@ -119,6 +120,17 @@ function vicRatioRows(date: string): FinfoRatioRow[] {
 function makeFetch() {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    const gte = url.match(/fiscalDate:gte:(\d{4}-\d{2}-\d{2})/);
+    if (url.includes("/financial_statements") && gte) {
+      const from = gte[1];
+      const data = Object.keys(STATEMENT_FIXTURE)
+        .filter((d) => d >= from)
+        .flatMap((d) => vicStatementRows(d));
+      return new Response(JSON.stringify({ data }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
     const date = url.match(/(?:reportDate|fiscalDate):(\d{4}-\d{2}-\d{2})/)?.[1] ?? "";
     const data = url.includes("/financial_statements") ? vicStatementRows(date) : vicRatioRows(date);
     return new Response(JSON.stringify({ data }), {
@@ -205,8 +217,9 @@ describe("finfo parser — BCTC hợp nhất (consol-v2)", () => {
     const result = await fetchVndirectFinfoFinancialStatements("VIC", 3, fetchMock as unknown as typeof fetch);
     expect(result.quarters.map((q) => q.period)).toEqual(["Q2/2026", "Q1/2026", "Q4/2025"]);
     const called = fetchMock.mock.calls.map((c) => String(c[0]));
-    expect(called).toContain(finfoStatementsUrl("VIC", "2026-06-30"));
-    expect(called).toContain(finfoStatementsUrl("VIC", "2026-03-31"));
+    // KQKD hợp nhất: MỘT truy vấn dải kể từ quý cũ nhất
+    expect(called).toContain(finfoStatementsRangeUrl("VIC", "2025-12-31"));
+    expect(called.filter((u) => u.includes("/financial_statements"))).toHaveLength(1);
     expect(called).toContain(finfoRatiosUrl("VIC", "2026-06-30"));
     // quý liền trước quý cũ nhất vẫn được gọi (ratios) để tính hiệu lũy kế
     expect(called).toContain(finfoRatiosUrl("VIC", "2025-09-30"));

@@ -250,7 +250,13 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
         {error && <div className="text-sm text-rose-400 mb-3">{error}</div>}
         {loading && <div className="text-sm text-slate-500 mb-3">Đang tải báo cáo…</div>}
 
-        {viewPeriods.length > 0 && (
+        {viewPeriods.length > 0 && fields.length === 0 && (
+          <div className="rounded-lg border border-amber-900/60 bg-amber-950/10 px-3 py-2 text-[11px] text-amber-200 leading-relaxed">
+            Đã có kỳ dữ liệu nhưng thiếu chỉ tiêu của mục đang xem — thường do trình duyệt bị chặn (CORS/mạng) với /v4/financial_statements khi tự gọi. Mở nút Xem BCTC (bảng đọc được) trong phần Nguồn để đối chiếu; server sẽ thử nạp lại ở lần tải sau.
+          </div>
+        )}
+
+        {viewPeriods.length > 0 && fields.length > 0 && (
           <div className="stock-table-wrap">
             <table className="w-full text-xs">
               <thead>

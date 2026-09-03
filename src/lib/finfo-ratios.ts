@@ -149,6 +149,16 @@ export function finfoStatementsUrl(symbol: string, fiscalDate: string): string {
   return `${FINFO_API_BASE}/v4/financial_statements?q=code:${symbol.toUpperCase()}~modelType:2~reportType:QUARTER~fiscalDate:${fiscalDate}&size=2000`;
 }
 
+/**
+ * MỌI kỳ kể từ fromDate trong MỘT request (đã kiểm chứng 2026-09-03: trả đủ
+ * 2026-06-30, 2026-03-31, 2025-12-31, 2025-09-30…). Giảm 4 request/kỳ xuống
+ * còn 1 — bớt bị nguồn chặn khi gọi bùng phát. KHÔNG dùng cách này cho
+ * /v4/ratios vì endpoint đó lẫn cả dòng ngày giao dịch (size bị cắt mất quý).
+ */
+export function finfoStatementsRangeUrl(symbol: string, fromDate: string): string {
+  return `${FINFO_API_BASE}/v4/financial_statements?q=code:${symbol.toUpperCase()}~modelType:2~reportType:QUARTER~fiscalDate:gte:${fromDate}&size=3000`;
+}
+
 function valuesByCode(rows: FinfoRatioRow[]): Map<string, number> {
   const map = new Map<string, number>();
   for (const row of rows) {
@@ -242,9 +252,31 @@ export function quartersFromFinfoRows(
   return out;
 }
 
+/** Các ngày 31/12 đã hoàn tất, mới nhất trước (cho chế độ năm). */
+export function lastYearEnds(count: number, now = new Date()): string[] {
+  const out: string[] = [];
+  let y = now.getUTCFullYear();
+  while (out.length < count) {
+    // 31/12 của năm y chỉ "hoàn tất" khi đã sang năm sau
+    if (now.getUTCFullYear() > y || (now.getUTCFullYear() === y && now.getUTCMonth() === 11 && now.getUTCDate() >= 31)) {
+      out.push(`${y}-12-31`);
+    }
+    y -= 1;
+  }
+  return out;
+}
+
 /**
  * Kéo BCTC HỢP NHẤT nhiều kỳ từ finfo. fetchImpl tiêm được để test và để
  * browser gọi thẳng khi server không có lối ra mạng.
+ *
+ * Chiến lược request (bền vững, ít bị chặn):
+ *  - KQKD hợp nhất: MỘT truy vấn dải fiscalDate:gte (không có dòng ngày).
+ *  - ratios (cân đối _AQ + CFO): gọi theo từng ngày cuối quý vì endpoint này
+ *    lẫn dòng ngày giao dịch nên không dùng truy vấn dải được; kèm quý liền
+ *    trước quý cũ nhất để tính hiệu lũy kế cho cột cuối.
+ *  - Mỗi request lỗi được retry 1 lần; chạy ≤3 luồng song song.
+ *  - Nếu truy vấn dải trả về trống (môi trường lạ) → fallback gọi từng kỳ.
  */
 export async function fetchFinfoRatioQuarters(
   symbol: string,
@@ -252,22 +284,27 @@ export async function fetchFinfoRatioQuarters(
   fetchImpl: typeof fetch,
   mode: "quarter" | "year" = "quarter",
 ): Promise<{ quarters: FinfoQuarter[]; urls: string[]; warnings: string[] }> {
-  const baseDates = lastQuarterEnds(Math.max(1, limit));
+  const baseDates =
+    mode === "year" ? lastYearEnds(Math.max(1, limit)) : lastQuarterEnds(Math.max(1, limit));
   // Với MỌI quý trong bảng: nếu quý liền trước cùng năm không nằm trong
   // bảng, vẫn kéo ratios của nó để tính hiệu lũy kế (CFO…) — nếu không cột
   // cũ nhất sẽ mất dòng tiền và bị loại khỏi bảng (loadPreferred yêu cầu đủ
   // income+balance+cashflow). Income không cần vì modelType 2 đã là số riêng quý.
-  const extraDates = [
-    ...new Set(
-      baseDates
-        .map((d) => prevQuarterEnd(d))
-        .filter((d): d is string => Boolean(d) && !baseDates.includes(d!)),
-    ),
-  ];
+  const extraDates =
+    mode === "year"
+      ? []
+      : [
+          ...new Set(
+            baseDates
+              .map((d) => prevQuarterEnd(d))
+              .filter((d): d is string => Boolean(d) && !baseDates.includes(d!)),
+          ),
+        ];
   const ratioDates = [...baseDates, ...extraDates];
   const warnings: string[] = [];
   const ratiosByDate = new Map<string, FinfoRatioRow[]>();
   const statementsByDate = new Map<string, FinfoStatementRow[]>();
+  const statementsRangeUrl = finfoStatementsRangeUrl(symbol, baseDates[baseDates.length - 1]);
   const statementUrls = baseDates.map((d) => finfoStatementsUrl(symbol, d));
   const ratioUrls = ratioDates.map((d) => finfoRatiosUrl(symbol, d));
 
@@ -313,12 +350,15 @@ export async function fetchFinfoRatioQuarters(
   };
 
   await runPool([
-    ...baseDates.map(
-      (date, i) => async () => {
-        const statements = await getJsonRetry<FinfoStatementRow>(statementUrls[i]);
-        if (statements) statementsByDate.set(date, statements);
-      },
-    ),
+    async () => {
+      const rows = await getJsonRetry<FinfoStatementRow>(statementsRangeUrl);
+      for (const row of rows ?? []) {
+        const d = row?.fiscalDate;
+        if (typeof d === "string" && baseDates.includes(d)) {
+          statementsByDate.set(d, [...(statementsByDate.get(d) ?? []), row]);
+        }
+      }
+    },
     ...ratioDates.map(
       (date, i) => async () => {
         const ratios = await getJsonRetry<FinfoRatioRow>(ratioUrls[i]);
@@ -327,8 +367,20 @@ export async function fetchFinfoRatioQuarters(
     ),
   ]);
 
+  // Truy vấn dải trống (môi trường lạ) → fallback gọi từng kỳ như cũ.
+  if (statementsByDate.size === 0) {
+    await runPool(
+      baseDates.map(
+        (date, i) => async () => {
+          const statements = await getJsonRetry<FinfoStatementRow>(statementUrls[i]);
+          if (statements && statements.length > 0) statementsByDate.set(date, statements);
+        },
+      ),
+    );
+  }
+
   const quarters = quartersFromFinfoRows(ratiosByDate, statementsByDate, mode)
     .filter((q) => baseDates.includes(q.reportDate))
     .slice(0, limit);
-  return { quarters, urls: [...statementUrls, ...ratioUrls.slice(0, baseDates.length)], warnings };
+  return { quarters, urls: [statementsRangeUrl, ...ratioUrls], warnings };
 }
