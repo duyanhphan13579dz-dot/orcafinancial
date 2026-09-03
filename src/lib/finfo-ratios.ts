@@ -22,6 +22,8 @@
  * Giá trị tiền tệ = tỷ VND.
  */
 
+import { FINFO_SNAPSHOT_AS_OF, FINFO_STATEMENTS_SNAPSHOT } from "@/lib/finfo-snapshot";
+
 export const FINFO_API_BASE = "https://api-finfo.vndirect.com.vn";
 
 /** Phiên bản parser BCTC — bump khi đổi cơ sở số liệu để DB tự nạp lại. */
@@ -377,6 +379,28 @@ export async function fetchFinfoRatioQuarters(
         },
       ),
     );
+  }
+
+  // Kỳ nào vẫn thiếu KQKD (nguồn sống bị chặn) → lấp bằng bản sao lưu có
+  // nhãn ngày, để bảng xem được tại chỗ; live luôn thắng khi reachable.
+  const snap = FINFO_STATEMENTS_SNAPSHOT[symbol.toUpperCase()];
+  if (snap) {
+    for (const date of baseDates) {
+      if (statementsByDate.has(date)) continue;
+      const rows = snap[date];
+      if (!rows) continue;
+      statementsByDate.set(
+        date,
+        rows.map(([itemCode, numericValue]) => ({
+          itemCode,
+          numericValue,
+          modelType: 2,
+          reportType: "QUARTER",
+          fiscalDate: date,
+        })),
+      );
+      warnings.push(`KQKD ${date}: dùng bản sao lưu ${FINFO_SNAPSHOT_AS_OF} (nguồn sống bị chặn)`);
+    }
   }
 
   const quarters = quartersFromFinfoRows(ratiosByDate, statementsByDate, mode)

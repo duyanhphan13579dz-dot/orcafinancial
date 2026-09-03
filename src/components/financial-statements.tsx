@@ -141,7 +141,7 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
       if (fr.quarters.length > 0) {
         setClientQuarters(fr.quarters);
         setClientSource(fr.urls[0] ?? null);
-        setClientNote(null);
+        setClientNote(fr.warnings.find((w) => w.includes("sao lưu")) ?? null);
         return true;
       }
       setClientQuarters(null);
@@ -377,6 +377,11 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
                 <div className="mt-0.5 text-[10px] text-slate-500">
                   Số liệu HỢP NHẤT từ VNDirect finfo: kết quả kinh doanh lấy từ /v4/financial_statements (modelType 2, số riêng quý), bảng cân đối là số dư cuối kỳ (/v4/ratios, mã _AQ), đơn vị tỷ VND; mục không có dữ liệu hiện –. Bảng được dựng trực tiếp trong trình duyệt vì máy chủ hiện không với tới nguồn này.
                 </div>
+                {clientNote && (
+                  <div className="mt-1 text-[10px] text-amber-200">
+                    {clientNote} — số vẫn đúng nguồn VNDirect finfo, copy nguyên văn ngày 2026-09-03; khi kết nối lại được nguồn sống, số live sẽ thay thế.
+                  </div>
+                )}
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-1">
                 <a

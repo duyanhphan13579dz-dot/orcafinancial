@@ -56,17 +56,19 @@ const STATEMENT_FIXTURE: Record<string, Array<[number, number]>> = {
       [23000, 4.671896e12],
       [23500, -1.172222e12],
     ],
+    // Giá trị API thật (công bố 2025-10-31) — Q3/2025 VIC lỗ gộp -7.290 tỷ
     "2025-09-30": [
-      [21001, 7.9e13],
-      [22100, 6.1e13],
-      [23100, 1.8e13],
-      [23110, 3.0e12],
-      [23800, 2.6e12],
-      [23003, 1.9e12],
-      [23000, 2.5e12],
-      [23500, -6e11],
+      [21000, 3.9143023e13],
+      [21001, 3.9135103e13],
+      [22100, 4.6425078e13],
+      [23100, -7.289975e12],
+      [23110, 4.829457e12],
+      [23800, 4.024377e12],
+      [23003, 3.025338e12],
+      [23000, 6.40184e11],
+      [23500, 2.385154e12],
     ],
-};
+  };
 
 function vicStatementRows(date: string): FinfoStatementRow[] {
   return (STATEMENT_FIXTURE[date] ?? []).map(([itemCode, numericValue]) => ({
@@ -240,11 +242,12 @@ describe("finfo parser — BCTC hợp nhất (consol-v2)", () => {
     vi.useRealTimers();
   });
 
-  it("HTTP lỗi → quarters rỗng + warning, không bịa số", async () => {
+  it("HTTP lỗi + mã KHÔNG có snapshot → quarters rỗng + warning, không bịa số", async () => {
     const fetchMock = vi.fn(async () => new Response("nope", { status: 403 }));
-    const result = await fetchVndirectFinfoFinancialStatements("VIC", 2, fetchMock as unknown as typeof fetch);
+    const result = await fetchVndirectFinfoFinancialStatements("HPG", 2, fetchMock as unknown as typeof fetch);
     expect(result.quarters).toHaveLength(0);
     expect(result.warnings.some((w) => w.includes("403"))).toBe(true);
+    expect(result.warnings.some((w) => w.includes("sao lưu"))).toBe(false);
   });
 
   it("parser version = consol-v3 (DB raw-v1/consol-v2 bị coi là stale và nạp lại)", () => {
@@ -269,6 +272,19 @@ describe("finfo parser — BCTC hợp nhất (consol-v2)", () => {
     // Q2+Q1/2026 + Q4+Q3/2025: retry phải cứu được các quý 2025
     expect(result.quarters.map((q) => q.period)).toEqual(["Q2/2026", "Q1/2026", "Q4/2025", "Q3/2025"]);
     expect(result.quarters[2].income.netIncome).toBeCloseTo(3499.674, 2); // FY2025 = Q4 lũy kế
+    vi.useRealTimers();
+  });
+
+  it("nguồn sống bị chặn hoàn toàn (403) → VIC lấp bằng bản sao lưu có nhãn", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-03T00:00:00Z"));
+    const fetchMock = vi.fn(async () => new Response("blocked", { status: 403 }));
+    const result = await fetchVndirectFinfoFinancialStatements("VIC", 4, fetchMock as unknown as typeof fetch);
+    expect(result.quarters.map((q) => q.period)).toEqual(["Q2/2026", "Q1/2026", "Q4/2025", "Q3/2025"]);
+    expect(result.quarters[0].income.netIncome).toBeCloseTo(14763.96, 2);
+    expect(result.quarters[0].income.minorityInterest).toBeCloseTo(4761.345, 2);
+    expect(result.quarters[3].income.grossProfit).toBeCloseTo(-7289.975, 2); // lỗ gộp Q3/2025
+    expect(result.warnings.some((w) => w.includes("sao lưu"))).toBe(true);
     vi.useRealTimers();
   });
 });
