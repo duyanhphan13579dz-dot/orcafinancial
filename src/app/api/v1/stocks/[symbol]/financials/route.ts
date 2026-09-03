@@ -4,7 +4,7 @@ import { buildFinancialPeriodSet } from "@/lib/stock-intelligence/canonical";
 import { validatePeriods } from "@/lib/stock-intelligence/validation";
 import { getStatements } from "@/lib/company-service";
 import { getFinancialSourceEvidence } from "@/lib/financial-ingestion";
-import { ensureLivePreferredFinancials } from "@/lib/financial-live-ensure";
+import { ensureLivePreferredFinancials, getIngestionStats } from "@/lib/financial-live-ensure";
 import type { StatementType } from "@/lib/financial-statements";
 import {
   loadCanonicalStatements,
@@ -167,6 +167,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
         estimateCount: 0,
         targetCount: 0,
         validation,
+        // ROADMAP G1: quan sát accepted/rejected của ingest nền.
+        ingestionStats: getIngestionStats(symbol),
         disclosure: hasVerified
           ? "Bảng lấy từ nguồn provider đã xác minh (ưu tiên TCBS/doanh nghiệp, sau đó Vietstock)."
           : `Chưa có BCTC verified sau khi thử TCBS → Vietstock. ${preferred.warnings?.slice(0, 3).join(" | ") || "Cấu hình TCBS_MCP_ACCESS_TOKEN hoặc VIETSTOCK_DATAFEED_URL."}`,

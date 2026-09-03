@@ -171,6 +171,8 @@ function quartersToDocuments(
     cashflow: Record<string, number>;
   }>,
   limit: number,
+  /** ROADMAP G1: raw response upstream — lưu TRƯỚC khi normalize. */
+  raw?: unknown,
 ): SourceDocument[] {
   return quarters.slice(0, limit).map((quarter) => ({
     source,
@@ -181,7 +183,7 @@ function quartersToDocuments(
     period: quarter.period,
     fiscalYear: quarter.fiscalYear,
     contentType: "application/json",
-    payload: quarter,
+    payload: raw !== undefined ? { quarter, upstream: raw } : quarter,
     sourceContent: JSON.stringify(quarter),
     facts: (
       [
@@ -213,7 +215,7 @@ class VndirectFinancialAdapter implements SourceAdapter {
     try {
       const result = await fetchVndirectFinancialStatements(symbol, limit);
       return {
-        documents: quartersToDocuments("vndirect", result.symbol, result.sourceUrl, result.quarters, limit),
+        documents: quartersToDocuments("vndirect", result.symbol, result.sourceUrl, result.quarters, limit, result.rawPayload),
         warnings: result.warnings ?? [],
       };
     } catch (e) {
@@ -229,7 +231,7 @@ class VietstockFinancialAdapter implements SourceAdapter {
     try {
       const result = await fetchVietstockFinancialStatements(symbol, limit);
       return {
-        documents: quartersToDocuments("vietstock", result.symbol, result.sourceUrl, result.quarters, limit),
+        documents: quartersToDocuments("vietstock", result.symbol, result.sourceUrl, result.quarters, limit, result.rawPayload),
         warnings: result.warnings ?? [],
       };
     } catch (e) {
@@ -245,7 +247,7 @@ class CafefFinancialAdapter implements SourceAdapter {
     try {
       const result = await fetchCafefFinancialStatements(symbol, limit);
       return {
-        documents: quartersToDocuments("cafef", result.symbol, result.sourceUrl, result.quarters, limit),
+        documents: quartersToDocuments("cafef", result.symbol, result.sourceUrl, result.quarters, limit, result.rawPayload),
         warnings: result.warnings ?? [],
       };
     } catch (e) {

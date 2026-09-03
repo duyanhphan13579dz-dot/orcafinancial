@@ -20,6 +20,8 @@ export interface VietstockFinancialImport {
   sourceUrl: string;
   quarters: VietstockQuarter[];
   warnings: string[];
+  /** ROADMAP G1: raw response upstream giữ lại để lưu trước khi normalize. */
+  rawPayload?: unknown;
 }
 
 type Json = Record<string, unknown>;
@@ -209,6 +211,7 @@ async function fetchViaDatafeed(symbol: string, limit: number): Promise<Vietstoc
     sourceUrl: url.toString(),
     quarters: quarters.slice(0, limit),
     warnings: quarters.length ? [] : ["Vietstock datafeed returned no parseable quarters"],
+    rawPayload: payload,
   };
 }
 

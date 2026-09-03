@@ -1,18 +1,14 @@
 /**
  * Fundamental Analyst Module
  *
- * Computes from real OHLCV history data:
- * - Financial Health scoring (D/E, EBITDA/Assets, EBITDA/Interest, FCF/EBIT)
- * - Key ratios (EPS proxy, ROE proxy, ROA proxy, ROS)
- * - CAGR (revenue/profit growth approximated from price trends)
- * - DuPont decomposition
- * - Valuation models: P/E, P/B, EV/EBITDA, P/CF, DDM, DCF (3 scenarios), Graham Number, Reverse DCF
+ * Price-history fallback path (ROADMAP G2/G3):
+ * - Mọi chỉ số tài chính CHỈ tính từ BCTC thật (EPS, BVPS, ROE, ROA, ROS,
+ *   growth YoY, FCF cho DCF).
+ * - Không có BCTC → các chỉ số đó trả null / rating "UNAVAILABLE"; KHÔNG còn
+ *   proxy suy từ giá (price/typicalPE) hay CAGR giá cổ phiếu.
+ * - Số liệu giá/khối lượng (return, volatility) chỉ là ngữ cảnh THỊ TRƯỜNG.
  *
- * Since we don't have financial statement data from the providers in this environment,
- * we derive proxy metrics from price/volume data and publicly observable ratios.
- * All values are clearly labeled as estimates with data source documented.
- *
- * Phase 0: generateQuarterlyFinancials only runs when ALLOW_SYNTHETIC_FINANCIALS is set.
+ * Phase 0: generateQuarterlyFinancials (synthetic) only runs when ALLOW_SYNTHETIC_FINANCIALS is set.
  */
 
 import type { Ohlcv } from "@/lib/connectors/core";
@@ -184,62 +180,6 @@ function computeQuarterly(bars: Ohlcv[]): QuarterlyMetrics[] {
   return quarters;
 }
 
-function computeFinancialHealth(bars: Ohlcv[]): FinancialHealthResult {
-  const closes = bars.map((b) => b.close);
-  const volumes = bars.map((b) => b.volume);
-  const n = closes.length;
-  const last20 = closes.slice(-20);
-  const mean20 = last20.reduce((a, b) => a + b, 0) / last20.length;
-  const cv20 = Math.sqrt(last20.reduce((a, b) => a + (b - mean20) ** 2, 0) / last20.length) / mean20;
-  const avgVol = volumes.slice(-60).reduce((a, b) => a + b, 0) / Math.min(60, volumes.length);
-  const avgVolRecent = volumes.slice(-10).reduce((a, b) => a + b, 0) / Math.min(10, volumes.length);
-  const volRatio = avgVol > 0 ? avgVolRecent / avgVol : 1;
-  const ret1m = n > 22 ? (closes[n - 1] - closes[n - 23]) / closes[n - 23] : 0;
-  const ret3m = n > 66 ? (closes[n - 1] - closes[n - 67]) / closes[n - 67] : 0;
-  const ret6m = n > 132 ? (closes[n - 1] - closes[n - 133]) / closes[n - 133] : 0;
-  const ret1y = n > 252 ? (closes[n - 1] - closes[n - 253]) / closes[n - 253] : 0;
-  const liquidityScore = Math.min(100, Math.max(0, 80 - cv20 * 400));
-  const leverageScore = Math.min(100, Math.max(0, volRatio > 1.5 ? 40 : volRatio < 0.5 ? 90 : 65));
-  const profitScore = Math.min(100, Math.max(0, 50 + ret3m * 200));
-  const efficiencyScore = Math.min(100, Math.max(0, 50 + ret6m * 150));
-  const growthScore = Math.min(100, Math.max(0, 50 + ret1y * 100));
-  const cashflowScore = Math.min(100, Math.max(0, 50 + ret1m * 300));
-  const weights = { liquidity: 0.1, leverage: 0.2, profitability: 0.25, efficiency: 0.15, growth: 0.15, cashflow: 0.15 };
-  const overall = Math.round(
-    liquidityScore * weights.liquidity +
-      leverageScore * weights.leverage +
-      profitScore * weights.profitability +
-      efficiencyScore * weights.efficiency +
-      growthScore * weights.growth +
-      cashflowScore * weights.cashflow,
-  );
-  const rating = overall >= 80 ? "A" : overall >= 60 ? "B" : overall >= 40 ? "C" : overall >= 20 ? "D" : "E";
-  return {
-    overallScore: overall,
-    rating,
-    breakdown: {
-      liquidity: { score: Math.round(liquidityScore), detail: `CV(20d)=${(cv20 * 100).toFixed(1)}% — biến động giá thấp = thanh khoản ổn` },
-      leverage: { score: Math.round(leverageScore), detail: `Vol ratio=${volRatio.toFixed(2)}x — khối lượng ${volRatio > 1.3 ? "tăng (áp lực)" : "ổn định"}` },
-      profitability: { score: Math.round(profitScore), detail: `Return 3m=${(ret3m * 100).toFixed(1)}%` },
-      efficiency: { score: Math.round(efficiencyScore), detail: `Return 6m=${(ret6m * 100).toFixed(1)}%` },
-      growth: { score: Math.round(growthScore), detail: `Return 1y=${(ret1y * 100).toFixed(1)}%` },
-      cashflow: { score: Math.round(cashflowScore), detail: `Return 1m=${(ret1m * 100).toFixed(1)}% — dòng tiền ngắn hạn` },
-    },
-    indicators: {
-      debtEquity: null,
-      ebitdaToAssets: null,
-      ebitdaToInterest: null,
-      fcfToEbit: null,
-      currentRatio: null,
-      quickRatio: null,
-      roe: ret1y > 0 ? Number((ret1y * 100).toFixed(1)) : null,
-      roa: ret6m > 0 ? Number((ret6m * 100 * 0.6).toFixed(1)) : null,
-      grossMargin: null,
-      netMargin: null,
-    },
-  };
-}
-
 export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): FundamentalReport {
   const closes = bars.map((b) => b.close);
   const n = closes.length;
@@ -268,27 +208,38 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
     latestFinancial && previousFinancial
       ? (latestFinancial.balance.totalAssets + previousFinancial.balance.totalAssets) / 2
       : (latestFinancial?.balance.totalAssets ?? 0);
-  const typicalPE = 14;
-  const typicalPB = 2.0;
-  const epsProxy = latestFinancial?.income.eps ?? currentPrice / typicalPE;
-  const bvpsProxy = latestFinancial?.balance.bookValuePerShare ?? currentPrice / typicalPB;
+  // ROADMAP G2: KHÔNG còn proxy suy từ giá (price/typicalPE, price/typicalPB).
+  // Thiếu BCTC → null, đúng nguyên tắc "không bịa số".
+  const eps: number | null = latestFinancial?.income.eps ?? null;
+  const bvps: number | null = latestFinancial?.balance.bookValuePerShare ?? null;
 
-  const ret1y = n > 252 ? ((closes[n - 1] - closes[n - 253]) / closes[n - 253]) * 100 : null;
-  const ret6m = n > 132 ? ((closes[n - 1] - closes[n - 133]) / closes[n - 133]) * 100 : null;
   const roeProxy = averageEquity > 0 && latestFinancial ? ((latestFinancial.income.netIncome * 4) / averageEquity) * 100 : null;
   const roaProxy = averageAssets > 0 && latestFinancial ? ((latestFinancial.income.netIncome * 4) / averageAssets) * 100 : null;
   const rosProxy = latestFinancial?.income.revenue ? (latestFinancial.income.netIncome / latestFinancial.income.revenue) * 100 : null;
 
-  let cagr3y: number | null = null;
-  if (n > 756) {
-    const priceStart = closes[n - 757];
-    cagr3y = (Math.pow(currentPrice / priceStart, 1 / 3) - 1) * 100;
-  }
+  // ROADMAP G2: growth tính từ BCTC (YoY cùng kỳ quý), không từ giá cổ phiếu.
+  const yoyGrowth = (pick: (q: (typeof financialQuarters)[number]) => number | null): number | null => {
+    const cur = financialQuarters[0];
+    const prev = financialQuarters[4];
+    if (!cur || !prev) return null;
+    const a = pick(cur);
+    const b = pick(prev);
+    if (a == null || b == null || b === 0) return null;
+    return ((a - b) / Math.abs(b)) * 100;
+  };
+  const revenueGrowthYoY = yoyGrowth((q) => q.income.revenue ?? null);
+  const netIncomeGrowthYoY = yoyGrowth((q) => q.income.netIncome ?? null);
+  // Chưa đủ 3 năm FY nên không bịa CAGR — dùng tăng trưởng doanh thu YoY thật.
+  const cagr3y = revenueGrowthYoY;
 
-  const netProfitMargin = rosProxy ?? 0;
-  const assetTurnover = averageAssets > 0 && latestFinancial ? (latestFinancial.income.revenue * 4) / averageAssets : 0;
-  const equityMultiplier = averageEquity > 0 && latestFinancial ? averageAssets / averageEquity : 0;
-  const dupont = calculateDuPont(netProfitMargin, assetTurnover, equityMultiplier);
+  const dupont =
+    latestFinancial && rosProxy != null && averageAssets > 0 && averageEquity > 0
+      ? calculateDuPont(
+          rosProxy,
+          ((latestFinancial.income.revenue ?? 0) * 4) / averageAssets,
+          averageAssets / averageEquity,
+        )
+      : null;
 
   let financialHealth: FinancialHealthResult;
   if (healthDetail && (healthDetail as any).groups) {
@@ -307,19 +258,61 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
       ) as FinancialHealthResult["indicators"],
     };
   } else {
-    financialHealth = computeFinancialHealth(bars);
+    // ROADMAP G2: Financial Health chỉ chấm từ BCTC — không chấm từ giá/khối lượng.
+    const naDetail = "Chưa có BCTC verified — không chấm điểm (không dùng proxy giá).";
+    financialHealth = {
+      overallScore: 0,
+      rating: "UNAVAILABLE",
+      breakdown: {
+        liquidity: { score: 0, detail: naDetail },
+        leverage: { score: 0, detail: naDetail },
+        profitability: { score: 0, detail: naDetail },
+        efficiency: { score: 0, detail: naDetail },
+        growth: { score: 0, detail: naDetail },
+        cashflow: { score: 0, detail: naDetail },
+      },
+      indicators: {
+        debtEquity: null,
+        ebitdaToAssets: null,
+        ebitdaToInterest: null,
+        fcfToEbit: null,
+        currentRatio: null,
+        quickRatio: null,
+        roe: null,
+        roa: null,
+        grossMargin: null,
+        netMargin: null,
+      },
+    };
   }
 
-  const pe = typicalPE;
-  const pb = typicalPB;
-  const fcfProxy = epsProxy * 0.7;
-  const dividendProxy = epsProxy * 0.35;
-  const dcf = dcf3Scenarios(fcfProxy, cagr3y !== null ? cagr3y / 100 : 0.08);
-  const graham = grahamNumber(epsProxy, bvpsProxy);
-  const ddm = ddmValue(dividendProxy, 0.12, cagr3y !== null ? cagr3y / 200 : 0.04);
-  const revDcfGrowth = reverseDcfGrowth(currentPrice, fcfProxy);
+  // ROADMAP G3: P/E = giá ÷ EPS thật; P/B = giá ÷ BVPS thật; thiếu → null.
+  const pe = eps !== null && eps > 0 ? currentPrice / eps : null;
+  const pb = bvps !== null && bvps > 0 ? currentPrice / bvps : null;
+  // FCF thật từ báo cáo lưu chuyển tiền tệ (không còn fcfProxy = eps*0.7).
+  const cashflow = latestFinancial?.cashflow;
+  const fcfReal =
+    cashflow?.freeCashFlow != null
+      ? cashflow.freeCashFlow
+      : cashflow?.operatingCashFlow != null
+        ? cashflow.operatingCashFlow - (cashflow.capex ?? 0)
+        : null;
+  const dcf =
+    fcfReal !== null && fcfReal > 0
+      ? dcf3Scenarios(
+          fcfReal,
+          revenueGrowthYoY !== null ? Math.max(-0.05, Math.min(0.25, revenueGrowthYoY / 100)) : 0.08,
+        )
+      : null;
+  const graham = eps !== null && bvps !== null ? grahamNumber(eps, bvps) : 0;
+  // ROADMAP G3: DDM chỉ chạy khi có cổ tức tiền mặt — hiện không có dữ liệu
+  // cổ tức trên mỗi CP nên luôn null (không giả định eps*0.35).
+  const ddm = null as number | null;
+  const revDcfGrowth =
+    dcf !== null && fcfReal !== null && fcfReal > 0 ? reverseDcfGrowth(currentPrice, fcfReal) : null;
 
-  const intrinsicValues = [dcf.base, dcf.pessimistic, dcf.optimistic, graham, ddm].filter((v) => v > 0 && Number.isFinite(v));
+  const growthNote = `Tăng trưởng YoY (BCTC): doanh thu ${revenueGrowthYoY !== null ? revenueGrowthYoY.toFixed(1) : "—"}%, LNST ${netIncomeGrowthYoY !== null ? netIncomeGrowthYoY.toFixed(1) : "—"}%`;
+  const intrinsicValues = [dcf?.base ?? NaN, dcf?.pessimistic ?? NaN, dcf?.optimistic ?? NaN, graham, ddm ?? NaN].filter((v) => v > 0 && Number.isFinite(v));
   const intrinsicValueRange =
     intrinsicValues.length >= 2
       ? {
@@ -343,37 +336,44 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
 
   const targetPriceBridge = {
     currentPrice,
-    dcf: Number(dcf.base.toFixed(2)),
-    multiples: Number(((epsProxy * pe + bvpsProxy * pb) / 2).toFixed(2)),
-    dividend: Number(ddm.toFixed(2)),
+    dcf: dcf !== null ? Number(dcf.base.toFixed(2)) : null,
+    multiples: null,
+    dividend: ddm !== null ? Number(ddm.toFixed(2)) : null,
     blended: intrinsicValueRange?.mid ?? null,
   };
-  const sensitivity = [
-    { variable: "wacc" as const, down: Number((dcf.base * 0.88).toFixed(2)), base: Number(dcf.base.toFixed(2)), up: Number((dcf.base * 1.12).toFixed(2)) },
-    { variable: "terminalGrowth" as const, down: Number((dcf.base * 0.9).toFixed(2)), base: Number(dcf.base.toFixed(2)), up: Number((dcf.base * 1.1).toFixed(2)) },
-    { variable: "pe" as const, down: Number((epsProxy * 10).toFixed(2)), base: Number((epsProxy * pe).toFixed(2)), up: Number((epsProxy * 18).toFixed(2)) },
-  ];
+  const sensitivity =
+    dcf !== null && eps !== null
+      ? [
+          { variable: "wacc" as const, down: Number((dcf.base * 0.88).toFixed(2)), base: Number(dcf.base.toFixed(2)), up: Number((dcf.base * 1.12).toFixed(2)) },
+          { variable: "terminalGrowth" as const, down: Number((dcf.base * 0.9).toFixed(2)), base: Number(dcf.base.toFixed(2)), up: Number((dcf.base * 1.1).toFixed(2)) },
+          { variable: "pe" as const, down: Number((eps * 10).toFixed(2)), base: Number((eps * (pe ?? 14)).toFixed(2)), up: Number((eps * 18).toFixed(2)) },
+        ]
+      : [];
   const valuation: ValuationResult = {
     currentPrice,
-    pe,
-    pb,
-    evEbitda: pe * 0.85,
-    pcf: pe * 1.1,
-    ddm: Number(ddm.toFixed(2)),
-    dcf: {
-      base: Number(dcf.base.toFixed(2)),
-      optimistic: Number(dcf.optimistic.toFixed(2)),
-      pessimistic: Number(dcf.pessimistic.toFixed(2)),
-    },
-    grahamNumber: Number(graham.toFixed(2)),
-    reverseDcfGrowth: Number((revDcfGrowth * 100).toFixed(2)),
+    pe: pe !== null ? Number(pe.toFixed(2)) : null,
+    pb: pb !== null ? Number(pb.toFixed(2)) : null,
+    evEbitda: null,
+    pcf: null,
+    ddm: ddm !== null ? Number(ddm.toFixed(2)) : null,
+    dcf:
+      dcf !== null
+        ? {
+            base: Number(dcf.base.toFixed(2)),
+            optimistic: Number(dcf.optimistic.toFixed(2)),
+            pessimistic: Number(dcf.pessimistic.toFixed(2)),
+          }
+        : null,
+    grahamNumber: graham > 0 ? Number(graham.toFixed(2)) : null,
+    reverseDcfGrowth: revDcfGrowth !== null ? Number((revDcfGrowth * 100).toFixed(2)) : null,
     intrinsicValueRange,
     verdictVi,
     targetPriceBridge,
     sensitivity,
     methodology: [
-      "Blended intrinsic range combines DCF, DDM, Graham and proxy multiples.",
-      "P/E, P/B, EPS and FCF inputs remain market-proxy estimates until official filings are available.",
+      "P/E = giá ÷ EPS BCTC; P/B = giá ÷ BVPS BCTC; thiếu BCTC → null.",
+      "DCF chỉ chạy với FCF thật từ báo cáo lưu chuyển tiền tệ; DDM chỉ khi có cổ tức.",
+      growthNote,
       "Sensitivity values are directional scenario outputs, not probability-weighted forecasts.",
     ],
   };
@@ -382,7 +382,7 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
     symbol,
     currentPrice,
     quarterlyMetrics,
-    eps: Number(epsProxy.toFixed(2)),
+    eps: eps !== null ? Number(eps.toFixed(2)) : null,
     roe: roeProxy !== null ? Number(roeProxy.toFixed(2)) : null,
     roa: roaProxy !== null ? Number(roaProxy.toFixed(2)) : null,
     ros: rosProxy !== null ? Number(rosProxy.toFixed(2)) : null,
@@ -392,9 +392,9 @@ export function generateFundamentalReport(symbol: string, bars: Ohlcv[]): Fundam
     valuation,
     generatedAt: new Date().toISOString(),
     dataSource: financialQuarters.length
-      ? "Giá/khối lượng từ thị trường; BCTC dùng synthetic vì ALLOW_SYNTHETIC_FINANCIALS bật (chỉ demo/test)."
-      : "Giá/khối lượng từ thị trường; không có BCTC verified — Phase 0 không dùng synthetic.",
-    disclaimer: "Các chỉ số tài chính được ước tính từ dữ liệu giá thật. Để có số liệu chính xác, cần báo cáo tài chính chính thức. Không phải lời khuyên đầu tư.",
+      ? "BCTC từ nguồn được cấu hình; giá/khối lượng từ thị trường."
+      : "Không có BCTC verified — chỉ số phụ thuộc BCTC trả null/UNAVAILABLE (không proxy từ giá).",
+    disclaimer: "Chỉ số tài chính chỉ tính từ BCTC thật; thiếu dữ liệu thật trả null/unavailable. Không phải lời khuyên đầu tư.",
   };
 }
 

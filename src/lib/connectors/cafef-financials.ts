@@ -16,6 +16,8 @@ export interface CafefFinancialImport {
   sourceUrl: string;
   quarters: CafefQuarter[];
   warnings: string[];
+  /** ROADMAP G1: raw response upstream giữ lại để lưu trước khi normalize. */
+  rawPayload?: unknown;
 }
 
 type Json = Record<string, unknown>;
@@ -129,6 +131,7 @@ export async function fetchCafefFinancialStatements(
       sourceUrl: url.toString(),
       quarters,
       warnings: quarters.length ? [] : ["CafeF returned no parseable quarters"],
+      rawPayload: payload,
     };
   } catch (e) {
     warnings.push(e instanceof Error ? e.message : "cafef failed");

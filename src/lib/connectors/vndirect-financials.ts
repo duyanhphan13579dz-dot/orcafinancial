@@ -17,6 +17,8 @@ export interface VndirectFinancialImport {
   sourceUrl: string;
   quarters: VndirectQuarter[];
   warnings: string[];
+  /** ROADMAP G1: raw response upstream giữ lại để lưu trước khi normalize. */
+  rawPayload?: unknown;
 }
 
 type Json = Record<string, unknown>;
@@ -165,6 +167,7 @@ export async function fetchVndirectFinancialStatements(
         sourceUrl: url.toString(),
         quarters,
         warnings: quarters.length ? [] : ["VnDirect datafeed returned no parseable quarters"],
+        rawPayload: payload,
       };
     } catch (e) {
       warnings.push(e instanceof Error ? e.message : "vndirect datafeed failed");

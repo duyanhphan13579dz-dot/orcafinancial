@@ -40,6 +40,9 @@ describe("cafef financials parser (real {Data:{Data:[]}} envelope)", () => {
     expect(q2!.income.revenue).toBe(15000);
     expect(q2!.income.netIncome).toBe(2400);
     expect(q2!.balance.totalAssets).toBe(60000);
+    // ROADMAP G1: raw response upstream được giữ lại trước khi normalize.
+    expect(result.rawPayload).toBeDefined();
+    expect(JSON.stringify(result.rawPayload)).toContain("TotalCount");
   });
 
   it("returns empty with a clear warning when CAFEF_DATA_URL is unset", async () => {
