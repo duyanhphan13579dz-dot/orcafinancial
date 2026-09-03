@@ -33,8 +33,10 @@ function SectionHeader({ eyebrow, title, action }: { eyebrow?: string; title: st
   return <div className="mb-3 flex items-end justify-between gap-3"><div><div className="font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-400">{eyebrow ?? "ORCA THỊ TRƯỜNG"}</div><h2 className="font-display text-lg font-bold text-white md:text-xl">{title}</h2></div>{action}</div>;
 }
 
-function IndexCard({ index, primary }: { index: MarketIndex; primary?: boolean }) {
-  return <div className={`panel relative overflow-hidden p-3 ${primary ? "border-cyan-400/50 bg-gradient-to-br from-[#123d60] to-[#0b2745] shadow-[0_0_24px_rgba(0,212,255,.12)]" : ""}`}><div className="flex items-center justify-between gap-2"><span className={`text-xs font-semibold ${primary ? "text-cyan-200" : "text-slate-300"}`}>{index.name}</span><span className="flex items-center gap-1 text-[10px] text-slate-500"><span className="live-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />TRỰC TIẾP</span></div><div className="mt-2 flex items-end justify-between gap-2"><div><div className={`font-mono font-bold tabular-nums ${primary ? "text-2xl text-white" : "text-xl text-slate-100"}`}>{fmtNum(index.close)}</div><div className={`mt-0.5 font-mono text-xs font-semibold ${tone(index.changePct)}`}>{fmtPct(index.changePct)}</div></div><MiniSparkline quote={index} /></div><div className="mt-2 flex justify-between text-[10px] text-slate-500"><span>{index.exchange}</span><span>KLGD {fmtVol(index.volume)}</span></div></div>;
+function IndexCard({ index, primary, rt }: { index: MarketIndex; primary?: boolean; rt?: { price: number; changePct: number | null } | null }) {
+  const price = rt?.price ?? index.close;
+  const changePct = rt?.changePct ?? index.changePct;
+  return <Link href={`/indices/${index.code}`} className={`panel relative block overflow-hidden p-3 transition-colors hover:border-cyan-400/50 ${primary ? "border-cyan-400/50 bg-gradient-to-br from-[#123d60] to-[#0b2745] shadow-[0_0_24px_rgba(0,212,255,.12)]" : ""}`}><div className="flex items-center justify-between gap-2"><span className={`text-xs font-semibold ${primary ? "text-cyan-200" : "text-slate-300"}`}>{index.name}</span><span className={`flex items-center gap-1 text-[10px] ${rt ? "text-emerald-400" : "text-slate-500"}`}><span className={`h-1.5 w-1.5 rounded-full ${rt ? "live-dot bg-emerald-400" : "bg-slate-500"}`} />{rt ? "LIVE" : "TRỰC TIẾP"}</span></div><div className="mt-2 flex items-end justify-between gap-2"><div><div className={`font-mono font-bold tabular-nums ${primary ? "text-2xl" : "text-xl"} ${rt ? "text-emerald-300" : primary ? "text-white" : "text-slate-100"}`}>{fmtNum(price)}</div><div className={`mt-0.5 font-mono text-xs font-semibold ${tone(changePct)}`}>{fmtPct(changePct)}</div></div><MiniSparkline quote={index} /></div><div className="mt-2 flex justify-between text-[10px] text-slate-500"><span>{index.exchange}</span><span>KLGD {fmtVol(index.volume)}</span></div><div className="mt-1 text-[10px] text-cyan-400/70">Xem phân tích chi tiết →</div></Link>;
 }
 
 function StatusPill({ label, value, color }: { label: string; value: string; color: string }) {
@@ -85,7 +87,13 @@ export function DashboardHome() {
   const { data: snapshot, error, loading, isValidating } = usePoll<MarketSnapshot>("/market/overview", 30000, { softTtlMs: 15000, timeoutMs: 7000 });
   const watchlist = usePoll<{ items: Array<{ symbol: string; quote: MarketQuote | null }> }>("/watchlist", 60000);
   // Giá realtime qua chuỗi websocket vndirect → vci → kbs (server đẩy qua SSE).
-  const realtime = useRealtimeMarket((snapshot?.quotes ?? []).map((q) => q.symbol));
+  // Realtime cho cả cổ phiếu lẫn 3 chỉ số — để thẻ chỉ số cũng nhích theo thị trường.
+  const realtime = useRealtimeMarket([
+    ...(snapshot?.quotes ?? []).map((q) => q.symbol),
+    "VNINDEX",
+    "HNX",
+    "UPCOM",
+  ]);
   const [selected, setSelected] = useState<string | null>(null);
   const watchedSymbols = new Set((watchlist.data?.items ?? []).map((item) => item.symbol));
   const toggleWatch = async (symbol: string) => {
@@ -101,7 +109,7 @@ export function DashboardHome() {
     {loading && !snapshot && <div className="panel p-10 text-center text-sm text-slate-400"><div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" /><div className="mt-3">Đang tải dữ liệu thật từ Data Engine…</div></div>}
     {error && <div className="panel border-rose-700 bg-rose-950/30 p-4 text-sm text-rose-300">Không lấy được snapshot mới: {error}. Các lớp fallback đang được thử lại.</div>}
     {snapshot && <>
-      <section><SectionHeader eyebrow="MARKET HEADER" title="Chỉ số thị trường" action={<span className="text-[10px] text-slate-500">VN-Index là chỉ số chính</span>} /><div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">{snapshot.indices.map((index) => <IndexCard key={index.code} index={index} primary={index.code === "VNINDEX"} />)}{snapshot.crypto.slice(0, 2).map((crypto) => <div key={crypto.symbol} className="panel p-3"><div className="flex items-center justify-between text-xs font-semibold text-slate-300"><span>{crypto.symbol}</span><span className="text-[10px] text-slate-500">CRYPTO</span></div><div className="mt-3 font-mono text-xl font-bold text-white">${crypto.priceUsd.toLocaleString()}</div><div className={`mt-1 font-mono text-xs ${tone(crypto.change24hPct)}`}>{fmtPct(crypto.change24hPct)}</div><div className="mt-3 text-[10px] text-slate-500">{crypto.source}</div></div>)}</div></section>
+      <section><SectionHeader eyebrow="MARKET HEADER" title="Chỉ số thị trường" action={<span className="text-[10px] text-slate-500">VN-Index là chỉ số chính</span>} /><div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">{snapshot.indices.map((index) => <IndexCard key={index.code} index={index} primary={index.code === "VNINDEX"} rt={realtime.quotes[index.code] ?? null} />)}{snapshot.crypto.slice(0, 2).map((crypto) => <div key={crypto.symbol} className="panel p-3"><div className="flex items-center justify-between text-xs font-semibold text-slate-300"><span>{crypto.symbol}</span><span className="text-[10px] text-slate-500">CRYPTO</span></div><div className="mt-3 font-mono text-xl font-bold text-white">${crypto.priceUsd.toLocaleString()}</div><div className={`mt-1 font-mono text-xs ${tone(crypto.change24hPct)}`}>{fmtPct(crypto.change24hPct)}</div><div className="mt-3 text-[10px] text-slate-500">{crypto.source}</div></div>)}</div></section>
       <Pulse snapshot={snapshot} />
       <section className="grid gap-3 md:grid-cols-2"><BreadthMeter title="Market breadth" breadth={snapshot.marketBreadth} /><BreadthMeter title="Large-cap / tracked breadth" breadth={snapshot.largeCapBreadth} /></section>
       <OvernightMarkets snapshot={snapshot.overnight} />
