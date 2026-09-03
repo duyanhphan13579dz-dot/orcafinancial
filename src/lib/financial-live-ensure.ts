@@ -33,6 +33,14 @@ export interface IngestionStats {
 /** Quá hạn chờ ingest lại khi DB chứa dữ liệu parser cũ. */
 export const STALE_REINGEST_TIMEOUT_MS = 12_000;
 
+/**
+ * DB đúng phiên bản parser nhưng vẫn thiếu quý (lần ingest trước bị rớt
+ * request) → coi là stale và nạp lại, nhưng giãn tối thiểu 10 phút/mã để
+ * không chờ 12s ở mọi request với mã thật sự ít kỳ dữ liệu.
+ */
+export const COVERAGE_COOLDOWN_MS = 10 * 60_000;
+const coverageRetryAt = new Map<string, number>();
+
 const inFlight = new Map<string, Promise<void>>();
 const lastStats = new Map<string, IngestionStats>();
 
@@ -98,9 +106,18 @@ export async function ensureLivePreferredFinancials(
   const existing = await loadPreferredFinancialRecords(symbol, statementType, limit);
   if (existing.providerBacked && existing.records.length > 0) {
     // DB có dữ liệu nhưng có thể do parser cũ nạp (vd. "raw-v1" = lợi nhuận
-    // công ty mẹ). Khi đó CHỜ ingest lại theo parser hiện hành rồi đọc lại.
+    // công ty mẹ), hoặc lần ingest trước bị rớt request nên thiếu quý.
+    // Khi đó CHỜ ingest lại theo parser hiện hành rồi đọc lại.
+    const key = symbol.toUpperCase();
     let stale = !(await hasCurrentParserVersion(symbol));
+    if (!stale && existing.records.length < limit) {
+      const now = Date.now();
+      if (now - (coverageRetryAt.get(key) ?? 0) > COVERAGE_COOLDOWN_MS) {
+        stale = true; // đủ phiên bản nhưng thiếu quý → nạp bù
+      }
+    }
     if (stale) {
+      coverageRetryAt.set(key, Date.now());
       await Promise.race([
         getOrStartIngest(symbol, limit),
         new Promise<void>((resolve) => {

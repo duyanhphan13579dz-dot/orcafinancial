@@ -103,6 +103,20 @@ function sourceName(source: string): string {
   return source;
 }
 
+/**
+ * Trang BCTC ĐỌC ĐƯỢC (bảng trình bày rõ ràng) tương ứng từng nguồn, để
+ * người dùng mở ra đối chiếu trực tiếp thay vì chỉ thấy JSON thô.
+ * Đã kiểm chứng 2026-09-03: dstock.vndirect.com.vn/bao-cao-tai-chinh/{SYM}
+ * và finance.vietstock.vn/{SYM}/bao-cao-tai-chinh.htm đều trả bảng BCTC.
+ */
+function readableStatementsUrl(source: string, symbol: string): string | null {
+  const sym = symbol.toUpperCase();
+  if (source.includes("vndirect")) return `https://dstock.vndirect.com.vn/bao-cao-tai-chinh/${sym}`;
+  if (source.includes("vietstock")) return `https://finance.vietstock.vn/${sym}/bao-cao-tai-chinh.htm`;
+  if (source.includes("cafef")) return `https://s.cafef.vn/`;
+  return null;
+}
+
 function dateLabel(value: string | Date | null | undefined): string {
   if (!value) return "Chưa có";
   const date = new Date(value);
@@ -323,13 +337,25 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
                         <span>Parser: <b className="font-normal text-slate-300">{source.parserVersion}</b></span>
                       </div>
                     </div>
-                    {source.documentUrl ? (
-                      <a href={source.documentUrl} target="_blank" rel="noreferrer" className="shrink-0 rounded-md border border-cyan-700/60 px-2 py-1 text-[10px] text-cyan-300 hover:bg-cyan-500/10">
-                        Mở tài liệu gốc ↗
-                      </a>
-                    ) : (
-                      <span className="shrink-0 rounded-md border border-amber-800/60 px-2 py-1 text-[10px] text-amber-300">Thiếu liên kết gốc</span>
-                    )}
+                    <div className="flex shrink-0 flex-wrap items-center gap-1">
+                      {readableStatementsUrl(source.source, symbol) && (
+                        <a
+                          href={readableStatementsUrl(source.source, symbol)!}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-md border border-emerald-700/60 px-2 py-1 text-[10px] text-emerald-300 hover:bg-emerald-500/10"
+                        >
+                          Xem BCTC (bảng đọc được) ↗
+                        </a>
+                      )}
+                      {source.documentUrl ? (
+                        <a href={source.documentUrl} target="_blank" rel="noreferrer" className="rounded-md border border-cyan-700/60 px-2 py-1 text-[10px] text-cyan-300 hover:bg-cyan-500/10">
+                          JSON gốc (đối soát) ↗
+                        </a>
+                      ) : (
+                        <span className="rounded-md border border-amber-800/60 px-2 py-1 text-[10px] text-amber-300">Thiếu liên kết gốc</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -346,11 +372,21 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
                   Số liệu HỢP NHẤT từ VNDirect finfo: kết quả kinh doanh lấy từ /v4/financial_statements (modelType 2, số riêng quý), bảng cân đối là số dư cuối kỳ (/v4/ratios, mã _AQ), đơn vị tỷ VND; mục không có dữ liệu hiện –. Bảng được dựng trực tiếp trong trình duyệt vì máy chủ hiện không với tới nguồn này.
                 </div>
               </div>
-              {clientSource && (
-                <a href={clientSource} target="_blank" rel="noreferrer" className="shrink-0 rounded-md border border-emerald-700/60 px-2 py-1 text-[10px] text-emerald-300 hover:bg-emerald-500/10">
-                  Mở JSON gốc ↗
+              <div className="flex shrink-0 flex-wrap items-center gap-1">
+                <a
+                  href={`https://dstock.vndirect.com.vn/bao-cao-tai-chinh/${symbol.toUpperCase()}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-md border border-emerald-700/60 px-2 py-1 text-[10px] text-emerald-300 hover:bg-emerald-500/10"
+                >
+                  Xem BCTC trên VNDirect ↗
                 </a>
-              )}
+                {clientSource && (
+                  <a href={clientSource} target="_blank" rel="noreferrer" className="rounded-md border border-cyan-700/60 px-2 py-1 text-[10px] text-cyan-300 hover:bg-cyan-500/10">
+                    JSON gốc ↗
+                  </a>
+                )}
+              </div>
             </div>
           </div>
         )}

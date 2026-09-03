@@ -25,7 +25,7 @@
 export const FINFO_API_BASE = "https://api-finfo.vndirect.com.vn";
 
 /** Phiên bản parser BCTC — bump khi đổi cơ sở số liệu để DB tự nạp lại. */
-export const FINFO_PARSER_VERSION = "consol-v2";
+export const FINFO_PARSER_VERSION = "consol-v3";
 
 export interface FinfoRatioRow {
   code?: string;
@@ -290,15 +290,41 @@ export async function fetchFinfoRatioQuarters(
     }
   };
 
-  await Promise.all([
-    ...baseDates.map(async (date, i) => {
-      const statements = await getJson<FinfoStatementRow>(statementUrls[i]);
-      if (statements) statementsByDate.set(date, statements);
-    }),
-    ...ratioDates.map(async (date, i) => {
-      const ratios = await getJson<FinfoRatioRow>(ratioUrls[i]);
-      if (ratios) ratiosByDate.set(date, ratios);
-    }),
+  // Mạng/HTTP lỗi → thử lại 1 lần (rớt 1 kỳ là bảng mất cả cột, nên phải bền).
+  const getJsonRetry = async <T,>(url: string): Promise<T[] | null> => {
+    const first = await getJson<T>(url);
+    if (first !== null) return first;
+    await new Promise((r) => setTimeout(r, 700));
+    return getJson<T>(url);
+  };
+
+  // Giới hạn 3 luồng song song để không bị nguồn chặn khi gọi bùng phát
+  // nhiều kỳ (nguyên nhân từng khiến các quý xa rơi mất ở môi trường thật).
+  const runPool = async (tasks: Array<() => Promise<void>>): Promise<void> => {
+    let next = 0;
+    const workers = Array.from({ length: Math.min(3, tasks.length) }, async () => {
+      while (next < tasks.length) {
+        const task = tasks[next];
+        next += 1;
+        await task();
+      }
+    });
+    await Promise.all(workers);
+  };
+
+  await runPool([
+    ...baseDates.map(
+      (date, i) => async () => {
+        const statements = await getJsonRetry<FinfoStatementRow>(statementUrls[i]);
+        if (statements) statementsByDate.set(date, statements);
+      },
+    ),
+    ...ratioDates.map(
+      (date, i) => async () => {
+        const ratios = await getJsonRetry<FinfoRatioRow>(ratioUrls[i]);
+        if (ratios) ratiosByDate.set(date, ratios);
+      },
+    ),
   ]);
 
   const quarters = quartersFromFinfoRows(ratiosByDate, statementsByDate, mode)
