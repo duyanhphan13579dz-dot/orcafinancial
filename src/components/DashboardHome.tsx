@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { api, changeColor, fmtNum, fmtPct, fmtVol, timeAgo, usePoll } from "@/lib/client";
+import { useRealtimeMarket } from "@/lib/use-realtime-market";
 import type { MarketIndex, MarketQuote, MarketNewsItem, MarketSnapshot } from "@/types/market";
 import { OvernightMarkets } from "@/components/market/OvernightMarkets";
 
@@ -83,6 +84,8 @@ function StockQuickView({ symbol, snapshot, onClose, isWatched, onWatch }: { sym
 export function DashboardHome() {
   const { data: snapshot, error, loading, isValidating } = usePoll<MarketSnapshot>("/market/overview", 30000, { softTtlMs: 15000, timeoutMs: 7000 });
   const watchlist = usePoll<{ items: Array<{ symbol: string; quote: MarketQuote | null }> }>("/watchlist", 60000);
+  // Giá realtime qua chuỗi websocket vndirect → vci → kbs (server đẩy qua SSE).
+  const realtime = useRealtimeMarket((snapshot?.quotes ?? []).map((q) => q.symbol));
   const [selected, setSelected] = useState<string | null>(null);
   const watchedSymbols = new Set((watchlist.data?.items ?? []).map((item) => item.symbol));
   const toggleWatch = async (symbol: string) => {
@@ -92,7 +95,7 @@ export function DashboardHome() {
   };
 
   return <div className="space-y-5 md:space-y-6">
-    <section className="panel overflow-hidden"><div className="flex items-center justify-between border-b border-[#1a3558] px-3 py-2"><div><div className="font-mono text-[10px] uppercase tracking-[0.25em] text-cyan-400">MARKET TERMINAL</div><h1 className="font-display text-lg font-extrabold text-white">Tổng quan thị trường</h1></div><div className="text-right text-[10px] text-slate-500"><div className="flex items-center justify-end gap-1"><span className={`h-1.5 w-1.5 rounded-full ${isValidating ? "animate-pulse bg-cyan-400" : snapshot?.quality.stale ? "bg-rose-400" : snapshot?.quality.partial ? "bg-amber-400" : "live-dot bg-emerald-400"}`} /> {isValidating ? "SYNCING" : snapshot?.quality.stale ? "STALE" : snapshot?.quality.partial ? "PARTIAL" : "LIVE DATA"}</div><div className="mt-1">{snapshot ? `${new Date(snapshot.generatedAt).toLocaleTimeString("vi-VN")} · ${snapshot.quality.ageSeconds}s` : "Đang đồng bộ"}</div></div></div>{snapshot && <div className="ticker-tape flex w-max gap-6 whitespace-nowrap px-3 py-2 text-xs"><span className="text-slate-500">ORCA FEED</span>{[...snapshot.quotes, ...snapshot.quotes].map((q, i) => <Link key={`${q.symbol}-${i}`} href={`/stocks/${q.symbol}`} className="flex items-center gap-2"><span className="font-semibold text-slate-200">{q.symbol}</span><span className="font-mono text-slate-400">{fmtNum(q.close)}</span><span className={tone(q.changePct)}>{fmtPct(q.changePct)}</span></Link>)}</div>}</section>
+    <section className="panel overflow-hidden"><div className="flex items-center justify-between border-b border-[#1a3558] px-3 py-2"><div><div className="font-mono text-[10px] uppercase tracking-[0.25em] text-cyan-400">MARKET TERMINAL</div><h1 className="font-display text-lg font-extrabold text-white">Tổng quan thị trường</h1></div><div className="text-right text-[10px] text-slate-500"><div className="flex items-center justify-end gap-1"><span className={`h-1.5 w-1.5 rounded-full ${isValidating ? "animate-pulse bg-cyan-400" : snapshot?.quality.stale ? "bg-rose-400" : snapshot?.quality.partial ? "bg-amber-400" : "live-dot bg-emerald-400"}`} /> {isValidating ? "SYNCING" : snapshot?.quality.stale ? "STALE" : snapshot?.quality.partial ? "PARTIAL" : "LIVE DATA"}</div><div className="mt-1">{snapshot ? `${new Date(snapshot.generatedAt).toLocaleTimeString("vi-VN")} · ${snapshot.quality.ageSeconds}s` : "Đang đồng bộ"}</div></div></div>{snapshot && <div className="ticker-tape flex w-max gap-6 whitespace-nowrap px-3 py-2 text-xs"><span className="flex items-center gap-1 text-slate-500">{realtime.status?.status === "connected" ? <><span className="live-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />LIVE·{String(realtime.status.provider).toUpperCase()}</> : realtime.status?.status === "rest-fallback" ? <>REST</> : <>ORCA FEED</>}</span>{[...snapshot.quotes, ...snapshot.quotes].map((q, i) => { const rt = realtime.quotes[q.symbol]; return <Link key={`${q.symbol}-${i}`} href={`/stocks/${q.symbol}`} className="flex items-center gap-2"><span className="font-semibold text-slate-200">{q.symbol}</span><span className={`font-mono ${rt ? "text-emerald-300" : "text-slate-400"}`}>{fmtNum(rt?.price ?? q.close)}</span><span className={tone(rt?.changePct ?? q.changePct)}>{fmtPct(rt?.changePct ?? q.changePct)}</span></Link>; })}</div>}</section>
     {loading && !snapshot && <div className="panel p-10 text-center text-sm text-slate-400"><div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" /><div className="mt-3">Đang tải dữ liệu thật từ Data Engine…</div></div>}
     {error && <div className="panel border-rose-700 bg-rose-950/30 p-4 text-sm text-rose-300">Không lấy được snapshot mới: {error}. Các lớp fallback đang được thử lại.</div>}
     {snapshot && <>
