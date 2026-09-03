@@ -149,37 +149,13 @@ function quartersFromRows(rows: Json[], limit: number): VndirectQuarter[] {
 }
 
 /**
- * BCTC từ API CÔNG KHAI của VNDirect (bắt từ DevTools của người dùng, không cần
- * token): api-finfo.vndirect.com.vn/v4/financial_statements.
- * modelType 2,90,102,412 = bộ 3 báo cáo + chỉ tiêu; fiscalDate liệt kê 9 kỳ gần
- * nhất để giới hạn phạm vi giống request gốc.
+ * BCTC từ API CÔNG KHAI của VNDirect. Khảo sát thực tế (2026-09-03) cho thấy
+ * /v4/financial_statements chỉ trả itemCode KHÔNG tên, nên nguồn mặc định là
+ * /v4/ratios — nơi VNDirect công bố itemName tiếng Việt chính thức cùng các
+ * dòng cốt lõi của cả 3 báo cáo (xem src/lib/finfo-ratios.ts).
  */
-export const VNDIRECT_FINFO_FINANCIALS_URL =
-  "https://api-finfo.vndirect.com.vn/v4/financial_statements";
-
-function lastQuarterEnds(count: number, now = new Date()): string[] {
-  const ends: Array<[number, number]> = [
-    [3, 31],
-    [6, 30],
-    [9, 30],
-    [12, 31],
-  ];
-  const out: string[] = [];
-  let y = now.getUTCFullYear();
-  let idx = 3;
-  // lùi về kỳ đã hoàn tất gần nhất
-  while (out.length < count) {
-    const [m, d] = ends[idx];
-    const end = new Date(Date.UTC(y, m - 1, d));
-    if (end < now) out.push(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
-    idx -= 1;
-    if (idx < 0) {
-      idx = 3;
-      y -= 1;
-    }
-  }
-  return out;
-}
+export { FINFO_API_BASE, finfoRatiosUrl } from "@/lib/finfo-ratios";
+import { fetchFinfoRatioQuarters } from "@/lib/finfo-ratios";
 
 export async function fetchVndirectFinfoFinancialStatements(
   symbol: string,
@@ -187,44 +163,21 @@ export async function fetchVndirectFinfoFinancialStatements(
   fetchImpl: typeof fetch = fetch,
 ): Promise<VndirectFinancialImport> {
   const sym = symbol.toUpperCase();
-  const fiscalDates = lastQuarterEnds(9).join(",");
-  const url =
-    process.env.VNDIRECT_FINFO_URL?.trim() ||
-    `${VNDIRECT_FINFO_FINANCIALS_URL}?q=code:${sym}~reportType:QUARTER~modelType:2,90,102,412~fiscalDate:${fiscalDates}&sort=fiscalDate&size=2000`;
-  try {
-    const res = await fetchImpl(url, {
-      headers: { accept: "application/json" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(9_000),
-    });
-    if (!res.ok) {
-      return {
-        symbol: sym,
-        source: "vndirect",
-        sourceUrl: url,
-        quarters: [],
-        warnings: [`VnDirect finfo HTTP ${res.status}`],
-      };
-    }
-    const payload = (await res.json()) as unknown;
-    const quarters = quartersFromRows(rowsFrom(payload), limit);
-    return {
-      symbol: sym,
-      source: "vndirect",
-      sourceUrl: url,
-      quarters,
-      warnings: quarters.length ? [] : ["VnDirect finfo: không parse được quý nào"],
-      rawPayload: payload,
-    };
-  } catch (e) {
-    return {
-      symbol: sym,
-      source: "vndirect",
-      sourceUrl: url,
-      quarters: [],
-      warnings: [e instanceof Error ? e.message : "vndirect finfo failed"],
-    };
-  }
+  const { quarters, urls, warnings } = await fetchFinfoRatioQuarters(sym, limit, fetchImpl);
+  return {
+    symbol: sym,
+    source: "vndirect",
+    sourceUrl: urls[0] ?? "https://api-finfo.vndirect.com.vn/v4/ratios",
+    quarters: quarters.map(({ period, fiscalYear, income, balance, cashflow }) => ({
+      period,
+      fiscalYear,
+      income,
+      balance,
+      cashflow,
+    })),
+    warnings: quarters.length ? warnings : [...warnings, "VnDirect finfo: không parse được quý nào"],
+    rawPayload: quarters,
+  };
 }
 
 export async function fetchVndirectFinancialStatements(

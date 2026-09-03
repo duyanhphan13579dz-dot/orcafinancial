@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/client";
+import { fetchFinfoRatioQuarters, type FinfoQuarter } from "@/lib/finfo-ratios";
 
 type StatementType = "income" | "balance" | "cashflow";
 type PeriodType = "quarterly" | "yearly";
@@ -33,7 +34,7 @@ interface FinancialsResponse {
   sourceEvidence?: FinancialSourceEvidence[];
 }
 
-const FIELD_LABELS: Record<StatementType, Record<string, { label: string; unit: string; highlight?: boolean; indent?: boolean; subtotal?: boolean }>> = {
+const FIELD_LABELS: Record<StatementType, Record<string, { label: string; unit: string; highlight?: boolean; indent?: boolean; subtotal?: boolean; perShare?: boolean }>> = {
   income: {
     revenue: { label: "Doanh thu", unit: " tỷ", highlight: true, subtotal: true },
     costOfGoodsSold: { label: "Giá vốn hàng bán", unit: " tỷ", indent: true },
@@ -47,7 +48,7 @@ const FIELD_LABELS: Record<StatementType, Record<string, { label: string; unit: 
     netIncome: { label: "Lợi nhuận sau thuế", unit: " tỷ", highlight: true, subtotal: true },
     depreciation: { label: "Khấu hao", unit: " tỷ", indent: true },
     ebitda: { label: "EBITDA", unit: " tỷ", highlight: true },
-    eps: { label: "EPS (nghìn VND)", unit: "", highlight: true },
+    eps: { label: "EPS (nghìn VND)", unit: "", highlight: true, perShare: true },
   },
   balance: {
     cashAndEquivalents: { label: "Tiền & tương đương tiền", unit: " tỷ" },
@@ -64,7 +65,7 @@ const FIELD_LABELS: Record<StatementType, Record<string, { label: string; unit: 
     equity: { label: "Vốn chủ sở hữu", unit: " tỷ", subtotal: true },
     retainedEarnings: { label: "Lợi nhuận giữ lại", unit: " tỷ", indent: true },
     totalLiabilitiesEquity: { label: "TỔNG NGUỒN VỐN", unit: " tỷ", highlight: true, subtotal: true },
-    bookValuePerShare: { label: "Giá trị sổ sách/CP (nghìn VND)", unit: "", highlight: true },
+    bookValuePerShare: { label: "Giá trị sổ sách/CP (nghìn VND)", unit: "", highlight: true, perShare: true },
   },
   cashflow: {
     netIncome: { label: "Lợi nhuận sau thuế", unit: " tỷ" },
@@ -111,16 +112,49 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<FinancialsResponse | null>(null);
+  const [clientQuarters, setClientQuarters] = useState<FinfoQuarter[] | null>(null);
+  const [clientSource, setClientSource] = useState<string | null>(null);
+  const [clientNote, setClientNote] = useState<string | null>(null);
+
+  // Trình duyệt gọi thẳng API công khai của VNDirect khi server không có
+  // BCTC (máy chủ bị chặn mạng / thiếu DB). CORS cho phép thì bảng mới hiện.
+  const tryClientFallback = async (limit: number): Promise<boolean> => {
+    try {
+      const fr = await fetchFinfoRatioQuarters(symbol, limit, fetch);
+      if (fr.quarters.length > 0) {
+        setClientQuarters(fr.quarters);
+        setClientSource(fr.urls[0] ?? null);
+        setClientNote(null);
+        return true;
+      }
+      setClientQuarters(null);
+      setClientSource(fr.urls[0] ?? null);
+      setClientNote(fr.warnings[0] ?? "VNDirect finfo không trả dữ liệu cho mã này");
+    } catch (e2) {
+      setClientQuarters(null);
+      setClientNote(e2 instanceof Error ? e2.message : "gọi finfo từ trình duyệt thất bại");
+    }
+    return false;
+  };
 
   const load = async (t: StatementType, p: PeriodType) => {
     setLoading(true);
     setError(null);
+    const limit = p === "yearly" ? 3 : 4;
     try {
-      const limit = p === "yearly" ? 3 : 4;
       const res = await api<FinancialsResponse>(`/stocks/${symbol}/financials?type=${t}&period=${p}&limit=${limit}`);
       setData(res.data);
+      const serverHas = Array.isArray(res.data?.periods) && res.data.periods.length > 0;
+      if (serverHas) {
+        setClientQuarters(null);
+        setClientSource(null);
+        setClientNote(null);
+        return;
+      }
+      await tryClientFallback(limit);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const rescued = await tryClientFallback(limit);
+      if (!rescued) setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -132,7 +166,26 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
   }, [type, period]);
 
   const labels = FIELD_LABELS[type];
-  const fields = data?.fields.filter((f) => labels[f]) ?? [];
+  const serverHasData = !!data && Array.isArray(data.periods) && data.periods.length > 0;
+  const clientPeriods =
+    clientQuarters?.map((q) => ({
+      period: q.period,
+      fiscalYear: q.fiscalYear,
+      data: { ...q.income, ...q.balance, ...q.cashflow } as Record<string, number>,
+      displayPeriod: q.period,
+      displayPeriodVi: q.period,
+    })) ?? [];
+  const viewPeriods: Array<{
+    period: string;
+    fiscalYear: number;
+    data: Record<string, number>;
+    displayPeriod?: string;
+    displayPeriodVi?: string;
+  }> = serverHasData ? data!.periods : clientPeriods;
+  const viewFieldsBase = serverHasData
+    ? data!.fields
+    : [...new Set(clientPeriods.flatMap((p) => Object.keys(p.data)))];
+  const fields = viewFieldsBase.filter((f) => labels[f]);
 
   return (
     <div className="space-y-4">
@@ -172,13 +225,13 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
         {error && <div className="text-sm text-rose-400 mb-3">{error}</div>}
         {loading && <div className="text-sm text-slate-500 mb-3">Đang tải báo cáo…</div>}
 
-        {data && (
+        {viewPeriods.length > 0 && (
           <div className="stock-table-wrap">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-800 text-left">
                   <th className="py-2 text-slate-400 font-medium">Chỉ tiêu</th>
-                  {data.periods.map((p) => {
+                  {viewPeriods.map((p) => {
                     const pAny = p as any;
                     const vi = pAny.displayPeriodVi ?? pAny.displayPeriod ?? p.period;
                     return (
@@ -199,9 +252,11 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
                         {meta.label}
                         <span className="text-[9px] text-slate-600 ml-1">{meta.unit}</span>
                       </td>
-                      {data.periods.map((p, i) => {
-                        const v = p.data[field] ?? 0;
-                        const prev = i < data.periods.length - 1 ? data.periods[i + 1].data[field] : null;
+                      {viewPeriods.map((p, i) => {
+                        const rawV = p.data[field] ?? 0;
+                        const v = meta.perShare ? rawV / 1000 : rawV;
+                        const rawPrev = i < viewPeriods.length - 1 ? viewPeriods[i + 1].data[field] : null;
+                        const prev = rawPrev != null ? (meta.perShare ? rawPrev / 1000 : rawPrev) : null;
                         const change = prev && Math.abs(prev) > 0.01 ? ((v - prev) / Math.abs(prev)) * 100 : null;
                         return (
                           <td key={p.period} className="py-1.5 text-right tabular-nums">
@@ -265,6 +320,33 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {!serverHasData && viewPeriods.length > 0 && (
+          <div className="mt-4 rounded-xl border border-emerald-900/60 bg-emerald-950/10 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-semibold text-emerald-200">Nguồn: VNDirect finfo (API công khai)</div>
+                <div className="mt-0.5 text-[10px] text-slate-500">
+                  Nhãn chỉ tiêu lấy thẳng từ itemName do VNDirect công bố qua /v4/ratios; số tiền quy đổi tỷ VND, lũy kế từ đầu năm đến cuối kỳ. Bảng được dựng trực tiếp trong trình duyệt vì máy chủ hiện không với tới nguồn này.
+                </div>
+              </div>
+              {clientSource && (
+                <a href={clientSource} target="_blank" rel="noreferrer" className="shrink-0 rounded-md border border-emerald-700/60 px-2 py-1 text-[10px] text-emerald-300 hover:bg-emerald-500/10">
+                  Mở JSON gốc ↗
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!serverHasData && viewPeriods.length === 0 && clientNote && (
+          <div className="mt-4 rounded-xl border border-amber-900/60 bg-amber-950/10 p-3 text-[11px] text-amber-200 leading-relaxed">
+            Chưa hiển thị được BCTC: máy chủ không với tới VNDirect finfo và trình duyệt gọi trực tiếp cũng thất bại ({clientNote}).
+            {clientSource && (
+              <> Nếu nghi do CORS, mở <a className="underline" href={clientSource} target="_blank" rel="noreferrer">JSON gốc</a> ở tab riêng để đối chiếu.</>
+            )}
           </div>
         )}
 
