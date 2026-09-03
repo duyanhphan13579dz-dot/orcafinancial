@@ -11,6 +11,7 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit } from "@/lib/api";
 import { getQuotes } from "@/lib/market";
+import { fetchCafefRealtimeQuotes } from "@/lib/connectors/cafef-realtime";
 import {
   createRealtimeMarketFeed,
   type RealtimeQuote,
@@ -22,6 +23,14 @@ export const maxDuration = 300;
 const DEFAULT_SYMBOLS = ["VNM", "VIC", "VHM", "HPG", "FPT", "MWG", "VCB", "TCB", "BID", "SSI"];
 
 async function loadRestQuotes(symbols: string[]): Promise<RealtimeQuote[]> {
+  // Ưu tiên CafeF realtime (endpoint msh-datacenter bắt từ DevTools) — gọi từ
+  // server nên không dính CORS; hỏng/trống mới quay về vndirect dchart + DB.
+  try {
+    const cafef = await fetchCafefRealtimeQuotes(symbols);
+    if (cafef.quotes.length > 0) return cafef.quotes;
+  } catch {
+    // bỏ qua, fallback bên dưới
+  }
   const quotes = await getQuotes(symbols, { persist: false, allowStale: true, fast: true });
   const now = Date.now();
   return quotes

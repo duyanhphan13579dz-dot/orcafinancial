@@ -19,7 +19,7 @@
  * chỉ báo trạng thái, không sinh giá giả.
  */
 
-export type RealtimeProviderName = "vndirect" | "vci" | "kbs" | "rest";
+export type RealtimeProviderName = "vndirect" | "vci" | "kbs" | "cafef" | "rest";
 
 export interface RealtimeQuote {
   symbol: string;

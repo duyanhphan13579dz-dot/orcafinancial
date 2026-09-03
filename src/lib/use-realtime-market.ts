@@ -15,12 +15,12 @@ export interface LiveQuote {
   price: number;
   changePct: number | null;
   volume: number | null;
-  source: "vndirect" | "vci" | "kbs" | "rest";
+  source: "vndirect" | "vci" | "kbs" | "cafef" | "rest";
   timestamp: number;
 }
 
 export interface LiveFeedStatus {
-  provider: "vndirect" | "vci" | "kbs" | "rest" | null;
+  provider: "vndirect" | "vci" | "kbs" | "cafef" | "rest" | null;
   status: "connecting" | "connected" | "rest-fallback" | "disconnected";
   reason?: string;
 }
