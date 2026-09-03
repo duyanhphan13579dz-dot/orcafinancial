@@ -77,10 +77,33 @@ describe("cafef realtime parser", () => {
     expect(result.quotes[0].source).toBe("cafef");
   });
 
-  it("returns empty with warning on HTTP error", async () => {
+  it("computes changePct from ref price when % missing", () => {
+    const q = extractCafefQuote({ Symbol: "VCB", LastPrice: 55, RefPrice: 50 }, 1);
+    expect(q).not.toBeNull();
+    expect(q!.changePct).toBeCloseTo(10, 5);
+  });
+
+  it("returns empty with warning + debug status on HTTP error", async () => {
     const fetchMock = vi.fn(async () => new Response("nope", { status: 500 }));
     const result = await fetchCafefRealtimeQuotes(["VNM"], fetchMock as unknown as typeof fetch);
     expect(result.quotes).toHaveLength(0);
     expect(result.warnings.some((w) => w.includes("500"))).toBe(true);
+    expect(result.debug.httpStatus).toBe(500);
+  });
+
+  it("debug reports parsed/matched counts and keys", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ data: [{ Symbol: "VNM", LastPrice: 65.5 }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    const result = await fetchCafefRealtimeQuotes(["VNM"], fetchMock as unknown as typeof fetch, true);
+    expect(result.debug.httpStatus).toBe(200);
+    expect(result.debug.parsed).toBe(1);
+    expect(result.debug.matched).toBe(1);
+    expect(result.debug.topLevelKeys).toContain("data");
+    expect(result.sample).toContain("VNM");
   });
 });

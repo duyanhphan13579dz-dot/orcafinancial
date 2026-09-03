@@ -60,13 +60,14 @@ function firstStr(record: Json, keys: string[]): string | null {
 
 const SYMBOL_KEYS = [
   "symbol", "Symbol", "ticker", "Ticker", "code", "Code", "secCode", "SecCode",
-  "stockCode", "StockCode", "securityCode", "SecuritySymbol", "StockSymbol",
-  "symbolCode", "s", "S", "sc",
+  "stockCode", "StockCode", "securityCode", "SecurityCode", "SecuritySymbol",
+  "securitySymbol", "StockSymbol", "stockSymbol", "SymbolCode", "symbolCode",
+  "s", "S", "sc",
 ];
 const PRICE_KEYS = [
   "price", "Price", "last", "Last", "lastPrice", "LastPrice", "close", "Close",
-  "currentPrice", "CurrentPrice", "priceCurrent", "p", "c", "GiaDongCua",
-  "GiaDieuChinh", "ClosePrice",
+  "currentPrice", "CurrentPrice", "priceCurrent", "matchPrice", "MatchPrice",
+  "lastMatchPrice", "p", "c", "GiaDongCua", "GiaDieuChinh", "ClosePrice",
 ];
 const PCT_KEYS = [
   "changePct", "changePercent", "ChangePercent", "percentChange", "PercentChange",
@@ -92,18 +93,56 @@ export function extractCafefQuote(
   const price = firstNum(record, PRICE_KEYS);
   if (!symbol || price == null || price <= 0) return null;
   if (!/^[A-Z0-9^=.]{1,15}$/.test(symbol)) return null;
+  const prevClose = firstNum(record, PREV_KEYS);
+  let changePct = firstNum(record, PCT_KEYS);
+  // Nhiều shape chỉ cho giá tham chiếu chứ không cho % — tự tính thay vì bỏ.
+  if (changePct == null && prevClose != null && prevClose > 0) {
+    changePct = ((price - prevClose) / prevClose) * 100;
+  }
   return {
     symbol,
     price,
-    changePct: firstNum(record, PCT_KEYS),
+    changePct,
     open: firstNum(record, OPEN_KEYS),
     high: firstNum(record, HIGH_KEYS),
     low: firstNum(record, LOW_KEYS),
     volume: firstNum(record, VOLUME_KEYS),
-    prevClose: firstNum(record, PREV_KEYS),
+    prevClose,
     source: "cafef",
     timestamp,
   };
+}
+
+/** Lấy keys tầng đầu + keys của record đầu tiên — dùng để chẩn đoán shape. */
+export function probeKeys(payload: unknown): {
+  topLevelKeys: string[];
+  firstRecordKeys: string[];
+} {
+  const topLevelKeys =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload as Json).slice(0, 40)
+      : Array.isArray(payload)
+        ? ["[array]"]
+        : [typeof payload];
+  let firstRecordKeys: string[] = [];
+  const walk = (node: unknown, depth: number) => {
+    if (firstRecordKeys.length > 0 || depth > 6) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, depth + 1);
+      return;
+    }
+    if (node && typeof node === "object") {
+      const obj = node as Json;
+      const vals = Object.values(obj);
+      if (vals.length >= 2 && vals.some((v) => typeof v !== "object")) {
+        firstRecordKeys = Object.keys(obj).slice(0, 60);
+        return;
+      }
+      for (const v of vals) walk(v, depth + 1);
+    }
+  };
+  walk(payload, 0);
+  return { topLevelKeys, firstRecordKeys };
 }
 
 /** Quét sâu JSON (tối đa `maxDepth`) để gom mọi object trông giống một quote. */
@@ -138,27 +177,52 @@ export function collectCafefQuotes(
   return out;
 }
 
+export interface CafefRealtimeDebug {
+  httpStatus: number | null;
+  topLevelKeys: string[];
+  firstRecordKeys: string[];
+  parsed: number;
+  matched: number;
+}
+
 export interface CafefRealtimeResult {
   quotes: RealtimeQuote[];
   sourceUrl: string;
   warnings: string[];
+  debug: CafefRealtimeDebug;
+  /** JSON gốc (cắt ngắn) — chỉ bật qua route chẩn đoán để dò shape thật. */
+  sample?: string;
 }
 
 export async function fetchCafefRealtimeQuotes(
   symbols: string[],
   fetchImpl: typeof fetch = fetch,
+  includeSample = false,
 ): Promise<CafefRealtimeResult> {
   const baseUrl =
     process.env.CAFEF_REALTIME_URL?.trim() || CAFEF_REALTIME_DEFAULT_URL;
   const query =
     process.env.CAFEF_REALTIME_QUERY?.trim() || CAFEF_REALTIME_DEFAULT_QUERY;
 
+  const emptyDebug: CafefRealtimeDebug = {
+    httpStatus: null,
+    topLevelKeys: [],
+    firstRecordKeys: [],
+    parsed: 0,
+    matched: 0,
+  };
+
   let url: URL;
   try {
     url = new URL(baseUrl);
     for (const [k, v] of new URLSearchParams(query)) url.searchParams.set(k, v);
   } catch {
-    return { quotes: [], sourceUrl: baseUrl, warnings: ["CAFEF_REALTIME_URL không hợp lệ"] };
+    return {
+      quotes: [],
+      sourceUrl: baseUrl,
+      warnings: ["CAFEF_REALTIME_URL không hợp lệ"],
+      debug: emptyDebug,
+    };
   }
 
   try {
@@ -179,6 +243,7 @@ export async function fetchCafefRealtimeQuotes(
         quotes: [],
         sourceUrl: url.toString(),
         warnings: [`CafeF realtime HTTP ${res.status}`],
+        debug: { ...emptyDebug, httpStatus: res.status },
       };
     }
     const payload = (await res.json()) as unknown;
@@ -189,12 +254,33 @@ export async function fetchCafefRealtimeQuotes(
     // Nếu bảng trả về toàn thị trường nhưng không trùng mã nào được yêu cầu
     // (hoặc yêu cầu rỗng) thì vẫn trả về những gì parse được — UI tự lọc.
     const quotes = matched.length > 0 ? matched : all;
-    return { quotes, sourceUrl: url.toString(), warnings: [] };
+    const keys = probeKeys(payload);
+    const result: CafefRealtimeResult = {
+      quotes,
+      sourceUrl: url.toString(),
+      warnings: [],
+      debug: {
+        httpStatus: res.status,
+        topLevelKeys: keys.topLevelKeys,
+        firstRecordKeys: keys.firstRecordKeys,
+        parsed: all.length,
+        matched: matched.length,
+      },
+    };
+    if (includeSample) {
+      try {
+        result.sample = JSON.stringify(payload).slice(0, 6000);
+      } catch {
+        result.sample = "[không serialize được]";
+      }
+    }
+    return result;
   } catch (e) {
     return {
       quotes: [],
       sourceUrl: url.toString(),
       warnings: [e instanceof Error ? e.message : "cafef realtime failed"],
+      debug: emptyDebug,
     };
   }
 }

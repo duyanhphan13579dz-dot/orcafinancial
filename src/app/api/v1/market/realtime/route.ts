@@ -22,15 +22,7 @@ export const maxDuration = 300;
 
 const DEFAULT_SYMBOLS = ["VNM", "VIC", "VHM", "HPG", "FPT", "MWG", "VCB", "TCB", "BID", "SSI"];
 
-async function loadRestQuotes(symbols: string[]): Promise<RealtimeQuote[]> {
-  // Ưu tiên CafeF realtime (endpoint msh-datacenter bắt từ DevTools) — gọi từ
-  // server nên không dính CORS; hỏng/trống mới quay về vndirect dchart + DB.
-  try {
-    const cafef = await fetchCafefRealtimeQuotes(symbols);
-    if (cafef.quotes.length > 0) return cafef.quotes;
-  } catch {
-    // bỏ qua, fallback bên dưới
-  }
+async function loadVndirectRestQuotes(symbols: string[]): Promise<RealtimeQuote[]> {
   const quotes = await getQuotes(symbols, { persist: false, allowStale: true, fast: true });
   const now = Date.now();
   return quotes
@@ -75,10 +67,33 @@ export async function GET(req: NextRequest) {
         push?.(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
 
+      // REST fallback: ưu tiên CafeF (endpoint msh-datacenter bắt từ DevTools,
+      // gọi từ server nên không dính CORS); hỏng/trống mới về vndirect dchart.
+      // Lần thử CafeF đầu tiên phát event `debug` để chẩn đoán shape/status.
+      let sentCafefDebug = false;
+      const restLoader = async (syms: string[]): Promise<RealtimeQuote[]> => {
+        try {
+          const cafef = await fetchCafefRealtimeQuotes(syms);
+          if (!sentCafefDebug) {
+            sentCafefDebug = true;
+            send("debug", {
+              source: "cafef",
+              url: cafef.sourceUrl,
+              ...cafef.debug,
+              warnings: cafef.warnings,
+            });
+          }
+          if (cafef.quotes.length > 0) return cafef.quotes;
+        } catch {
+          // bỏ qua, fallback bên dưới
+        }
+        return loadVndirectRestQuotes(syms);
+      };
+
       const feed = createRealtimeMarketFeed({
         symbols,
         restPollMs: 15_000,
-        restLoader: loadRestQuotes,
+        restLoader,
         onStatus: (status) => send("status", status),
         onQuote: (quote) => send("quote", quote),
       });
