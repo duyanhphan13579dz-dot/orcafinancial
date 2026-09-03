@@ -8,6 +8,7 @@ import { fetchVndirectFinancialStatements } from "@/lib/connectors/vndirect-fina
 import { fetchVietstockFinancialStatements } from "@/lib/connectors/vietstock-financials";
 import { fetchCafefFinancialStatements } from "@/lib/connectors/cafef-financials";
 import { sourcePriorityOf as sharedSourcePriorityOf } from "@/lib/financial-source-priority";
+import { FINFO_PARSER_VERSION } from "@/lib/finfo-ratios";
 
 export type IngestionSource = "vndirect" | "vietstock" | "cafef" | "filing";
 export type StatementType = "income" | "balance" | "cashflow";
@@ -294,6 +295,31 @@ export function validateFact(document: SourceDocument, fact: SourceFact): { peri
   return { period };
 }
 
+/**
+ * Phiên bản parser/cơ sở số liệu của BCTC đã ingest.
+ * "consol-v2": KQHD lấy từ /v4/financial_statements modelType 2 = HỢP NHẤT,
+ * số riêng quý (trước đó "raw-v1" dùng /v4/ratios → lợi nhuận CÔNG TY MẸ).
+ * Document trong DB có parserVersion khác hằng số này → bị coi là STALE và
+ * ensureLivePreferredFinancials sẽ tự ingest lại (xem financial-live-ensure).
+ */
+export const FINANCIAL_PARSER_VERSION = FINFO_PARSER_VERSION;
+
+/** Document mới nhất của symbol có đúng parser hiện hành hay không. */
+export async function hasCurrentParserVersion(symbol: string): Promise<boolean> {
+  try {
+    await ensureFinancialIngestionTables();
+    const rows = await db
+      .select({ parserVersion: financialSourceDocuments.parserVersion })
+      .from(financialSourceDocuments)
+      .where(eq(financialSourceDocuments.symbol, symbol.toUpperCase()))
+      .orderBy(desc(financialSourceDocuments.retrievedAt))
+      .limit(1);
+    return rows.length > 0 && rows[0].parserVersion === FINANCIAL_PARSER_VERSION;
+  } catch {
+    return false; // DB lỗi → coi như stale để thử ingest lại
+  }
+}
+
 async function persistDocument(document: SourceDocument): Promise<number> {
   const documentHash = stableHash({ source: document.source, url: document.documentUrl, payload: document.payload });
   const sourceContentHash = document.sourceContent ? stableHash(document.sourceContent) : null;
@@ -312,6 +338,7 @@ async function persistDocument(document: SourceDocument): Promise<number> {
       filingDate: document.filingDate,
       contentType: document.contentType,
       rawPayload: document.payload as Record<string, unknown>,
+      parserVersion: FINANCIAL_PARSER_VERSION,
       status: "raw",
     })
     .onConflictDoNothing({ target: financialSourceDocuments.documentHash })

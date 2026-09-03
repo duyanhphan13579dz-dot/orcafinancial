@@ -1,25 +1,31 @@
 /**
  * VNDirect finfo PUBLIC client — dùng chung cho server lẫn browser.
  *
- * Khảo sát trực tiếp API (2026-09-03):
- *  - /v4/financial_statements trả long-format KHÔNG tên chỉ tiêu → không gắn
- *    nhãn tiếng Việt an toàn được.
- *  - /v4/ratios?q=code:{SYM}~reportDate:{YYYY-MM-DD}&size=2000 trả ~245 chỉ
- *    tiêu CÓ itemName tiếng Việt chính thức của VNDirect, đủ dòng cốt lõi của
- *    3 báo cáo. Hậu tố: _YD = lũy kế từ đầu năm, _QR = RIÊNG quý, _AQ = số dư
- *    tại thời điểm, _TR = 4 quý liền kề.
+ * Khảo sát trực tiếp API (2026-09-03, đối chiếu BCTC chuẩn của người dùng):
+ *  - /v4/financial_statements?q=code:{SYM}~modelType:2~reportType:QUARTER
+ *    ~fiscalDate:{YYYY-MM-DD} = BÁO CÁO KẾT QUẢ KINH DOANH HỢP NHẤT, số RIÊNG
+ *    quý (verified với VIC Q1+Q2/2026: itemCode 23003 = LNST hợp nhất
+ *    14.764/5.611 tỷ; 23800 = LNTT 22.169/11.537; 23000 = LNST công ty mẹ
+ *    10.003/7.276; 23500 = lợi ích CĐ thiểu số 4.761/−1.665).
+ *  - /v4/ratios?q=code:{SYM}~reportDate:{YYYY-MM-DD}&size=2000 có itemName
+ *    tiếng Việt chính thức; các mã _AQ (bảng cân đối) khớp BCTC hợp nhất
+ *    (VIC 2026-06-30: TOTAL_ASSETS_AQ 1.308.938 tỷ ✓, OWNERS_EQUITY_AQ
+ *    180.707 ✓, INVENTORY_AQ 261.745 ✓). Lưu ý: NET_PROFIT_*, EPS_*, BVPS_AQ
+ *    trên /v4/ratios là CƠ SỞ CÔNG TY MẸ → KHÔNG dùng cho lợi nhuận.
  *
- * QUY TẮC CƠ SỞ SỐ LIỆU (theo yêu cầu người dùng, đối chiếu BCTC chuẩn):
- *  - Chế độ "quarter": bảng quý phải là số RIÊNG quý → ưu tiên mã _QR; nếu
- *    thiếu _QR thì lấy hiệu hai số _YD liền kề cùng năm (phép trừ chính xác
- *    giữa hai giá trị đã công bố, KHÔNG suy đoán); Q1 dùng chính _YD.
- *  - Chế độ "year": dùng _YD tại 31/12.
- *  - Bảng cân đối luôn dùng _AQ (thời điểm).
+ * QUY TẮC CƠ SỞ SỐ LIỆU (theo yêu cầu người dùng):
+ *  - Nguồn lợi nhuận = modelType 2 của /v4/financial_statements = HỢP NHẤT,
+ *    đã là số riêng quý → không cần suy diễn.
+ *  - Bảng cân đối = _AQ (số dư cuối kỳ, hợp nhất).
+ *  - Dòng tiền = CFO_QR, thiếu thì hiệu hai số lũy kế đã công bố.
  *  - Không có số → bỏ trống (UI hiển thị "–"), tuyệt đối không bịa.
- * Giá trị tiền tệ = VND; EPS/BVPS = VND/cp.
+ * Giá trị tiền tệ = tỷ VND.
  */
 
 export const FINFO_API_BASE = "https://api-finfo.vndirect.com.vn";
+
+/** Phiên bản parser BCTC — bump khi đổi cơ sở số liệu để DB tự nạp lại. */
+export const FINFO_PARSER_VERSION = "consol-v2";
 
 export interface FinfoRatioRow {
   code?: string;
@@ -31,6 +37,15 @@ export interface FinfoRatioRow {
   value?: number | null;
 }
 
+export interface FinfoStatementRow {
+  code?: string;
+  itemCode?: number;
+  reportType?: string;
+  modelType?: number;
+  numericValue?: number | null;
+  fiscalDate?: string;
+}
+
 export interface FinfoQuarter {
   period: string;
   fiscalYear: number;
@@ -40,35 +55,40 @@ export interface FinfoQuarter {
   cashflow: Record<string, number>;
 }
 
-type Section = "income" | "balance" | "cashflow";
+type Section = "balance" | "cashflow";
 
-/** Mỗi ô chuẩn hóa: mã _QR (riêng quý), mã _YD (lũy kế/năm), perShare giữ VND. */
+/** Mỗi ô chuẩn hóa: mã _QR (riêng quý), mã _YD (lũy kế/năm). */
 interface FieldSpec {
   section: Section;
   field: string;
   qr?: string;
   yd?: string;
-  perShare?: boolean;
 }
 
+/**
+ * Chỉ tiêu KQKD HỢP NHẤT từ /v4/financial_statements modelType 2
+ * (reportType QUARTER = số riêng quý; tại 31/12 = lũy kế cả năm).
+ */
+export const FINFO_INCOME_ITEM_CODES: Record<string, number> = {
+  totalRevenue: 21000,
+  revenue: 21001,
+  costOfGoodsSold: 22100,
+  grossProfit: 23100,
+  operatingIncome: 23110,
+  pretaxIncome: 23800,
+  netIncome: 23003,
+  netIncomeParent: 23000,
+  minorityInterest: 23500,
+};
+
 export const FIELD_SPECS: FieldSpec[] = [
-  // Kết quả kinh doanh
-  { section: "income", field: "totalRevenue", qr: "TOTAL_SALES_QR", yd: "TOTAL_SALES_YD" },
-  { section: "income", field: "revenue", qr: "NET_SALES_QR", yd: "NET_SALES_YD" },
-  { section: "income", field: "costOfGoodsSold", qr: "COGS_QR" },
-  { section: "income", field: "grossProfit", qr: "GROSS_PROFIT_QR", yd: "GROSS_PROFIT_YD" },
-  { section: "income", field: "operatingIncome", qr: "OPERATING_PROFIT_QR", yd: "OPERATING_PROFIT_YD" },
-  { section: "income", field: "netIncome", qr: "NET_PROFIT_QR", yd: "NET_PROFIT_YD" },
-  { section: "income", field: "ebitda", qr: "OPERATING_EBITDA_QR", yd: "OPERATING_EBITDA_YD" },
-  { section: "income", field: "eps", yd: "EPS_YD", perShare: true },
-  // Bảng cân đối (thời điểm). KHÔNG dùng TOTAL_CAP_AQ ("Tổng vốn") làm tổng
-  // nguồn vốn: với VIC nó ≠ tổng tài sản (210.740 tỷ vs 1.308.938 tỷ).
+  // Bảng cân đối (số dư thời điểm, hợp nhất). KHÔNG dùng TOTAL_CAP_AQ
+  // ("Tổng vốn"): với VIC nó ≠ tổng nguồn vốn (210.740 vs 1.308.938 tỷ).
   { section: "balance", field: "currentAssets", yd: "CURRENT_ASSETS_AQ" },
   { section: "balance", field: "inventory", yd: "INVENTORY_AQ" },
   { section: "balance", field: "totalAssets", yd: "TOTAL_ASSETS_AQ" },
   { section: "balance", field: "equity", yd: "OWNERS_EQUITY_AQ" },
   { section: "balance", field: "totalLiabilitiesEquity", yd: "TOTAL_ASSETS_AQ" },
-  { section: "balance", field: "bookValuePerShare", yd: "BVPS_AQ", perShare: true },
   // Lưu chuyển tiền tệ
   { section: "cashflow", field: "operatingCashFlow", qr: "CFO_QR", yd: "CFO_YD" },
 ];
@@ -123,6 +143,10 @@ export function finfoRatiosUrl(symbol: string, reportDate: string): string {
   return `${FINFO_API_BASE}/v4/ratios?q=code:${symbol.toUpperCase()}~reportDate:${reportDate}&size=2000`;
 }
 
+export function finfoStatementsUrl(symbol: string, fiscalDate: string): string {
+  return `${FINFO_API_BASE}/v4/financial_statements?q=code:${symbol.toUpperCase()}~modelType:2~reportType:QUARTER~fiscalDate:${fiscalDate}&size=2000`;
+}
+
 function valuesByCode(rows: FinfoRatioRow[]): Map<string, number> {
   const map = new Map<string, number>();
   for (const row of rows) {
@@ -133,24 +157,55 @@ function valuesByCode(rows: FinfoRatioRow[]): Map<string, number> {
   return map;
 }
 
+/** KQKD hợp nhất (tỷ VND) từ rows modelType 2 của /v4/financial_statements. */
+export function incomeFromStatementRows(rows: FinfoStatementRow[]): Record<string, number> {
+  const byItem = new Map<number, number>();
+  for (const row of rows) {
+    if (
+      row?.modelType === 2 &&
+      typeof row.itemCode === "number" &&
+      typeof row.numericValue === "number" &&
+      Number.isFinite(row.numericValue)
+    ) {
+      byItem.set(row.itemCode, row.numericValue);
+    }
+  }
+  const out: Record<string, number> = {};
+  for (const [field, code] of Object.entries(FINFO_INCOME_ITEM_CODES)) {
+    const v = byItem.get(code);
+    if (v != null) out[field] = v / TY;
+  }
+  return out;
+}
+
 /**
- * Dựng các quý chuẩn hóa từ rows /v4/ratios của nhiều reportDate.
- * mode "quarter" → số riêng quý; "year" → lũy kế năm (chỉ dùng cho kỳ 31/12).
+ * Dựng các quý chuẩn hóa (mới nhất trước) từ rows của hai endpoint finfo.
+ * mode "quarter" → số riêng quý; "year" → lũy kế năm (chỉ dùng cho kỳ 31/12,
+ * khi đó modelType 2 tại 31/12 chính là số cả năm).
  */
-export function quartersFromRatioRows(
-  rowsByDate: Map<string, FinfoRatioRow[]>,
+export function quartersFromFinfoRows(
+  ratiosByDate: Map<string, FinfoRatioRow[]>,
+  statementsByDate: Map<string, FinfoStatementRow[]>,
   mode: "quarter" | "year",
 ): FinfoQuarter[] {
-  const dates = [...rowsByDate.keys()].sort((a, b) => b.localeCompare(a));
+  const dates = [...new Set([...ratiosByDate.keys(), ...statementsByDate.keys()])].sort((a, b) =>
+    b.localeCompare(a),
+  );
   const out: FinfoQuarter[] = [];
   for (const date of dates) {
     const p = periodFromReportDate(date);
     if (!p) continue;
     if (mode === "year" && !date.endsWith("12-31")) continue;
-    const cur = valuesByCode(rowsByDate.get(date) ?? []);
+    const cur = valuesByCode(ratiosByDate.get(date) ?? []);
     const prevDate = prevQuarterEnd(date);
-    const prev = prevDate && rowsByDate.has(prevDate) ? valuesByCode(rowsByDate.get(prevDate)!) : null;
-    const q: FinfoQuarter = { ...p, reportDate: date, income: {}, balance: {}, cashflow: {} };
+    const prev = prevDate && ratiosByDate.has(prevDate) ? valuesByCode(ratiosByDate.get(prevDate)!) : null;
+    const q: FinfoQuarter = {
+      ...p,
+      reportDate: date,
+      income: incomeFromStatementRows(statementsByDate.get(date) ?? []),
+      balance: {},
+      cashflow: {},
+    };
 
     for (const spec of FIELD_SPECS) {
       let v: number | null = null;
@@ -171,7 +226,7 @@ export function quartersFromRatioRows(
         }
       }
       if (v == null) continue; // không có số thật → để trống, UI hiện "–"
-      q[spec.section][spec.field] = spec.perShare ? v : v / TY;
+      q[spec.section][spec.field] = v / TY;
     }
 
     // Tổng nợ = tổng tài sản − vốn chủ (đẳng thức kế toán, cả hai đều công bố).
@@ -186,7 +241,7 @@ export function quartersFromRatioRows(
 }
 
 /**
- * Kéo BCTC nhiều kỳ từ finfo ratios. fetchImpl tiêm được để test và để
+ * Kéo BCTC HỢP NHẤT nhiều kỳ từ finfo. fetchImpl tiêm được để test và để
  * browser gọi thẳng khi server không có lối ra mạng.
  */
 export async function fetchFinfoRatioQuarters(
@@ -195,40 +250,50 @@ export async function fetchFinfoRatioQuarters(
   fetchImpl: typeof fetch,
   mode: "quarter" | "year" = "quarter",
 ): Promise<{ quarters: FinfoQuarter[]; urls: string[]; warnings: string[] }> {
-  // quarter mode cần thêm quý liền trước cùng năm để lấy hiệu lũy kế khi thiếu _QR.
   const baseDates = lastQuarterEnds(Math.max(1, limit));
-  const extra = new Set<string>();
-  if (mode === "quarter") {
-    for (const d of baseDates) {
-      const pd = prevQuarterEnd(d);
-      if (pd && !baseDates.includes(pd)) extra.add(pd);
-    }
-  }
-  const dates = [...baseDates, ...extra].sort((a, b) => b.localeCompare(a));
-  const urls = dates.map((d) => finfoRatiosUrl(symbol, d));
+  // Quý liền trước quý cũ nhất: chỉ cần ratios để lấy hiệu lũy kế (CFO…)
+  // cho cột cuối bảng; income của nó không cần vì đã có số riêng quý.
+  const oldestPrev = prevQuarterEnd(baseDates[baseDates.length - 1]);
+  const ratioDates =
+    oldestPrev && !baseDates.includes(oldestPrev) ? [...baseDates, oldestPrev] : baseDates;
   const warnings: string[] = [];
-  const rowsByDate = new Map<string, FinfoRatioRow[]>();
-  await Promise.all(
-    dates.map(async (date, i) => {
-      try {
-        const res = await fetchImpl(urls[i], {
-          headers: { accept: "application/json" },
-          cache: "no-store",
-          signal: AbortSignal.timeout(9_000),
-        });
-        if (!res.ok) {
-          warnings.push(`finfo ratios HTTP ${res.status}`);
-          return;
-        }
-        const payload = (await res.json()) as { data?: FinfoRatioRow[] };
-        rowsByDate.set(date, payload?.data ?? []);
-      } catch (e) {
-        warnings.push(e instanceof Error ? e.message : "finfo ratios failed");
+  const ratiosByDate = new Map<string, FinfoRatioRow[]>();
+  const statementsByDate = new Map<string, FinfoStatementRow[]>();
+  const statementUrls = baseDates.map((d) => finfoStatementsUrl(symbol, d));
+  const ratioUrls = ratioDates.map((d) => finfoRatiosUrl(symbol, d));
+
+  const getJson = async <T,>(url: string): Promise<T[] | null> => {
+    try {
+      const res = await fetchImpl(url, {
+        headers: { accept: "application/json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(9_000),
+      });
+      if (!res.ok) {
+        warnings.push(`finfo HTTP ${res.status}`);
+        return null;
       }
+      const payload = (await res.json()) as { data?: T[] };
+      return payload?.data ?? [];
+    } catch (e) {
+      warnings.push(e instanceof Error ? e.message : "finfo failed");
+      return null;
+    }
+  };
+
+  await Promise.all([
+    ...baseDates.map(async (date, i) => {
+      const statements = await getJson<FinfoStatementRow>(statementUrls[i]);
+      if (statements) statementsByDate.set(date, statements);
     }),
-  );
-  const quarters = quartersFromRatioRows(rowsByDate, mode)
+    ...ratioDates.map(async (date, i) => {
+      const ratios = await getJson<FinfoRatioRow>(ratioUrls[i]);
+      if (ratios) ratiosByDate.set(date, ratios);
+    }),
+  ]);
+
+  const quarters = quartersFromFinfoRows(ratiosByDate, statementsByDate, mode)
     .filter((q) => baseDates.includes(q.reportDate))
     .slice(0, limit);
-  return { quarters, urls: baseDates.map((d) => finfoRatiosUrl(symbol, d)), warnings };
+  return { quarters, urls: [...statementUrls, ...ratioUrls.slice(0, baseDates.length)], warnings };
 }

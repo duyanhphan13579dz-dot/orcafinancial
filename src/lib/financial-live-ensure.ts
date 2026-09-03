@@ -12,6 +12,8 @@
 import {
   ingestFinancialSources,
   loadPreferredFinancialRecords,
+  hasCurrentParserVersion,
+  FINANCIAL_PARSER_VERSION,
   type StatementType,
 } from "@/lib/financial-ingestion";
 
@@ -41,7 +43,7 @@ export function triggerBackgroundIngest(symbol: string, limit = 8): void {
   const key = symbol.toUpperCase();
   if (inFlight.has(key)) return;
   const p = ingestFinancialSources([key], limit)
-    .then((r) => {
+    .then(async (r) => {
       lastStats.set(key, {
         documentCount: r.documentCount,
         normalizedFactCount: r.normalizedFactCount,
@@ -51,6 +53,12 @@ export function triggerBackgroundIngest(symbol: string, limit = 8): void {
         warnings: r.warnings,
         finishedAt: new Date().toISOString(),
       });
+      // Ingest xong → xóa cache BCTC để lần poll kế tiếp đọc số mới ngay
+      // (không phải chờ TTL 10 phút của statements cache).
+      if (r.acceptedFactCount > 0) {
+        const { invalidateStatementsCache } = await import("@/lib/company-service");
+        await invalidateStatementsCache(key);
+      }
     })
     .catch(() => {
       // giữ stats cũ; warnings của route sẽ cho người dùng biết trạng thái
@@ -74,11 +82,21 @@ export async function ensureLivePreferredFinancials(
 }> {
   const existing = await loadPreferredFinancialRecords(symbol, statementType, limit);
   if (existing.providerBacked && existing.records.length > 0) {
+    // DB có dữ liệu nhưng do parser cũ nạp (vd. "raw-v1" = lợi nhuận công ty
+    // mẹ) → ingest lại NỀN theo parser hiện hành (consol-v2 = hợp nhất).
+    // Request này vẫn trả dữ liệu cũ; lần poll kế tiếp sẽ có số hợp nhất.
+    let staleWarnings: string[] = [];
+    if (!(await hasCurrentParserVersion(symbol))) {
+      triggerBackgroundIngest(symbol, limit);
+      staleWarnings = [
+        `DB đang chứa BCTC do parser cũ nạp — đang nạp lại theo ${FINANCIAL_PARSER_VERSION} (BCTC hợp nhất). Lần tải sau sẽ hiển thị số hợp nhất.`,
+      ];
+    }
     return {
       ...existing,
       records: existing.records.map((r) => ({ ...r, kind: "actual" as const })),
       ingested: false,
-      warnings: [],
+      warnings: staleWarnings,
     };
   }
 

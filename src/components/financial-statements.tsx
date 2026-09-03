@@ -46,7 +46,9 @@ const FIELD_LABELS: Record<StatementType, Record<string, { label: string; unit: 
     otherIncome: { label: "Thu nhập khác", unit: " tỷ", indent: true },
     pretaxIncome: { label: "Lợi nhuận trước thuế", unit: " tỷ", subtotal: true },
     incomeTax: { label: "Thuế TNDN", unit: " tỷ", indent: true },
-    netIncome: { label: "Lợi nhuận sau thuế", unit: " tỷ", highlight: true, subtotal: true },
+    netIncome: { label: "Lợi nhuận sau thuế (hợp nhất)", unit: " tỷ", highlight: true, subtotal: true },
+    minorityInterest: { label: "Lợi ích cổ đông thiểu số", unit: " tỷ", indent: true },
+    netIncomeParent: { label: "LNST thuộc về công ty mẹ", unit: " tỷ", indent: true },
     depreciation: { label: "Khấu hao", unit: " tỷ", indent: true },
     ebitda: { label: "EBITDA", unit: " tỷ", highlight: true },
     eps: { label: "EPS (nghìn VND)", unit: "", highlight: true, perShare: true },
@@ -335,7 +337,7 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
               <div>
                 <div className="text-xs font-semibold text-emerald-200">Nguồn: VNDirect finfo (API công khai)</div>
                 <div className="mt-0.5 text-[10px] text-slate-500">
-                  Nhãn chỉ tiêu lấy thẳng từ itemName do VNDirect công bố qua /v4/ratios; bảng quý là số RIÊNG quý (mã _QR, hoặc hiệu hai số lũy kế đã công bố khi thiếu _QR), bảng cân đối là số dư cuối kỳ, đơn vị tỷ VND; mục không có dữ liệu hiện –. Bảng được dựng trực tiếp trong trình duyệt vì máy chủ hiện không với tới nguồn này.
+                  Số liệu HỢP NHẤT từ VNDirect finfo: kết quả kinh doanh lấy từ /v4/financial_statements (modelType 2, số riêng quý), bảng cân đối là số dư cuối kỳ (/v4/ratios, mã _AQ), đơn vị tỷ VND; mục không có dữ liệu hiện –. Bảng được dựng trực tiếp trong trình duyệt vì máy chủ hiện không với tới nguồn này.
                 </div>
               </div>
               {clientSource && (

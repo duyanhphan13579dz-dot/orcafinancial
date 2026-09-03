@@ -5,41 +5,73 @@ import {
 } from "@/lib/connectors/vndirect-financials";
 import {
   finfoRatiosUrl,
-  lastQuarterEnds,
-  prevQuarterEnd,
-  quartersFromRatioRows,
+  finfoStatementsUrl,
+  incomeFromStatementRows,
+  quartersFromFinfoRows,
+  FINFO_PARSER_VERSION,
   type FinfoRatioRow,
+  type FinfoStatementRow,
 } from "@/lib/finfo-ratios";
 
 const TY = 1e9;
 
-/** VIC Q1+Q2/2026 lấy từ đối chiếu BCTC chuẩn của người dùng (tỷ VND). */
-function vicRows(date: string): FinfoRatioRow[] {
+/**
+ * Giá trị thật của API finfo cho VIC kỳ 2026-06-30 / 2026-03-31 (VND),
+ * đối chiếu 1-1 với BCTC HỢP NHẤT chuẩn của người dùng (tỷ VND):
+ * LNST hợp nhất Q2 14.764 / Q1 5.611; LNST công ty mẹ 10.003 / 7.276;
+ * LNTT 22.169 / 11.537; thiểu số 4.761 / −1.665.
+ */
+function vicStatementRows(date: string): FinfoStatementRow[] {
+  const rows: Record<string, Array<[number, number]>> = {
+    "2026-06-30": [
+      [21000, 1.17964878e14],
+      [21001, 1.17936034e14],
+      [22100, 9.0454822e13],
+      [23100, 2.7481212e13],
+      [23110, 1.5274246e13],
+      [23800, 2.2168856e13],
+      [23003, 1.476396e13],
+      [23000, 1.0002615e13],
+      [23500, 4.761345e12],
+    ],
+    "2026-03-31": [
+      [21000, 1.04371179e14],
+      [21001, 1.04352018e14],
+      [22100, 7.8414392e13],
+      [23100, 2.5937626e13],
+      [23110, 5.084455e12],
+      [23800, 1.1536718e13],
+      [23003, 5.610779e12],
+      [23000, 7.276018e12],
+      [23500, -1.665239e12],
+    ],
+  };
+  return (rows[date] ?? []).map(([itemCode, numericValue]) => ({
+    itemCode,
+    numericValue,
+    modelType: 2,
+    reportType: "QUARTER",
+    fiscalDate: date,
+  }));
+}
+
+function vicRatioRows(date: string): FinfoRatioRow[] {
   if (date === "2026-06-30") {
     return [
-      { ratioCode: "TOTAL_SALES_QR", value: 117_965 * TY },
-      { ratioCode: "NET_SALES_QR", value: 117_936 * TY },
-      { ratioCode: "COGS_QR", value: 90_455 * TY },
-      { ratioCode: "GROSS_PROFIT_QR", value: 27_481 * TY },
-      // OPERATING_PROFIT_QR cố tình thiếu → phải suy từ hiệu lũy kế
-      { ratioCode: "OPERATING_PROFIT_YD", value: 20_359 * TY },
-      { ratioCode: "NET_PROFIT_QR", value: 10_003 * TY },
-      { ratioCode: "EPS_YD", value: 2242.22 },
-      { ratioCode: "TOTAL_ASSETS_AQ", value: 1_308_938 * TY },
-      { ratioCode: "OWNERS_EQUITY_AQ", value: 180_707 * TY },
-      { ratioCode: "TOTAL_CAP_AQ", value: 1_308_938 * TY },
-      { ratioCode: "CFO_YD", value: 76_637 * TY },
+      { ratioCode: "CURRENT_ASSETS_AQ", value: 8.25661e14 },
+      { ratioCode: "INVENTORY_AQ", value: 2.61745101e14 },
+      { ratioCode: "TOTAL_ASSETS_AQ", value: 1.308937567e15 },
+      { ratioCode: "OWNERS_EQUITY_AQ", value: 1.8070665e14 },
+      // NET_PROFIT_QR là LỢI NHUẬN CÔNG TY MẸ — parser KHÔNG được dùng nó
+      { ratioCode: "NET_PROFIT_QR", value: 1.0002615e13 },
+      { ratioCode: "CFO_YD", value: 7.6636908e13 },
     ];
   }
   if (date === "2026-03-31") {
     return [
-      { ratioCode: "NET_SALES_QR", value: 104_352 * TY },
-      { ratioCode: "OPERATING_PROFIT_YD", value: 5_084 * TY },
-      { ratioCode: "EPS_YD", value: 940 },
-      { ratioCode: "TOTAL_ASSETS_AQ", value: 1_178_695 * TY },
-      { ratioCode: "OWNERS_EQUITY_AQ", value: 153_704 * TY },
-      { ratioCode: "TOTAL_CAP_AQ", value: 1_178_695 * TY },
-      { ratioCode: "CFO_YD", value: 18_230 * TY },
+      { ratioCode: "TOTAL_ASSETS_AQ", value: 1.178695e15 },
+      { ratioCode: "OWNERS_EQUITY_AQ", value: 1.53704e14 },
+      { ratioCode: "CFO_YD", value: 1.823e13 },
     ];
   }
   return [];
@@ -47,75 +79,113 @@ function vicRows(date: string): FinfoRatioRow[] {
 
 function makeFetch() {
   return vi.fn(async (input: RequestInfo | URL) => {
-    const m = String(input).match(/reportDate:(\d{4}-\d{2}-\d{2})/);
-    return new Response(JSON.stringify({ data: vicRows(m?.[1] ?? "") }), {
+    const url = String(input);
+    const date = url.match(/(?:reportDate|fiscalDate):(\d{4}-\d{2}-\d{2})/)?.[1] ?? "";
+    const data = url.includes("/financial_statements") ? vicStatementRows(date) : vicRatioRows(date);
+    return new Response(JSON.stringify({ data }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
   });
 }
 
-describe("finfo ratios parser — số riêng quý", () => {
+describe("finfo parser — BCTC hợp nhất (consol-v2)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it("quarter: _QR dùng thẳng, thiếu _QR lấy hiệu lũy kế, Q1 = lũy kế", () => {
-    const rowsByDate = new Map([
-      ["2026-06-30", vicRows("2026-06-30")],
-      ["2026-03-31", vicRows("2026-03-31")],
-    ]);
-    const qs = quartersFromRatioRows(rowsByDate, "quarter");
+  it("income lấy từ modelType 2 = HỢP NHẤT, riêng quý (khớp BCTC chuẩn VIC)", () => {
+    const income = incomeFromStatementRows(vicStatementRows("2026-06-30"));
+    expect(income.totalRevenue).toBeCloseTo(117964.878, 2);
+    expect(income.revenue).toBeCloseTo(117936.034, 2);
+    expect(income.costOfGoodsSold).toBeCloseTo(90454.822, 2);
+    expect(income.grossProfit).toBeCloseTo(27481.212, 2);
+    expect(income.operatingIncome).toBeCloseTo(15274.246, 2);
+    expect(income.pretaxIncome).toBeCloseTo(22168.856, 2);
+    expect(income.netIncome).toBeCloseTo(14763.96, 2); // hợp nhất — KHÔNG phải 10.003
+    expect(income.netIncomeParent).toBeCloseTo(10002.615, 2);
+    expect(income.minorityInterest).toBeCloseTo(4761.345, 2);
+  });
+
+  it("bỏ qua rows không phải modelType 2 (không lẫn bảng cân đối)", () => {
+    const mixed = [
+      ...vicStatementRows("2026-06-30"),
+      { itemCode: 11300, numericValue: 3.16214505e14, modelType: 1 } as FinfoStatementRow,
+      { itemCode: 23003, numericValue: 9.99e13, modelType: 3 } as FinfoStatementRow,
+    ];
+    expect(incomeFromStatementRows(mixed).netIncome).toBeCloseTo(14763.96, 2);
+  });
+
+  it("quarter: income hợp nhất + cân đối _AQ + CFO hiệu lũy kế", () => {
+    const qs = quartersFromFinfoRows(
+      new Map([
+        ["2026-06-30", vicRatioRows("2026-06-30")],
+        ["2026-03-31", vicRatioRows("2026-03-31")],
+      ]),
+      new Map([
+        ["2026-06-30", vicStatementRows("2026-06-30")],
+        ["2026-03-31", vicStatementRows("2026-03-31")],
+      ]),
+      "quarter",
+    );
     const q2 = qs.find((q) => q.period === "Q2/2026")!;
     const q1 = qs.find((q) => q.period === "Q1/2026")!;
-    expect(q2.income.revenue).toBeCloseTo(117936, 3); // NET_SALES_QR
-    expect(q2.income.totalRevenue).toBeCloseTo(117965, 3);
-    expect(q2.income.costOfGoodsSold).toBeCloseTo(90455, 3);
-    expect(q2.income.grossProfit).toBeCloseTo(27481, 3);
-    // thiếu _QR → hiệu hai số _YD đã công bố: 20,359 − 5,084
-    expect(q2.income.operatingIncome).toBeCloseTo(15275, 0);
-    expect(q2.income.netIncome).toBeCloseTo(10003, 3);
-    expect(q2.income.eps).toBeCloseTo(2242.22 - 940, 1);
-    expect(q2.cashflow.operatingCashFlow).toBeCloseTo(76637 - 18230, 0);
-    expect(q1.income.operatingIncome).toBeCloseTo(5084, 3); // Q1 = _YD
-    expect(q1.income.eps).toBeCloseTo(940, 1);
+    expect(q2.income.netIncome).toBeCloseTo(14763.96, 2);
+    expect(q1.income.netIncome).toBeCloseTo(5610.779, 2);
+    expect(q1.income.minorityInterest).toBeCloseTo(-1665.239, 2);
+    // NET_PROFIT_QR (công ty mẹ) không được dùng cho netIncome
+    expect(q2.income.netIncome).not.toBeCloseTo(10002.615, 2);
     // cân đối: số dư thời điểm + tổng nợ suy từ đẳng thức kế toán
-    expect(q2.balance.totalAssets).toBeCloseTo(1308938, 3);
-    expect(q2.balance.totalLiabilities).toBeCloseTo(1308938 - 180707, 3);
-    expect(q2.balance.equity).toBeCloseTo(180707, 3);
+    expect(q2.balance.totalAssets).toBeCloseTo(1308937.567, 2);
+    expect(q2.balance.totalLiabilities).toBeCloseTo(1308937.567 - 180706.65, 2);
+    expect(q2.balance.equity).toBeCloseTo(180706.65, 2);
+    // CFO thiếu _QR → hiệu hai số lũy kế đã công bố
+    expect(q2.cashflow.operatingCashFlow).toBeCloseTo(76636.908 - 18230, 2);
   });
 
-  it("year: chỉ giữ kỳ 31/12 và dùng lũy kế", () => {
-    const rowsByDate = new Map([
-      ["2025-12-31", [{ ratioCode: "NET_SALES_YD", value: 162_227 * TY } as FinfoRatioRow]],
-      ["2025-09-30", [{ ratioCode: "NET_SALES_YD", value: 100_000 * TY } as FinfoRatioRow]],
-    ]);
-    const qs = quartersFromRatioRows(rowsByDate, "year");
+  it("year: chỉ giữ kỳ 31/12 (modelType 2 tại 31/12 = cả năm hợp nhất)", () => {
+    const qs = quartersFromFinfoRows(
+      new Map([["2025-09-30", [] as FinfoRatioRow[]]]),
+      new Map([
+        ["2025-12-31", [{ itemCode: 23003, numericValue: 2.4e13, modelType: 2 } as FinfoStatementRow]],
+        ["2025-09-30", [{ itemCode: 23003, numericValue: 1.6e13, modelType: 2 } as FinfoStatementRow]],
+      ]),
+      "year",
+    );
     expect(qs).toHaveLength(1);
     expect(qs[0].period).toBe("Q4/2025");
-    expect(qs[0].income.revenue).toBeCloseTo(162227, 3);
+    expect(qs[0].income.netIncome).toBeCloseTo(24000, 2);
   });
 
-  it("fetchVndirectFinfoFinancialStatements gọi thêm quý liền trước để lấy hiệu", async () => {
+  it("fetch gọi cả /v4/financial_statements lẫn /v4/ratios cho từng quý", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-03T00:00:00Z"));
     const fetchMock = makeFetch();
-    const result = await fetchVndirectFinfoFinancialStatements("VIC", 2, fetchMock as unknown as typeof fetch);
+    const result = await fetchVndirectFinfoFinancialStatements("VIC", 3, fetchMock as unknown as typeof fetch);
+    // fixture chỉ có Q1+Q2/2026 → Q4/2025 trống, không được bịa
     expect(result.quarters).toHaveLength(2);
     const called = fetchMock.mock.calls.map((c) => String(c[0]));
-    const [d1, d2] = lastQuarterEnds(2);
-    expect(called).toContain(finfoRatiosUrl("VIC", d1));
-    expect(called).toContain(finfoRatiosUrl("VIC", d2));
-    expect(called).toContain(finfoRatiosUrl("VIC", prevQuarterEnd(d1)!));
+    expect(called).toContain(finfoStatementsUrl("VIC", "2026-06-30"));
+    expect(called).toContain(finfoStatementsUrl("VIC", "2026-03-31"));
+    expect(called).toContain(finfoRatiosUrl("VIC", "2026-06-30"));
+    // quý liền trước quý cũ nhất vẫn được gọi (ratios) để tính hiệu lũy kế
+    expect(called).toContain(finfoRatiosUrl("VIC", "2025-09-30"));
     const latest = result.quarters[0];
-    expect(latest.income.revenue).toBeCloseTo(117936, 3);
+    expect(latest.income.netIncome).toBeCloseTo(14763.96, 2);
+    expect(result.quarters[1].income.netIncome).toBeCloseTo(5610.779, 2);
+    vi.useRealTimers();
   });
 
-  it("fetchVndirectFinancialStatements vẫn ra số riêng quý khi chưa cấu hình datafeed", async () => {
+  it("fetchVndirectFinancialStatements vẫn ra số hợp nhất khi chưa cấu hình datafeed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-03T00:00:00Z"));
     vi.stubGlobal("fetch", makeFetch());
     const combined = await fetchVndirectFinancialStatements("VIC", 2);
     expect(combined.symbol).toBe("VIC");
     expect(combined.quarters).toHaveLength(2);
-    expect(combined.quarters[0].income.netIncome).toBeCloseTo(10003, 3);
+    expect(combined.quarters[0].income.netIncome).toBeCloseTo(14763.96, 2);
+    vi.useRealTimers();
   });
 
   it("HTTP lỗi → quarters rỗng + warning, không bịa số", async () => {
@@ -123,5 +193,9 @@ describe("finfo ratios parser — số riêng quý", () => {
     const result = await fetchVndirectFinfoFinancialStatements("VIC", 2, fetchMock as unknown as typeof fetch);
     expect(result.quarters).toHaveLength(0);
     expect(result.warnings.some((w) => w.includes("403"))).toBe(true);
+  });
+
+  it("parser version = consol-v2 (DB raw-v1 bị coi là stale và nạp lại)", () => {
+    expect(FINFO_PARSER_VERSION).toBe("consol-v2");
   });
 });

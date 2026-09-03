@@ -34,6 +34,12 @@ export interface IncomeData {
   depreciation: number;
   eps: number;            // VND per share (thousands)
   sharesOutstanding: number; // millions
+  /** BCTC hợp nhất (finfo consol-v2): tổng doanh thu trước các khoản giảm trừ. */
+  totalRevenue?: number;
+  /** Lợi ích cổ đông thiểu số (hợp nhất). */
+  minorityInterest?: number;
+  /** LNST thuộc về công ty mẹ (hợp nhất). */
+  netIncomeParent?: number;
 }
 
 export interface BalanceData {
@@ -320,7 +326,7 @@ export type StatementType = "income" | "balance" | "cashflow";
 export function getStatementFields(type: StatementType): string[] {
   switch (type) {
     case "income":
-      return ["revenue", "costOfGoodsSold", "grossProfit", "operatingExpenses", "operatingIncome", "interestExpense", "pretaxIncome", "incomeTax", "netIncome", "ebitda", "eps"];
+      return ["totalRevenue", "revenue", "costOfGoodsSold", "grossProfit", "operatingExpenses", "operatingIncome", "interestExpense", "pretaxIncome", "incomeTax", "netIncome", "minorityInterest", "netIncomeParent", "ebitda", "eps"];
     case "balance":
       return ["cashAndEquivalents", "shortTermInvestments", "receivables", "inventory", "currentAssets", "fixedAssets", "totalAssets", "currentLiabilities", "longTermDebt", "totalLiabilities", "equity", "retainedEarnings", "bookValuePerShare"];
     case "cashflow":

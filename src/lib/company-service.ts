@@ -9,7 +9,8 @@ import { eq, desc, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { companies, companyProfiles, companySwot, companyValueChains, financialStatements } from "@/db/schema";
 import { generateValueChain, type ValueChain } from "@/lib/value-chain";
-import { cached, safeDbQuery, type Ohlcv } from "@/lib/connectors/core";
+import { cached, invalidateCachedKey, safeDbQuery, type Ohlcv } from "@/lib/connectors/core";
+import { FINANCIAL_PARSER_VERSION } from "@/lib/financial-ingestion";
 import {
   generateCompanyProfile,
   generateSwot,
@@ -136,10 +137,28 @@ export async function getStatements(
 }> {
   // Financial statements update at most once per quarter. Cache the DB
   // round-trip for 10 minutes so repeated tab switches / polls for the same
-  // symbol+type+period don't re-hit Postgres every time.
-  return cached(`statements:${symbol}:${type}:${period}:${limit}`, 10 * 60_000, async () =>
+  // symbol+type+period don't re-hit Postgres every time. Khóa cache gắn phiên
+  // bản parser: khi cơ sở số liệu đổi (vd. raw-v1 → consol-v2), key đổi theo
+  // nên không bao giờ phục vụ lại dữ liệu của parser cũ.
+  return cached(statementsCacheKey(symbol, type, period, limit), 10 * 60_000, async () =>
     getStatementsUncached(symbol, type, period, limit),
   );
+}
+
+function statementsCacheKey(symbol: string, type: StatementType, period: string, limit: number): string {
+  return `statements:${FINANCIAL_PARSER_VERSION}:${symbol}:${type}:${period}:${limit}`;
+}
+
+/** Xóa cache BCTC của một mã — gọi sau khi ingest nền ghi đè DB. */
+export async function invalidateStatementsCache(symbol: string): Promise<void> {
+  const sym = symbol.toUpperCase();
+  for (const type of ["income", "balance", "cashflow"] as const) {
+    for (const period of ["quarterly", "yearly"] as const) {
+      for (let limit = 1; limit <= 8; limit += 1) {
+        await invalidateCachedKey(statementsCacheKey(sym, type, period, limit));
+      }
+    }
+  }
 }
 
 async function getStatementsUncached(
@@ -167,7 +186,9 @@ async function getStatementsUncached(
     const raw = type === "income" ? q.income : type === "balance" ? q.balance : q.cashflow;
     const filtered: Record<string, number> = {};
     for (const key of getStatementFields(type)) {
-      (filtered as any)[key] = (raw as any)[key] ?? 0;
+      // Thiếu số liệu → KHÔNG điền 0 (ô sẽ hiện "–"); chỉ giữ số thật có trong nguồn.
+      const v = (raw as any)?.[key];
+      if (typeof v === "number" && Number.isFinite(v)) (filtered as any)[key] = v;
     }
     const labels = formatPeriodFromComposite(q.period);
     return {

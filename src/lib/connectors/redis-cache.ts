@@ -170,6 +170,19 @@ export async function sharedCacheSet<
   });
 }
 
+/** Xóa một khóa khỏi L1 + L2 (dùng khi ingest nền ghi đè dữ liệu nguồn). */
+export async function sharedCacheDelete(key: string): Promise<void> {
+  localCache.delete(key);
+  const client = getRedis();
+  if (!client) return;
+  void client.del(key).catch((err) => {
+    logger.warn("redis_cache_del_failed", {
+      key,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+}
+
 /** Read-through helper with single-flight refresh. */
 const inflight = new Map<string, Promise<unknown>>();
 

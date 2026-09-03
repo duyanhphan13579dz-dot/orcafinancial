@@ -149,10 +149,11 @@ function quartersFromRows(rows: Json[], limit: number): VndirectQuarter[] {
 }
 
 /**
- * BCTC từ API CÔNG KHAI của VNDirect. Khảo sát thực tế (2026-09-03) cho thấy
- * /v4/financial_statements chỉ trả itemCode KHÔNG tên, nên nguồn mặc định là
- * /v4/ratios — nơi VNDirect công bố itemName tiếng Việt chính thức cùng các
- * dòng cốt lõi của cả 3 báo cáo (xem src/lib/finfo-ratios.ts).
+ * BCTC từ API CÔNG KHAI của VNDirect (parser consol-v2, xem finfo-ratios.ts):
+ *  - KQKD HỢP NHẤT, số riêng quý: /v4/financial_statements modelType 2
+ *    (itemCode đã đối chiếu 1-1 với BCTC chuẩn: 23003 = LNST hợp nhất…).
+ *  - Bảng cân đối (_AQ) + dòng tiền: /v4/ratios (itemName tiếng Việt chính
+ *    thức; lưu ý NET_PROFIT_* trên ratios là công ty mẹ nên KHÔNG dùng).
  */
 export { FINFO_API_BASE, finfoRatiosUrl } from "@/lib/finfo-ratios";
 import { fetchFinfoRatioQuarters } from "@/lib/finfo-ratios";

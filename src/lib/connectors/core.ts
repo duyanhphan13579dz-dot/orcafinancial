@@ -1,5 +1,5 @@
 import { forProvider, logger, recentLogs } from "@/lib/logger";
-import { sharedCacheGet, sharedCacheSet } from "@/lib/connectors/redis-cache";
+import { sharedCacheDelete, sharedCacheGet, sharedCacheSet } from "@/lib/connectors/redis-cache";
 
 export type Timeframe = "1" | "15" | "60" | "D";
 
@@ -556,6 +556,11 @@ export async function cached<T>(key: string, ttlMs: number, loader: () => Promis
 
   inflightLoaders.set(key, promise);
   return promise;
+}
+
+/** Xóa một khóa cached() khỏi L1/L2 — gọi sau khi ingest nền ghi đè DB. */
+export async function invalidateCachedKey(key: string): Promise<void> {
+  await sharedCacheDelete(key);
 }
 
 const staleShadow = new Map<string, unknown>();
