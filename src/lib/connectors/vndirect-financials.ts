@@ -85,6 +85,14 @@ function mapSection(row: Json, aliases: Record<string, string[]>): Record<string
 }
 
 function parsePeriod(row: Json): { period: string; fiscalYear: number } | null {
+  // VnDirect finfo trả fiscalDate dạng "2026-09-30" → suy ra quý kế toán.
+  const fd = String(row.fiscalDate ?? row.reportDate ?? row.periodEnd ?? "");
+  const fm = fd.match(/^(20\d{2})-(\d{2})-\d{2}/);
+  if (fm) {
+    const mm = Number(fm[2]);
+    const q = mm <= 3 ? 1 : mm <= 6 ? 2 : mm <= 9 ? 3 : 4;
+    return { period: `Q${q}/${fm[1]}`, fiscalYear: Number(fm[1]) };
+  }
   const year = num(row.year ?? row.Year ?? row.fiscalYear ?? row.FiscalYear);
   const quarter = num(row.quarter ?? row.Quarter ?? row.Q);
   if (year != null && quarter != null && quarter >= 1 && quarter <= 4) {
@@ -140,6 +148,85 @@ function quartersFromRows(rows: Json[], limit: number): VndirectQuarter[] {
     .slice(0, limit);
 }
 
+/**
+ * BCTC từ API CÔNG KHAI của VNDirect (bắt từ DevTools của người dùng, không cần
+ * token): api-finfo.vndirect.com.vn/v4/financial_statements.
+ * modelType 2,90,102,412 = bộ 3 báo cáo + chỉ tiêu; fiscalDate liệt kê 9 kỳ gần
+ * nhất để giới hạn phạm vi giống request gốc.
+ */
+export const VNDIRECT_FINFO_FINANCIALS_URL =
+  "https://api-finfo.vndirect.com.vn/v4/financial_statements";
+
+function lastQuarterEnds(count: number, now = new Date()): string[] {
+  const ends: Array<[number, number]> = [
+    [3, 31],
+    [6, 30],
+    [9, 30],
+    [12, 31],
+  ];
+  const out: string[] = [];
+  let y = now.getUTCFullYear();
+  let idx = 3;
+  // lùi về kỳ đã hoàn tất gần nhất
+  while (out.length < count) {
+    const [m, d] = ends[idx];
+    const end = new Date(Date.UTC(y, m - 1, d));
+    if (end < now) out.push(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
+    idx -= 1;
+    if (idx < 0) {
+      idx = 3;
+      y -= 1;
+    }
+  }
+  return out;
+}
+
+export async function fetchVndirectFinfoFinancialStatements(
+  symbol: string,
+  limit = 8,
+  fetchImpl: typeof fetch = fetch,
+): Promise<VndirectFinancialImport> {
+  const sym = symbol.toUpperCase();
+  const fiscalDates = lastQuarterEnds(9).join(",");
+  const url =
+    process.env.VNDIRECT_FINFO_URL?.trim() ||
+    `${VNDIRECT_FINFO_FINANCIALS_URL}?q=code:${sym}~reportType:QUARTER~modelType:2,90,102,412~fiscalDate:${fiscalDates}&sort=fiscalDate&size=2000`;
+  try {
+    const res = await fetchImpl(url, {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(9_000),
+    });
+    if (!res.ok) {
+      return {
+        symbol: sym,
+        source: "vndirect",
+        sourceUrl: url,
+        quarters: [],
+        warnings: [`VnDirect finfo HTTP ${res.status}`],
+      };
+    }
+    const payload = (await res.json()) as unknown;
+    const quarters = quartersFromRows(rowsFrom(payload), limit);
+    return {
+      symbol: sym,
+      source: "vndirect",
+      sourceUrl: url,
+      quarters,
+      warnings: quarters.length ? [] : ["VnDirect finfo: không parse được quý nào"],
+      rawPayload: payload,
+    };
+  } catch (e) {
+    return {
+      symbol: sym,
+      source: "vndirect",
+      sourceUrl: url,
+      quarters: [],
+      warnings: [e instanceof Error ? e.message : "vndirect finfo failed"],
+    };
+  }
+}
+
 export async function fetchVndirectFinancialStatements(
   symbol: string,
   limit = 8,
@@ -147,6 +234,12 @@ export async function fetchVndirectFinancialStatements(
   const sym = symbol.toUpperCase();
   const warnings: string[] = [];
 
+  // 1) API công khai của VNDirect (finfo) — không cần cấu hình.
+  const finfo = await fetchVndirectFinfoFinancialStatements(sym, limit);
+  warnings.push(...finfo.warnings);
+  if (finfo.quarters.length > 0) return finfo;
+
+  // 2) Datafeed được cấp quyền (nếu cấu hình) — ưu tiên nếu có token riêng.
   const endpoint = process.env.VNDIRECT_DATAFEED_URL?.trim() || process.env.VNDIRECT_FINANCIALS_URL?.trim();
   if (endpoint) {
     try {
