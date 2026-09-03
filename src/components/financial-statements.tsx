@@ -36,7 +36,8 @@ interface FinancialsResponse {
 
 const FIELD_LABELS: Record<StatementType, Record<string, { label: string; unit: string; highlight?: boolean; indent?: boolean; subtotal?: boolean; perShare?: boolean }>> = {
   income: {
-    revenue: { label: "Doanh thu", unit: " tỷ", highlight: true, subtotal: true },
+    totalRevenue: { label: "Tổng doanh thu", unit: " tỷ", subtotal: true },
+    revenue: { label: "Doanh thu thuần", unit: " tỷ", highlight: true, subtotal: true },
     costOfGoodsSold: { label: "Giá vốn hàng bán", unit: " tỷ", indent: true },
     grossProfit: { label: "Lợi nhuận gộp", unit: " tỷ", subtotal: true },
     operatingExpenses: { label: "Chi phí hoạt động", unit: " tỷ", indent: true },
@@ -118,9 +119,9 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
 
   // Trình duyệt gọi thẳng API công khai của VNDirect khi server không có
   // BCTC (máy chủ bị chặn mạng / thiếu DB). CORS cho phép thì bảng mới hiện.
-  const tryClientFallback = async (limit: number): Promise<boolean> => {
+  const tryClientFallback = async (limit: number, mode: "quarter" | "year"): Promise<boolean> => {
     try {
-      const fr = await fetchFinfoRatioQuarters(symbol, limit, fetch);
+      const fr = await fetchFinfoRatioQuarters(symbol, limit, fetch, mode);
       if (fr.quarters.length > 0) {
         setClientQuarters(fr.quarters);
         setClientSource(fr.urls[0] ?? null);
@@ -141,6 +142,7 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
     setLoading(true);
     setError(null);
     const limit = p === "yearly" ? 3 : 4;
+    const mode: "quarter" | "year" = p === "yearly" ? "year" : "quarter";
     try {
       const res = await api<FinancialsResponse>(`/stocks/${symbol}/financials?type=${t}&period=${p}&limit=${limit}`);
       setData(res.data);
@@ -151,9 +153,9 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
         setClientNote(null);
         return;
       }
-      await tryClientFallback(limit);
+      await tryClientFallback(limit, mode);
     } catch (err) {
-      const rescued = await tryClientFallback(limit);
+      const rescued = await tryClientFallback(limit, mode);
       if (!rescued) setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
@@ -185,7 +187,8 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
   const viewFieldsBase = serverHasData
     ? data!.fields
     : [...new Set(clientPeriods.flatMap((p) => Object.keys(p.data)))];
-  const fields = viewFieldsBase.filter((f) => labels[f]);
+  // Thứ tự dòng theo bố cục BCTC chuẩn (thứ tự khai báo trong FIELD_LABELS).
+  const fields = Object.keys(labels).filter((f) => viewFieldsBase.includes(f));
 
   return (
     <div className="space-y-4">
@@ -253,14 +256,17 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
                         <span className="text-[9px] text-slate-600 ml-1">{meta.unit}</span>
                       </td>
                       {viewPeriods.map((p, i) => {
-                        const rawV = p.data[field] ?? 0;
-                        const v = meta.perShare ? rawV / 1000 : rawV;
-                        const rawPrev = i < viewPeriods.length - 1 ? viewPeriods[i + 1].data[field] : null;
+                        const rawV = p.data[field] ?? null;
+                        const v = rawV != null ? (meta.perShare ? rawV / 1000 : rawV) : null;
+                        const rawPrev = i < viewPeriods.length - 1 ? (viewPeriods[i + 1].data[field] ?? null) : null;
                         const prev = rawPrev != null ? (meta.perShare ? rawPrev / 1000 : rawPrev) : null;
-                        const change = prev && Math.abs(prev) > 0.01 ? ((v - prev) / Math.abs(prev)) * 100 : null;
+                        const change =
+                          v != null && prev != null && Math.abs(prev) > 0.01
+                            ? ((v - prev) / Math.abs(prev)) * 100
+                            : null;
                         return (
                           <td key={p.period} className="py-1.5 text-right tabular-nums">
-                            <div>{fmtValue(v, meta.unit)}</div>
+                            <div>{v != null ? fmtValue(v, meta.unit) : "–"}</div>
                             {change !== null && (
                               <div className={`text-[9px] ${change >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                                 {change >= 0 ? "▲" : "▼"} {Math.abs(change).toFixed(1)}%
@@ -329,7 +335,7 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
               <div>
                 <div className="text-xs font-semibold text-emerald-200">Nguồn: VNDirect finfo (API công khai)</div>
                 <div className="mt-0.5 text-[10px] text-slate-500">
-                  Nhãn chỉ tiêu lấy thẳng từ itemName do VNDirect công bố qua /v4/ratios; số tiền quy đổi tỷ VND, lũy kế từ đầu năm đến cuối kỳ. Bảng được dựng trực tiếp trong trình duyệt vì máy chủ hiện không với tới nguồn này.
+                  Nhãn chỉ tiêu lấy thẳng từ itemName do VNDirect công bố qua /v4/ratios; bảng quý là số RIÊNG quý (mã _QR, hoặc hiệu hai số lũy kế đã công bố khi thiếu _QR), bảng cân đối là số dư cuối kỳ, đơn vị tỷ VND; mục không có dữ liệu hiện –. Bảng được dựng trực tiếp trong trình duyệt vì máy chủ hiện không với tới nguồn này.
                 </div>
               </div>
               {clientSource && (
