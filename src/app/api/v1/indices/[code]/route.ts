@@ -16,6 +16,14 @@ import { assessIndex, computeIndexStats, rankDrivers } from "@/lib/index-analysi
 export const dynamic = "force-dynamic";
 
 const INDEX_META: Record<string, { name: string; exchange: string; constituents: string[] }> = {
+  VN30: {
+    name: "VN30-Index",
+    exchange: "HOSE",
+    constituents: [
+      "VCB", "VIC", "VHM", "VNM", "FPT", "HPG", "MWG", "TCB", "BID", "CTG",
+      "SSI", "GAS", "MSN", "VJC", "STB", "VPB", "HDB", "VRE",
+    ],
+  },
   VNINDEX: {
     name: "VN-Index",
     exchange: "HOSE",

@@ -69,10 +69,11 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
   const analysis = usePoll<IndexAnalysisPayload>(`/indices/${normalized}?range=${range}`, 20_000);
   const realtime = useRealtimeMarket([normalized]);
   const rt = realtime.quotes[normalized];
+  const isLive = Boolean(rt && rt.source !== "rest");
 
   const data = analysis.data;
-  const livePrice = rt?.price ?? data?.stats?.last ?? null;
-  const liveChange = rt?.changePct ?? data?.stats?.changePct ?? null;
+  const livePrice = isLive ? rt!.price : (data?.stats?.last ?? null);
+  const liveChange = isLive ? rt!.changePct : (data?.stats?.changePct ?? null);
 
   const historyData = useMemo(
     () => (data?.history ?? []).map((b) => ({ ...b, t: b.time })),
@@ -95,9 +96,9 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
         </div>
         <div className="text-right">
           <div className="flex items-center justify-end gap-2">
-            {rt ? <span className="flex items-center gap-1 text-[10px] text-emerald-400"><span className="live-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />LIVE</span> : <span className="text-[10px] text-slate-500">NGUỒN: {(data?.source ?? "—").toUpperCase()}</span>}
+            {isLive ? <span className="flex items-center gap-1 text-[10px] text-emerald-400"><span className="live-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />LIVE</span> : <span className="text-[10px] text-slate-500">EOD · {(data?.source ?? "—").toUpperCase()}</span>}
           </div>
-          <div className={`font-mono text-3xl font-extrabold tabular-nums ${rt ? "text-emerald-300" : "text-white"}`}>{fmtNum(livePrice)}</div>
+          <div className={`font-mono text-3xl font-extrabold tabular-nums ${isLive ? "text-emerald-300" : "text-white"}`}>{fmtNum(livePrice)}</div>
           <div className={`font-mono text-sm font-semibold ${tone(liveChange)}`}>{fmtPct(liveChange)}</div>
         </div>
       </div>

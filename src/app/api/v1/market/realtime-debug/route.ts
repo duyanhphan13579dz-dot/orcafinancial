@@ -9,6 +9,7 @@
 import { NextRequest } from "next/server";
 import { checkRateLimit, handleError, ok } from "@/lib/api";
 import { fetchCafefRealtimeQuotes } from "@/lib/connectors/cafef-realtime";
+import { getQuotes } from "@/lib/market";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,10 @@ export async function GET(req: NextRequest) {
     .slice(0, 10);
 
   try {
-    const result = await fetchCafefRealtimeQuotes(symbols, fetch, true);
+    const [result, baseline] = await Promise.all([
+      fetchCafefRealtimeQuotes(symbols, fetch, true),
+      getQuotes(symbols, { persist: false, allowStale: true, fast: true }).catch(() => []),
+    ]);
     return ok(
       {
         requestedSymbols: symbols,
@@ -36,6 +40,14 @@ export async function GET(req: NextRequest) {
         firstRecordKeys: result.debug.firstRecordKeys,
         warnings: result.warnings,
         quotes: result.quotes.slice(0, 10),
+        // Giá EOD từ vndirect dchart — để đối chiếu nguồn nào lệch so với
+        // terminal thật của người dùng.
+        baselineEod: baseline.map((q) => ({
+          symbol: q.symbol,
+          close: q.close,
+          changePct: q.changePct,
+          source: q.source,
+        })),
         sample: result.sample ?? null,
       },
       undefined,

@@ -40,6 +40,7 @@ export const SECTOR_SYMBOLS = [...new Set(SECTOR_DEFINITIONS.flatMap((sector) =>
 
 export const INDICES = [
   { code: "VNINDEX", name: "VN-Index", exchange: "HOSE" },
+  { code: "VN30", name: "VN30-Index", exchange: "HOSE" },
   { code: "HNX", name: "HNX-Index", exchange: "HNX" },
   { code: "UPCOM", name: "UPCOM-Index", exchange: "UPCOM" },
 ];
