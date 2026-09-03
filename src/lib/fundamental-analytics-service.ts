@@ -137,25 +137,43 @@ async function loadQuarters(
   // (nguồn của tab Báo cáo tài chính, có snapshot nguyên văn khi nguồn sống
   // bị chặn). reportType QUARTER = số riêng quý → khai báo basis rõ, không để
   // heuristics đoán nhầm chuỗi tăng trưởng thành lũy kế.
-  try {
-    const finfo = await fetchVndirectFinfoFinancialStatements(symbol, ANALYTICS_QUARTERS);
-    warnings.push(...finfo.warnings);
-    if (finfo.quarters.length > 0) {
-      const mapped = toFinancialQuarters(finfo.quarters);
-      warnings.push(...mapped.warnings);
-      if (mapped.quarters.length > 0) {
-        return {
-          quarters: mapped.quarters,
-          source: "vndirect-finfo",
-          providerBacked: true,
-          basis: "standalone",
-          warnings,
-        };
+  // NGÂN SÁCH CỨNG 6s: route serverless không được treo chờ upstream — quá
+  // ngân sách thì bỏ qua (tab Cơ bản về trạng thái thiếu dữ liệu như trước).
+  const finioStage = (async (): Promise<{
+    quarters: FinancialQuarter[];
+    source: string;
+    providerBacked: boolean;
+    basis?: "standalone";
+    warnings: string[];
+  } | null> => {
+    try {
+      const finfo = await fetchVndirectFinfoFinancialStatements(symbol, 8);
+      warnings.push(...finfo.warnings);
+      if (finfo.quarters.length > 0) {
+        const mapped = toFinancialQuarters(finfo.quarters);
+        warnings.push(...mapped.warnings);
+        if (mapped.quarters.length > 0) {
+          return {
+            quarters: mapped.quarters,
+            source: "vndirect-finfo",
+            providerBacked: true,
+            basis: "standalone",
+            warnings,
+          };
+        }
       }
+      return null;
+    } catch (err) {
+      warnings.push(`vndirect-finfo: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
     }
-  } catch (err) {
-    warnings.push(`vndirect-finfo: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  })();
+  const finioResult = await Promise.race([
+    finioStage,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 6_000)),
+  ]);
+  if (finioResult) return finioResult;
+  warnings.push("vndirect-finfo: vượt ngân sách 6s hoặc không có dữ liệu — bỏ qua.");
   return { quarters: [], source: "none", providerBacked: false, warnings };
 }
 

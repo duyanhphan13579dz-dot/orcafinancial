@@ -5,6 +5,7 @@ import {
   computeFundamentalAnalytics,
   type FundamentalInputs,
 } from "@/lib/fundamental-analytics-service";
+import { buildFundamentalReportFromAnalytics } from "@/lib/fundamental";
 
 /**
  * E2E thuần: nguồn sống bị chặn (403) → snapshot BCTC VIC lấp đầy →
@@ -47,6 +48,15 @@ describe("tab Cơ bản tính từ snapshot BCTC khi nguồn sống bị chặn"
     expect(analytics.valuation!.epsLtm).toBeGreaterThan(0);
     const peRow = analytics.valuation!.multiples.find((m) => m.key === "pe" || m.label.includes("P/E"));
     expect(peRow?.value).toBeGreaterThan(0);
+
+    // Đúng đường code của route /fundamental khi analytics available —
+    // không được throw (lỗi ở đây = trang Cơ bản "couldn't load").
+    const report = buildFundamentalReportFromAnalytics(analytics, 120);
+    expect(report.engineVersion).toBe("ltm-verified-v2");
+    expect(report.eps).toBeGreaterThan(0);
+    expect(report.financialHealth.overallScore).toBeGreaterThan(0);
+    expect(report.valuation.pe).toBeGreaterThan(0);
+    expect(report.valuation.pb).toBeGreaterThan(0);
     vi.useRealTimers();
   });
 });
