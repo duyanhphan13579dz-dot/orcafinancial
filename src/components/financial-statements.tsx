@@ -140,7 +140,7 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
     return false;
   };
 
-  const load = async (t: StatementType, p: PeriodType) => {
+  const load = async (t: StatementType, p: PeriodType, retryLeft = 2) => {
     setLoading(true);
     setError(null);
     const limit = p === "yearly" ? 3 : 4;
@@ -149,10 +149,16 @@ export function FinancialStatements({ symbol }: { symbol: string }) {
       const res = await api<FinancialsResponse>(`/stocks/${symbol}/financials?type=${t}&period=${p}&limit=${limit}`);
       setData(res.data);
       const serverHas = Array.isArray(res.data?.periods) && res.data.periods.length > 0;
+      // DB vừa được nạp lại theo parser mới nhưng chưa kịp xong trong lúc
+      // server chờ → thử lại sau vài giây (tối đa 2 lần) để nhận số hợp nhất.
+      const parserStale = (res as { meta?: { parserStale?: boolean } }).meta?.parserStale === true;
       if (serverHas) {
         setClientQuarters(null);
         setClientSource(null);
         setClientNote(null);
+        if (parserStale && retryLeft > 0) {
+          setTimeout(() => void load(t, p, retryLeft - 1), 6_000);
+        }
         return;
       }
       await tryClientFallback(limit, mode);

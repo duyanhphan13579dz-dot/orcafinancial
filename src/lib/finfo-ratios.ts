@@ -55,7 +55,7 @@ export interface FinfoQuarter {
   cashflow: Record<string, number>;
 }
 
-type Section = "balance" | "cashflow";
+type Section = "income" | "balance" | "cashflow";
 
 /** Mỗi ô chuẩn hóa: mã _QR (riêng quý), mã _YD (lũy kế/năm). */
 interface FieldSpec {
@@ -82,6 +82,8 @@ export const FINFO_INCOME_ITEM_CODES: Record<string, number> = {
 };
 
 export const FIELD_SPECS: FieldSpec[] = [
+  // EBITDA lấy từ /v4/ratios (dẫn xuất từ lợi nhuận HĐKD hợp nhất).
+  { section: "income", field: "ebitda", qr: "OPERATING_EBITDA_QR", yd: "OPERATING_EBITDA_YD" },
   // Bảng cân đối (số dư thời điểm, hợp nhất). KHÔNG dùng TOTAL_CAP_AQ
   // ("Tổng vốn"): với VIC nó ≠ tổng nguồn vốn (210.740 vs 1.308.938 tỷ).
   { section: "balance", field: "currentAssets", yd: "CURRENT_ASSETS_AQ" },
@@ -251,11 +253,18 @@ export async function fetchFinfoRatioQuarters(
   mode: "quarter" | "year" = "quarter",
 ): Promise<{ quarters: FinfoQuarter[]; urls: string[]; warnings: string[] }> {
   const baseDates = lastQuarterEnds(Math.max(1, limit));
-  // Quý liền trước quý cũ nhất: chỉ cần ratios để lấy hiệu lũy kế (CFO…)
-  // cho cột cuối bảng; income của nó không cần vì đã có số riêng quý.
-  const oldestPrev = prevQuarterEnd(baseDates[baseDates.length - 1]);
-  const ratioDates =
-    oldestPrev && !baseDates.includes(oldestPrev) ? [...baseDates, oldestPrev] : baseDates;
+  // Với MỌI quý trong bảng: nếu quý liền trước cùng năm không nằm trong
+  // bảng, vẫn kéo ratios của nó để tính hiệu lũy kế (CFO…) — nếu không cột
+  // cũ nhất sẽ mất dòng tiền và bị loại khỏi bảng (loadPreferred yêu cầu đủ
+  // income+balance+cashflow). Income không cần vì modelType 2 đã là số riêng quý.
+  const extraDates = [
+    ...new Set(
+      baseDates
+        .map((d) => prevQuarterEnd(d))
+        .filter((d): d is string => Boolean(d) && !baseDates.includes(d!)),
+    ),
+  ];
+  const ratioDates = [...baseDates, ...extraDates];
   const warnings: string[] = [];
   const ratiosByDate = new Map<string, FinfoRatioRow[]>();
   const statementsByDate = new Map<string, FinfoStatementRow[]>();

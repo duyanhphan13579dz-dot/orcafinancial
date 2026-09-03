@@ -3,11 +3,14 @@
  * Priority: official filing → VnDirect → Vietstock → CafeF.
  *
  * ROADMAP G1: INGESTION TÁCH KHỎI REQUEST NGƯỜI DÙNG.
- * - Request chỉ ĐỌC DB (loadPreferredFinancialRecords) — không bao giờ chờ upstream.
- * - Khi DB trống, ingest chạy NỀN (fire-and-forget, có in-flight guard chống spam);
- *   bảng BCTC sẽ xuất hiện ở lần poll kế tiếp của client.
- * - Kết quả accepted/rejected của lần ingest gần nhất lưu trong bộ nhớ và phơi
- *   qua getIngestionStats() để route/admin quan sát dữ liệu mất ở bước nào.
+ * - DB trống → request chỉ ĐỌC DB + ingest NỀN (fire-and-forget, in-flight
+ *   guard chống spam); bảng BCTC xuất hiện ở lần poll kế tiếp của client.
+ * - DB CÓ dữ liệu nhưng do PARSER CŨ nạp (vd. raw-v1 = lợi nhuận công ty mẹ)
+ *   → request CHỜ ingest lại (tối đa STALE_REINGEST_TIMEOUT_MS) rồi đọc lại
+ *   DB, để lần tải đó đã là số hợp nhất; nếu quá hạn thì trả số cũ kèm cờ
+ *   parserStale để client tự thử lại.
+ * - Kết quả accepted/rejected của lần ingest gần nhất phơi qua
+ *   getIngestionStats() để route/admin quan sát dữ liệu mất ở bước nào.
  */
 import {
   ingestFinancialSources,
@@ -27,6 +30,9 @@ export interface IngestionStats {
   finishedAt: string;
 }
 
+/** Quá hạn chờ ingest lại khi DB chứa dữ liệu parser cũ. */
+export const STALE_REINGEST_TIMEOUT_MS = 12_000;
+
 const inFlight = new Map<string, Promise<void>>();
 const lastStats = new Map<string, IngestionStats>();
 
@@ -39,9 +45,11 @@ export function isBackgroundIngestRunning(symbol: string): boolean {
   return inFlight.has(symbol.toUpperCase());
 }
 
-export function triggerBackgroundIngest(symbol: string, limit = 8): void {
+/** Bắt đầu (hoặc lấy lại) promise ingest của mã — không trùng lặp song song. */
+export function getOrStartIngest(symbol: string, limit = 8): Promise<void> {
   const key = symbol.toUpperCase();
-  if (inFlight.has(key)) return;
+  const existing = inFlight.get(key);
+  if (existing) return existing;
   const p = ingestFinancialSources([key], limit)
     .then(async (r) => {
       lastStats.set(key, {
@@ -53,7 +61,7 @@ export function triggerBackgroundIngest(symbol: string, limit = 8): void {
         warnings: r.warnings,
         finishedAt: new Date().toISOString(),
       });
-      // Ingest xong → xóa cache BCTC để lần poll kế tiếp đọc số mới ngay
+      // Ingest xong → xóa cache BCTC để lần đọc kế tiếp nhận số mới ngay
       // (không phải chờ TTL 10 phút của statements cache).
       if (r.acceptedFactCount > 0) {
         const { invalidateStatementsCache } = await import("@/lib/company-service");
@@ -67,6 +75,11 @@ export function triggerBackgroundIngest(symbol: string, limit = 8): void {
       inFlight.delete(key);
     });
   inFlight.set(key, p);
+  return p;
+}
+
+export function triggerBackgroundIngest(symbol: string, limit = 8): void {
+  void getOrStartIngest(symbol, limit);
 }
 
 export async function ensureLivePreferredFinancials(
@@ -78,25 +91,38 @@ export async function ensureLivePreferredFinancials(
   source: "filing" | "vndirect" | "vietstock" | "cafef";
   providerBacked: boolean;
   ingested: boolean;
+  /** DB vẫn còn dữ liệu parser cũ sau khi đã thử nạp lại → client nên thử lại. */
+  parserStale: boolean;
   warnings: string[];
 }> {
   const existing = await loadPreferredFinancialRecords(symbol, statementType, limit);
   if (existing.providerBacked && existing.records.length > 0) {
-    // DB có dữ liệu nhưng do parser cũ nạp (vd. "raw-v1" = lợi nhuận công ty
-    // mẹ) → ingest lại NỀN theo parser hiện hành (consol-v2 = hợp nhất).
-    // Request này vẫn trả dữ liệu cũ; lần poll kế tiếp sẽ có số hợp nhất.
-    let staleWarnings: string[] = [];
-    if (!(await hasCurrentParserVersion(symbol))) {
-      triggerBackgroundIngest(symbol, limit);
-      staleWarnings = [
-        `DB đang chứa BCTC do parser cũ nạp — đang nạp lại theo ${FINANCIAL_PARSER_VERSION} (BCTC hợp nhất). Lần tải sau sẽ hiển thị số hợp nhất.`,
-      ];
+    // DB có dữ liệu nhưng có thể do parser cũ nạp (vd. "raw-v1" = lợi nhuận
+    // công ty mẹ). Khi đó CHỜ ingest lại theo parser hiện hành rồi đọc lại.
+    let stale = !(await hasCurrentParserVersion(symbol));
+    if (stale) {
+      await Promise.race([
+        getOrStartIngest(symbol, limit),
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, STALE_REINGEST_TIMEOUT_MS);
+        }),
+      ]);
+      stale = !(await hasCurrentParserVersion(symbol));
     }
+    const records = stale
+      ? existing
+      : await loadPreferredFinancialRecords(symbol, statementType, limit);
+    const served = records.providerBacked && records.records.length > 0 ? records : existing;
     return {
-      ...existing,
-      records: existing.records.map((r) => ({ ...r, kind: "actual" as const })),
+      ...served,
+      records: served.records.map((r) => ({ ...r, kind: "actual" as const })),
       ingested: false,
-      warnings: staleWarnings,
+      parserStale: stale,
+      warnings: stale
+        ? [
+            `DB đang chứa BCTC do parser cũ nạp — đã thử nạp lại theo ${FINANCIAL_PARSER_VERSION} (BCTC hợp nhất) nhưng chưa xong; bảng sẽ tự thử lại.`,
+          ]
+        : [],
     };
   }
 
@@ -109,6 +135,7 @@ export async function ensureLivePreferredFinancials(
     ...refreshed,
     records: refreshed.records.map((r) => ({ ...r, kind: "actual" as const })),
     ingested: false,
+    parserStale: false,
     warnings: refreshed.providerBacked
       ? []
       : [

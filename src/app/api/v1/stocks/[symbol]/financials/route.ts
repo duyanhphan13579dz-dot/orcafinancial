@@ -169,11 +169,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
         validation,
         // ROADMAP G1: quan sát accepted/rejected của ingest nền.
         ingestionStats: getIngestionStats(symbol),
+        parserStale: preferred.parserStale === true,
         disclosure: hasVerified
           ? "Bảng lấy từ nguồn provider đã xác minh (ưu tiên TCBS/doanh nghiệp, sau đó Vietstock)."
           : `Chưa có BCTC verified sau khi thử TCBS → Vietstock. ${preferred.warnings?.slice(0, 3).join(" | ") || "Cấu hình TCBS_MCP_ACCESS_TOKEN hoặc VIETSTOCK_DATAFEED_URL."}`,
       },
-      { cacheSeconds: 300 },
+      // KHÔNG dùng cacheSeconds: CDN/proxy mà giữ bản cũ (s-maxage) sẽ khiến
+      // người dùng nhìn thấy số liệu lỗi thời ngay sau khi DB vừa nạp lại.
+      // Lớp cache 10 phút của DB (statements cache) vẫn bảo vệ Postgres.
     );
   } catch (err) {
     return handleError(err, `financials:${symbol}`);
