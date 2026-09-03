@@ -27,7 +27,7 @@ import { FINFO_SNAPSHOT_AS_OF, FINFO_STATEMENTS_SNAPSHOT } from "@/lib/finfo-sna
 export const FINFO_API_BASE = "https://api-finfo.vndirect.com.vn";
 
 /** Phiên bản parser BCTC — bump khi đổi cơ sở số liệu để DB tự nạp lại. */
-export const FINFO_PARSER_VERSION = "consol-v4";
+export const FINFO_PARSER_VERSION = "consol-v5";
 
 export interface FinfoRatioRow {
   code?: string;
@@ -87,6 +87,42 @@ export const FINFO_INCOME_ITEM_CODES: Record<string, number[]> = {
   netIncomeParent: [23000],
   minorityInterest: [23500],
 };
+
+/**
+ * Bảng CĐKT HỢP NHẤT (modelType 1, doanh nghiệp thường). Mã chỉ tiêu = số
+ * dòng TT200 × 100, verified trên VIC bằng đẳng thức kế toán cả 4 kỳ:
+ * 11000+12000=12700; 13100+13300=13000; 13000+14000=12700.
+ * Ngân hàng (model 101) dùng template mã khác — chưa map, tránh đoán mò.
+ */
+export const FINFO_BALANCE_ITEM_CODES: Record<string, number> = {
+  cashAndEquivalents: 11100, // 110 Tiền và tương đương tiền
+  shortTermInvestments: 11200, // 120 Đầu tư tài chính ngắn hạn
+  receivables: 11300, // 130 Các khoản phải thu ngắn hạn
+  inventory: 11400, // 140 Hàng tồn kho
+  currentAssets: 11000, // 100 Tài sản ngắn hạn
+  fixedAssets: 12200, // 220 Tài sản cố định
+  longTermInvestments: 12400, // 240 Đầu tư tài chính dài hạn
+  totalAssets: 12700, // 270 TỔNG CỘNG TÀI SẢN
+  currentLiabilities: 13100, // 310 Nợ ngắn hạn
+  longTermDebt: 13300, // 330 Nợ dài hạn
+  totalLiabilities: 13000, // 300 NỢ PHẢI TRẢ
+  equity: 14000, // 400 VỐN CHỦ SỞ HỮU
+};
+
+/**
+ * LCTT HỢP NHẤT (modelType 3, doanh nghiệp thường): 32000 = lưu chuyển
+ * thuần từ HĐKD (dòng 20), 32100 = chi mua TSCĐ (dòng 21), 33000 = lưu
+ * chuyển thuần từ HĐ đầu tư (dòng 30), 33600 = cổ tức đã trả (dòng 36).
+ * Verified trên VIC: 32000+33000+34000=35000; tiền cuối kỳ 37000 = 11100 CĐKT.
+ */
+export const FINFO_CASHFLOW_ITEM_CODES: Record<string, number> = {
+  operatingCashFlow: 32000,
+  capex: 32100,
+  investingCashFlow: 33000,
+  dividendsPaid: 33600,
+};
+/** "Phát hành/hoàn trả nợ" = tiền vay thu được (33300) + trả nợ gốc vay (33400). */
+export const FINFO_CASHFLOW_DEBT_CODES = [33300, 33400];
 
 export const FIELD_SPECS: FieldSpec[] = [
   // EBITDA lấy từ /v4/ratios (dẫn xuất từ lợi nhuận HĐKD hợp nhất).
@@ -207,6 +243,52 @@ export function incomeFromStatementRows(rows: FinfoStatementRow[]): Record<strin
   return out;
 }
 
+/** Bảng cân đối hợp nhất (tỷ VND) từ rows modelType 1 của /v4/financial_statements. */
+export function balanceFromStatementRows(rows: FinfoStatementRow[]): Record<string, number> {
+  const byItem = new Map<number, number>();
+  for (const row of rows) {
+    if (
+      row?.modelType === 1 &&
+      typeof row.itemCode === "number" &&
+      typeof row.numericValue === "number" &&
+      Number.isFinite(row.numericValue)
+    ) {
+      byItem.set(row.itemCode, row.numericValue);
+    }
+  }
+  const out: Record<string, number> = {};
+  for (const [field, code] of Object.entries(FINFO_BALANCE_ITEM_CODES)) {
+    const v = byItem.get(code);
+    if (v != null) out[field] = v / TY;
+  }
+  return out;
+}
+
+/** LCTT hợp nhất (tỷ VND) từ rows modelType 3 của /v4/financial_statements. */
+export function cashflowFromStatementRows(rows: FinfoStatementRow[]): Record<string, number> {
+  const byItem = new Map<number, number>();
+  for (const row of rows) {
+    if (
+      row?.modelType === 3 &&
+      typeof row.itemCode === "number" &&
+      typeof row.numericValue === "number" &&
+      Number.isFinite(row.numericValue)
+    ) {
+      byItem.set(row.itemCode, row.numericValue);
+    }
+  }
+  const out: Record<string, number> = {};
+  for (const [field, code] of Object.entries(FINFO_CASHFLOW_ITEM_CODES)) {
+    const v = byItem.get(code);
+    if (v != null) out[field] = v / TY;
+  }
+  const debtParts = FINFO_CASHFLOW_DEBT_CODES.map((c) => byItem.get(c));
+  if (debtParts.every((v) => v != null)) {
+    out.debtIssuance = debtParts.reduce<number>((s, v) => s + (v ?? 0), 0) / TY;
+  }
+  return out;
+}
+
 /**
  * Dựng các quý chuẩn hóa (mới nhất trước) từ rows của hai endpoint finfo.
  * mode "quarter" → số riêng quý; "year" → lũy kế năm (chỉ dùng cho kỳ 31/12,
@@ -261,6 +343,22 @@ export function quartersFromFinfoRows(
     // Tổng nợ = tổng tài sản − vốn chủ (đẳng thức kế toán, cả hai đều công bố).
     if (q.balance.totalAssets != null && q.balance.equity != null) {
       q.balance.totalLiabilities = q.balance.totalAssets - q.balance.equity;
+    }
+
+    // Lấp các đề mục còn thiếu từ chính BCTC (model 1 cân đối, model 3 LCTT).
+    // Ratios luôn thắng (giữ chuẩn TOTAL_ASSETS_AQ/OWNERS_EQUITY_AQ đã đối
+    // chiếu với terminal); statements chỉ bổ sung ô ratios không có.
+    const stmtRows = statementsByDate.get(date) ?? [];
+    const stmtBalance = balanceFromStatementRows(stmtRows);
+    for (const [f, v] of Object.entries(stmtBalance)) {
+      if (q.balance[f] == null) q.balance[f] = v;
+    }
+    if (q.balance.totalLiabilitiesEquity == null && stmtBalance.totalAssets != null) {
+      q.balance.totalLiabilitiesEquity = stmtBalance.totalAssets;
+    }
+    const stmtCashflow = cashflowFromStatementRows(stmtRows);
+    for (const [f, v] of Object.entries(stmtCashflow)) {
+      if (q.cashflow[f] == null) q.cashflow[f] = v;
     }
     const filled =
       Object.keys(q.income).length + Object.keys(q.balance).length + Object.keys(q.cashflow).length;
@@ -406,15 +504,15 @@ export async function fetchFinfoRatioQuarters(
       if (!rows) continue;
       statementsByDate.set(
         date,
-        rows.map(([itemCode, numericValue]) => ({
+        rows.map(([modelType, itemCode, numericValue]) => ({
           itemCode,
           numericValue,
-          modelType: 2,
+          modelType,
           reportType: "QUARTER",
           fiscalDate: date,
         })),
       );
-      warnings.push(`KQKD ${date}: dùng bản sao lưu ${FINFO_SNAPSHOT_AS_OF} (nguồn sống bị chặn)`);
+      warnings.push(`BCTC ${date}: dùng bản sao lưu ${FINFO_SNAPSHOT_AS_OF} (nguồn sống bị chặn)`);
     }
   }
 

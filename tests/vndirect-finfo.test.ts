@@ -7,6 +7,8 @@ import {
   finfoRatiosUrl,
   finfoStatementsRangeUrl,
   incomeFromStatementRows,
+  balanceFromStatementRows,
+  cashflowFromStatementRows,
   quartersFromFinfoRows,
   FINFO_PARSER_VERSION,
   type FinfoRatioRow,
@@ -193,6 +195,49 @@ describe("finfo parser — BCTC hợp nhất (consol-v2)", () => {
     expect(income.costOfGoodsSold).toBeUndefined(); // bank không có giá vốn
   });
 
+  it("cân đối (model 1): map đủ đề mục, bỏ qua model 2/3, đơn vị tỷ", () => {
+    const rows: FinfoStatementRow[] = [
+      { itemCode: 11000, numericValue: 8.42400726e14, modelType: 1, fiscalDate: "2026-06-30" },
+      { itemCode: 11100, numericValue: 7.6396702e13, modelType: 1, fiscalDate: "2026-06-30" },
+      { itemCode: 11300, numericValue: 3.03176023e14, modelType: 1, fiscalDate: "2026-06-30" },
+      { itemCode: 11400, numericValue: 2.84664807e14, modelType: 1, fiscalDate: "2026-06-30" },
+      { itemCode: 12700, numericValue: 1.309346482e15, modelType: 1, fiscalDate: "2026-06-30" },
+      { itemCode: 13000, numericValue: 1.117676877e15, modelType: 1, fiscalDate: "2026-06-30" },
+      { itemCode: 13100, numericValue: 7.12265494e14, modelType: 1, fiscalDate: "2026-06-30" },
+      { itemCode: 13300, numericValue: 4.05411383e14, modelType: 1, fiscalDate: "2026-06-30" },
+      { itemCode: 14000, numericValue: 1.91669605e14, modelType: 1, fiscalDate: "2026-06-30" },
+      // nhiễu: cùng mã nhưng khác model không được lẫn vào
+      { itemCode: 13000, numericValue: 9.99e15, modelType: 3, fiscalDate: "2026-06-30" },
+    ];
+    const bal = balanceFromStatementRows(rows);
+    expect(bal.cashAndEquivalents).toBeCloseTo(76396.702, 2);
+    expect(bal.currentAssets).toBeCloseTo(842400.726, 2);
+    expect(bal.totalAssets).toBeCloseTo(1309346.482, 2);
+    expect(bal.totalLiabilities).toBeCloseTo(1117676.877, 2);
+    expect(bal.equity).toBeCloseTo(191669.605, 2);
+    // đẳng thức kế toán từ chính số đã map
+    expect(bal.totalLiabilities + bal.equity).toBeCloseTo(bal.totalAssets, 3);
+    expect(bal.currentLiabilities + bal.longTermDebt).toBeCloseTo(bal.totalLiabilities, 3);
+  });
+
+  it("LCTT (model 3): CFO/capex/đầu tư/cổ tức + debtIssuance = 33300+33400", () => {
+    const rows: FinfoStatementRow[] = [
+      { itemCode: 32000, numericValue: 2.2519605e13, modelType: 3, fiscalDate: "2026-06-30" },
+      { itemCode: 32100, numericValue: -2.4853957e13, modelType: 3, fiscalDate: "2026-06-30" },
+      { itemCode: 33000, numericValue: -7.8997377e13, modelType: 3, fiscalDate: "2026-06-30" },
+      { itemCode: 33300, numericValue: 1.27119754e14, modelType: 3, fiscalDate: "2026-06-30" },
+      { itemCode: 33400, numericValue: -5.5042876e13, modelType: 3, fiscalDate: "2026-06-30" },
+      { itemCode: 33600, numericValue: -3.66157e11, modelType: 3, fiscalDate: "2026-06-30" },
+      { itemCode: 32000, numericValue: 9.99e15, modelType: 1, fiscalDate: "2026-06-30" }, // nhiễu
+    ];
+    const cf = cashflowFromStatementRows(rows);
+    expect(cf.operatingCashFlow).toBeCloseTo(22519.605, 2);
+    expect(cf.capex).toBeCloseTo(-24853.957, 2);
+    expect(cf.investingCashFlow).toBeCloseTo(-78997.377, 2);
+    expect(cf.dividendsPaid).toBeCloseTo(-366.157, 3);
+    expect(cf.debtIssuance).toBeCloseTo(72076.878, 2); // 127.119,754 − 55.042,876
+  });
+
   it("quarter: income hợp nhất + cân đối _AQ + CFO hiệu lũy kế", () => {
     const qs = quartersFromFinfoRows(
       new Map([
@@ -272,8 +317,8 @@ describe("finfo parser — BCTC hợp nhất (consol-v2)", () => {
     expect(result.warnings.some((w) => w.includes("sao lưu"))).toBe(false);
   });
 
-  it("parser version = consol-v4 (DB raw-v1/consol-v2/v3 bị coi là stale và nạp lại)", () => {
-    expect(FINFO_PARSER_VERSION).toBe("consol-v4");
+  it("parser version = consol-v5 (DB phiên bản cũ bị coi là stale và nạp lại)", () => {
+    expect(FINFO_PARSER_VERSION).toBe("consol-v5");
   });
 
   it("rớt request lần đầu ở quý xa → retry lấy đủ, bảng vẫn đủ cột", async () => {
@@ -306,6 +351,14 @@ describe("finfo parser — BCTC hợp nhất (consol-v2)", () => {
     expect(result.quarters[0].income.netIncome).toBeCloseTo(14763.96, 2);
     expect(result.quarters[0].income.minorityInterest).toBeCloseTo(4761.345, 2);
     expect(result.quarters[3].income.grossProfit).toBeCloseTo(-7289.975, 2); // lỗ gộp Q3/2025
+    // snapshot toàn bộ đề mục: cân đối + LCTT cũng được lấp khi nguồn bị chặn
+    expect(result.quarters[0].balance.totalAssets).toBeCloseTo(1309346.482, 2);
+    expect(result.quarters[0].balance.equity).toBeCloseTo(191669.605, 2);
+    expect(result.quarters[0].balance.cashAndEquivalents).toBeCloseTo(76396.702, 2);
+    expect(result.quarters[0].balance.inventory).toBeCloseTo(284664.807, 2);
+    expect(result.quarters[0].cashflow.operatingCashFlow).toBeCloseTo(22519.605, 2);
+    expect(result.quarters[0].cashflow.capex).toBeCloseTo(-24853.957, 2);
+    expect(result.quarters[0].cashflow.debtIssuance).toBeCloseTo(72076.878, 2);
     expect(result.warnings.some((w) => w.includes("sao lưu"))).toBe(true);
     vi.useRealTimers();
   });
