@@ -119,3 +119,46 @@ describe("finfo + snapshot → analytics (e2e, DB rỗng)", () => {
     expect(analytics.health?.altman?.verdictVi).toContain("VCSH − vốn góp");
   }, 20_000);
 });
+
+describe("reconciliation: đầu ra tab Cơ bản == đầu vào bảng Tài chính", () => {
+  // Quy trình Fundamental analyst: data-engine hiển thị BCTC finfo ở tab Tài
+  // chính rồi snapshot CHÍNH bộ số đó để tính toán — nên mọi ô của tab Cơ bản
+  // (biểu đồ doanh thu, LTM, EPS…) phải khớp từng dòng snapshot, không được
+  // lệch (vụ VIC: bảng 117.936,034 mà biểu đồ từng lấy nguồn DB khác ~113k).
+  it("chart / statement-source / valuation đồng nhất với snapshot finfo", async () => {
+    const TY = 1e9;
+    const REV_Q2 = 1.17936034e14 / TY; // 117.936,034 tỷ — ô 21001 Q2/2026
+    const NI_Q2 = 1.476396e13 / TY; // 14.763,96 tỷ — ô 23003 Q2/2026
+    const REV_Q1 = 1.04352018e14 / TY;
+    const NI_Q1 = 5.610779e12 / TY;
+    const SHARES = 7.7334919e13 / TY / 10; // 14110 ÷ 10 = 7.733,4919 triệu cp
+
+    const inputs = await loadFundamentalInputs("VIC");
+    const q26 = inputs.quarters.find((q) => q.period === "Q2/2026")!;
+    expect(q26.income.revenue).toBeCloseTo(REV_Q2, 1);
+    expect(q26.income.netIncome).toBeCloseTo(NI_Q2, 1);
+
+    const analytics = await getFundamentalAnalytics("VIC");
+    expect(analytics.available).toBe(true);
+
+    // 1) Bảng nguồn trong tab Cơ bản (StatementSourceCard) == snapshot.
+    const row = analytics.statement!.rows.find((r) => r.period === "Q2/2026")!;
+    expect(row.revenue).toBeCloseTo(REV_Q2, 1);
+    expect(row.netIncome).toBeCloseTo(NI_Q2, 1);
+
+    // 2) Cột biểu đồ doanh thu (RevenueProfitChart) == ô bảng Tài chính.
+    const chartQ = analytics.chart!.quarters.find((q) => q.shortTag === "2Q26")!;
+    expect(chartQ.revenue).toBeCloseTo(REV_Q2, 1);
+    expect(chartQ.netIncome).toBeCloseTo(NI_Q2, 1);
+
+    // 3) LTM nội suy đúng từ 2 quý 2026 đang hiển thị (YTD × 2).
+    expect(analytics.statement!.ltm!.revenue).toBeCloseTo((REV_Q1 + REV_Q2) * 2, 0);
+    expect(analytics.statement!.ltm!.netIncome).toBeCloseTo((NI_Q1 + NI_Q2) * 2, 0);
+
+    // 4) EPS/P/E suy từ chính LTM và số CP ở trên — không nguồn nào khác.
+    const epsExpected = ((NI_Q1 + NI_Q2) * 2) / SHARES;
+    expect(analytics.valuation!.epsLtm).toBeCloseTo(epsExpected, 2);
+    const pe = analytics.valuation!.multiples.find((m) => m.key === "pe")!;
+    expect(pe.value).toBeCloseTo(120 / epsExpected, 1); // giá 120.000đ = 120 nghìn
+  }, 20_000);
+});

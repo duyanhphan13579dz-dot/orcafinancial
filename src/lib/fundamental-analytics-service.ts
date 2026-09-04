@@ -119,27 +119,14 @@ async function loadQuarters(
   warnings: string[];
 }> {
   const warnings: string[] = [];
-  try {
-    const preferred = await loadPreferredQuarterlyFinancials(symbol, ANALYTICS_QUARTERS);
-    if (preferred.quarters.length > 0) {
-      return { quarters: preferred.quarters, source: preferred.source, providerBacked: preferred.providerBacked, warnings };
-    }
-    warnings.push(...preferred.warnings);
-  } catch (err) {
-    warnings.push(`loadPreferredQuarterlyFinancials: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  try {
-    const fallback = await ensureQuarterlyFinancials(symbol, ANALYTICS_QUARTERS);
-    if (fallback.length > 0) return { quarters: fallback, source: "financial_statements", providerBacked: true, warnings };
-  } catch (err) {
-    warnings.push(`ensureQuarterlyFinancials: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  // BCTC verified (TCBS/Vietstock/CafeF) trống → dùng BCTC VNDirect finfo
-  // (nguồn của tab Báo cáo tài chính, có snapshot nguyên văn khi nguồn sống
-  // bị chặn). reportType QUARTER = số riêng quý → khai báo basis rõ, không để
-  // heuristics đoán nhầm chuỗi tăng trưởng thành lũy kế.
-  // NGÂN SÁCH CỨNG 6s: route serverless không được treo chờ upstream — quá
-  // ngân sách thì bỏ qua (tab Cơ bản về trạng thái thiếu dữ liệu như trước).
+  // NGUỒN CHUẨN DUY NHẤT theo quy trình Fundamental analyst: bộ số mà tab
+  // TÀI CHÍNH hiển thị (fetchFinfoRatioQuarters — VNDirect finfo live, snapshot
+  // nguyên văn khi nguồn sống bị chặn) chính là đầu vào của mọi tính toán ở
+  // tab CƠ BẢN. Đầu vào chuẩn thì đầu ra mới khớp từng con số đã hiển thị.
+  // Trước đây thứ tự đảo ngược (DB verified TCBS/CafeF thắng) khiến biểu đồ
+  // và chỉ số lệch khỏi bảng Tài chính (VD VIC 117.936 vs ~113.xxx).
+  // DB verified giờ CHỈ là fallback khi finfo không trả dữ liệu.
+  // NGÂN SÁCH CỨNG 6s: route serverless không được treo chờ upstream.
   const finioStage = (async (): Promise<{
     quarters: FinancialQuarter[];
     source: string;
@@ -174,7 +161,27 @@ async function loadQuarters(
     new Promise<null>((resolve) => setTimeout(() => resolve(null), 6_000)),
   ]);
   if (finioResult) return finioResult;
-  warnings.push("vndirect-finfo: vượt ngân sách 6s hoặc không có dữ liệu — bỏ qua.");
+  warnings.push("vndirect-finfo: vượt ngân sách 6s hoặc không có dữ liệu — thử BCTC verified.");
+
+  // Fallback 1: BCTC verified trong DB (TCBS/Vietstock/CafeF) — chỉ dùng khi
+  // nguồn chuẩn (finfo của tab Tài chính) không với tới được.
+  try {
+    const preferred = await loadPreferredQuarterlyFinancials(symbol, ANALYTICS_QUARTERS);
+    if (preferred.quarters.length > 0) {
+      return { quarters: preferred.quarters, source: preferred.source, providerBacked: preferred.providerBacked, warnings };
+    }
+    warnings.push(...preferred.warnings);
+  } catch (err) {
+    warnings.push(`loadPreferredQuarterlyFinancials: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Fallback 2: chuỗi ingest đảm bảo (ensure) rồi đọc lại DB.
+  try {
+    const fallback = await ensureQuarterlyFinancials(symbol, ANALYTICS_QUARTERS);
+    if (fallback.length > 0) return { quarters: fallback, source: "financial_statements", providerBacked: true, warnings };
+  } catch (err) {
+    warnings.push(`ensureQuarterlyFinancials: ${err instanceof Error ? err.message : String(err)}`);
+  }
   return { quarters: [], source: "none", providerBacked: false, warnings };
 }
 
