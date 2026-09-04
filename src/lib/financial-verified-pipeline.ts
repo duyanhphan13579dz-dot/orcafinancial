@@ -65,7 +65,9 @@ export async function runVerifiedPipeline(
       ok: true,
       checkedAt: new Date().toISOString(),
       symbols,
-      sources: options.sources ?? ["tcbs", "vietstock"],
+      // Mirrors the adapter list in `ingestFinancialSources` so the reported
+      // sources match what a real ingest run would have touched.
+      sources: options.sources ?? ["vndirect", "vietstock", "cafef", "filing"],
       documentCount: 0,
       normalizedFactCount: 0,
       acceptedFactCount: 0,

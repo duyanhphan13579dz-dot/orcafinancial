@@ -82,6 +82,7 @@ export async function vndirectQuote(symbol: string, options: ProviderFetchOption
     prevClose: prev?.close ?? null,
     changePct: prev ? ((last.close - prev.close) / prev.close) * 100 : null,
     source: "vndirect-dchart",
+    confidence: 0.9,
   };
 }
 
@@ -100,6 +101,8 @@ export async function vndirectSearch(query: string, limit = 20): Promise<SymbolI
         symbol: String(row.code ?? row.symbol ?? "").toUpperCase(),
         name: String(row.companyName ?? row.name ?? row.code ?? ""),
         exchange: String(row.floor ?? row.exchange ?? ""),
+        type: String(row.type ?? row.securityType ?? "stock"),
+        source: "vndirect-finfo",
       }))
       .filter((s) => s.symbol);
   } catch {
@@ -205,9 +208,21 @@ export async function cryptoPricesWithFallback(): Promise<CryptoQuote[]> {
 export interface NewsItem {
   title: string;
   link: string;
+  /** Raw RSS `<pubDate>` string; `null` when the feed omits it. */
   publishedAt: string | null;
   source: string;
   summary?: string;
+  /**
+   * Canonical fields consumed by the news writer in `src/lib/market.ts`.
+   * They live alongside the raw RSS fields so the ops probe can keep reading
+   * `source` while the DB writer gets everything the `news` table needs.
+   */
+  guid: string;
+  description: string;
+  imageUrl: string | null;
+  sourceName: string;
+  /** Parsed publish date. Falls back to parse time when the feed omits it. */
+  publishedAtDate: Date;
 }
 
 function parseRssItems(xml: string, source: string): NewsItem[] {
@@ -221,12 +236,29 @@ function parseRssItems(xml: string, source: string): NewsItem[] {
     const t = (title?.[1] ?? title?.[2] ?? "").trim();
     const l = (link?.[1] ?? "").trim();
     if (!t || !l) continue;
+
+    const rawDescription = (desc?.[1] ?? desc?.[2] ?? "").replace(/<[^>]+>/g, " ").trim();
+    const rawPubDate = pub?.[1]?.trim() ?? null;
+    const parsedDate = rawPubDate ? new Date(rawPubDate) : null;
+    const publishedAtDate =
+      parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : new Date();
+
+    // `<enclosure url=...>` first, then the first `<img src=...>` in the body.
+    const enclosure = block.match(/<enclosure[^>]+url=["']([^"']+)["']/i);
+    const inlineImg = rawDescription.match(/<img[^>]+src=["']([^"']+)["']/i);
+
     items.push({
       title: t,
       link: l,
-      publishedAt: pub?.[1]?.trim() ?? null,
+      publishedAt: rawPubDate,
       source,
-      summary: (desc?.[1] ?? desc?.[2] ?? "").replace(/<[^>]+>/g, " ").trim() || undefined,
+      summary: rawDescription || undefined,
+      // RSS links are stable per item, so they serve as the dedupe key.
+      guid: l,
+      description: rawDescription,
+      imageUrl: enclosure?.[1] ?? inlineImg?.[1] ?? null,
+      sourceName: source,
+      publishedAtDate,
     });
   }
   return items;

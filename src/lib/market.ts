@@ -523,7 +523,13 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
       topVolume,
       sectorQuotes,
       quotes,
-      crypto: cryptoResult,
+      crypto: cryptoResult.map((coin) => ({
+        id: coin.symbol.toLowerCase(),
+        symbol: coin.symbol,
+        priceUsd: coin.priceUsd,
+        change24hPct: coin.changePct24h ?? 0,
+        source: coin.source,
+      })),
       overnight,
       news: newsItems,
       quality: { generatedAt, ageSeconds: 0, partial: missingSymbols.length > 0, missingSymbols, stale: [...indexQuotes, ...quotes, ...sectorQuotes].some((q) => q.source.includes("-stale-snapshot")), sources, confidence: [...quotes, ...sectorQuotes].length > 0 ? Math.min(...[...quotes, ...sectorQuotes].map((q) => q.confidence)) : 0 },
@@ -686,7 +692,7 @@ export async function syncNews(): Promise<{ inserted: number; errors: string[] }
               sourceName: item.sourceName,
               symbols: [...matched].join(" "),
               sentiment: sentimentScore,
-              publishedAt: item.publishedAt,
+              publishedAt: item.publishedAtDate,
             })
             .onConflictDoNothing({ target: news.guid })
             .returning({ id: news.id });
