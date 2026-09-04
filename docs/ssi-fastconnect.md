@@ -102,13 +102,61 @@ SSI_WS_URL=             # để trống = wss://stream.ssi.com.vn
 Tuỳ chọn: `SSI_TOKEN_CACHE_TTL_MS`, `SSI_TOKEN_REFRESH_SKEW_MS`,
 `SSI_REST_TIMEOUT_MS`, `SSI_WS_ENABLED`.
 
-## Trạng thái hiện tại
+## Cấu trúc mã
+
+| File | Vai trò |
+|---|---|
+| `src/lib/connectors/ssi/config.ts` | Đọc env, format ngày, parse số/chuỗi |
+| `src/lib/connectors/ssi/auth.ts` | Token cache + refresh single-flight (không OTP) |
+| `src/lib/connectors/ssi/client.ts` | REST `data/*` — ohlc, securitiesByBoard, securitiesSummary, indexList, indexSummary, masterdata |
+| `src/lib/connectors/ssi/stream.ts` | WebSocket channel `DATA`, tự reconnect & resubscribe |
+| `scripts/ssi-stream-worker.ts` | Worker bền vững, ghi `price_snapshots` |
+| `src/lib/connectors/microstructure.ts` | Contract order book / foreign flow |
+
+## Điểm tích hợp sẵn có
+
+`getQuote()` trong `src/lib/market.ts` đã ưu tiên snapshot tươi trong DB trước khi
+gọi VNDirect. Vì vậy **worker chỉ cần ghi vào `price_snapshots`** là dashboard tự
+nhận dữ liệu SSI — không cần sửa luồng quote.
+
+## Chạy worker
+
+```bash
+npm run ssi:stream          # cần SSI_WS_ENABLED=true
+npm run ssi:probe           # kiểm tra nhanh REST + token
+```
+
+Worker không phụ thuộc host: chạy được trên Fly.io, Railway, Render, Cloud Run,
+VPS hoặc Docker. Chỉ cần `DATABASE_URL` (Redis tuỳ chọn).
+
+## Những điều cần xác minh khi có API key thật
+
+1. **WebSocket DATA có thực sự không cần OTP?** Tài liệu có chỗ chưa thống nhất
+   (tutorial 10 nói không cần; bảng SDK nói client `Stream` cần OTP). Test bằng
+   token không OTP → subscribe `trade.SSI`.
+2. **Envelope inbound của WebSocket** — docs mô tả field nhưng không mô tả chính
+   xác envelope. `normalizeSsiDataEvent()` đọc theo hình dạng payload và đẩy frame
+   chưa nhận diện được qua `onRaw`. Kiểm tra log để xác nhận.
+3. **Khung auth khi mở socket** — `SsiMarketStream` gửi frame
+   `{client_id, api_key, api_secret, access_token}` theo docs khi có `SSI_CLIENT_ID`.
+   Xác nhận gateway có cần frame này hay chỉ cần header/token.
+4. **Số mức giá của topic `quote`** — sample docs hiện 5 mức.
+5. **Rate limit thực tế** (`X-RATELIMIT-*`, HTTP 429) trước khi mở rộng universe.
+
+## Trạng thái
 
 - [x] Gỡ bỏ hoàn toàn luồng TCBS market-data khỏi `src/` và `.env.example`
 - [x] Tách contract microstructure ra file provider-agnostic
 - [x] Khai báo biến môi trường SSI trong `.env.example`
-- [ ] Auth + token cache + refresh
-- [ ] Adapter REST `data/*`
-- [ ] Đăng ký connector trong REGISTRY / probe `/system`
-- [ ] Worker WebSocket channel `DATA`
-- [ ] Nối `ForeignFlowSnapshot` và `OrderBookSnapshot` vào `/stocks/[symbol]/microstructure`
+- [x] Auth + token cache + refresh single-flight
+- [x] Adapter REST `data/*`
+- [x] Đăng ký connector trong REGISTRY / probe `/system`
+- [x] Worker WebSocket channel `DATA`
+- [ ] Xác minh 5 điểm trên bằng API key thật
+- [ ] Nối `ForeignFlowSnapshot` vào `/stocks/[symbol]/microstructure`
+- [ ] Nối `OrderBookSnapshot` (topic `quote`) vào panel sổ lệnh
+- [ ] Thay `SECTOR_DEFINITIONS` bằng `icbCode`/`icbName`
+- [ ] Dùng `indexSummary` breadth → `scope: "market"`
+
+> Luồng BCTC (TCBS → Vietstock) vẫn giữ nguyên có chủ ý: SSI không cung cấp báo
+> cáo tài chính. Xem `docs/financial-source-pipeline.md`.

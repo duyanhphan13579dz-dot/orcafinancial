@@ -10,13 +10,15 @@ import { logger } from "@/lib/logger";
 export const dynamic = "force-dynamic";
 
 const REGISTRY = [
-  { name: "vndirect-dchart", priority: 1, role: "primary", capabilities: ["history", "quotes", "indices", "search"] },
-  { name: "yahoo-finance", priority: 2, role: "fallback", capabilities: ["history", "quotes"] },
-  { name: "coingecko", priority: 3, role: "crypto-primary", capabilities: ["crypto-prices"] },
-  { name: "binance-vision", priority: 4, role: "crypto-fallback", capabilities: ["crypto-prices"] },
-  { name: "vnexpress-rss", priority: 5, role: "news", capabilities: ["news", "sentiment"] },
-  { name: "cafef-rss", priority: 6, role: "news", capabilities: ["news", "sentiment"] },
-  { name: "vietstock-rss", priority: 7, role: "news", capabilities: ["news", "sentiment"] },
+  // SSI FastConnect — market data only (no order placement, no FCO, no account APIs).
+  { name: "ssi-fastconnect", priority: 1, role: "ssi-primary", capabilities: ["history", "quotes", "indices", "universe", "icb-sectors", "foreign-flow", "market-breadth", "orderbook", "realtime"] },
+  { name: "vndirect-dchart", priority: 2, role: "primary", capabilities: ["history", "quotes", "indices", "search"] },
+  { name: "yahoo-finance", priority: 3, role: "fallback", capabilities: ["history", "quotes"] },
+  { name: "coingecko", priority: 4, role: "crypto-primary", capabilities: ["crypto-prices"] },
+  { name: "binance-vision", priority: 5, role: "crypto-fallback", capabilities: ["crypto-prices"] },
+  { name: "vnexpress-rss", priority: 6, role: "news", capabilities: ["news", "sentiment"] },
+  { name: "cafef-rss", priority: 7, role: "news", capabilities: ["news", "sentiment"] },
+  { name: "vietstock-rss", priority: 8, role: "news", capabilities: ["news", "sentiment"] },
   { name: "fundamental-engine", priority: 0, role: "module", capabilities: ["financial-health", "eps", "roe", "dupont", "dcf", "graham", "ddm", "reverse-dcf"] },
   { name: "technical-engine", priority: 0, role: "module", capabilities: ["candlestick-patterns", "chart-patterns", "h&s", "double-top", "cup-handle"] },
   { name: "sentiment-nlp", priority: 0, role: "module", capabilities: ["vietnamese-sentiment", "news-scoring"] },

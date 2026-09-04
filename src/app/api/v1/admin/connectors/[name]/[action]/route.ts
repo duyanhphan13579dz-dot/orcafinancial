@@ -10,6 +10,9 @@ import {
   vndirectSearch,
   yahooHistory,
 } from "@/lib/connectors/providers";
+import { ssiProbe } from "@/lib/connectors/ssi/client";
+import { isSsiConfigured, isSsiWsEnabled } from "@/lib/connectors/ssi/config";
+import { ssiAuthStatus } from "@/lib/connectors/ssi/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +53,24 @@ async function runTest(name: string): Promise<{ ok: boolean; durationMs: number;
       case "search": {
         const r = await vndirectSearch("VN");
         return { ok: r.length > 0, durationMs: Date.now() - started, detail: `OK: ${r.length} results` };
+      }
+      case "ssi-fastconnect": {
+        if (!isSsiConfigured()) {
+          return {
+            ok: false,
+            durationMs: Date.now() - started,
+            detail: "NOT CONFIGURED: set SSI_API_KEY + SSI_API_SECRET (+ SSI_CLIENT_ID).",
+          };
+        }
+        const probe = await ssiProbe();
+        const auth = await ssiAuthStatus();
+        return {
+          ok: probe.ok,
+          durationMs: probe.latencyMs,
+          detail: probe.ok
+            ? `OK: ${probe.indices} indices · token cached=${auth.tokenCached} · ws enabled=${isSsiWsEnabled()}`
+            : `FAIL: ${probe.error ?? "unknown"}`,
+        };
       }
       default:
         return { ok: false, durationMs: Date.now() - started, detail: `No test probe for ${name} (internal module)` };
