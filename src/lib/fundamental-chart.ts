@@ -20,12 +20,12 @@ export interface QuarterChartPoint extends PeriodLabels {
   bookValuePerShare: number;
   operatingCashFlow: number;
   freeCashFlow: number;
-  roePct: number;
-  roaPct: number;
-  grossMarginPct: number;
-  netMarginPct: number;
-  ebitdaMarginPct: number;
-  debtEquity: number;
+  roePct: number | null;
+  roaPct: number | null;
+  grossMarginPct: number | null;
+  netMarginPct: number | null;
+  ebitdaMarginPct: number | null;
+  debtEquity: number | null;
 }
 
 export interface IndustryBenchmark {
@@ -49,7 +49,7 @@ export interface FundamentalChart {
     rating: string;
     gauge: Array<{ name: string; score: number }>;
   } | null;
-  comparisons: Array<{ metric: string; label: string; company: number; industry: number; unit: string }>;
+  comparisons: Array<{ metric: string; label: string; company: number | null; industry: number; unit: string }>;
 }
 
 export interface FundamentalChartOptions {
@@ -84,6 +84,9 @@ export function buildFundamentalChart(
     const nm = inc.revenue > 0 ? (inc.netIncome / inc.revenue) * 100 : 0;
     const em = inc.revenue > 0 ? (inc.ebitda / inc.revenue) * 100 : 0;
     const de = bal.equity > 0 ? bal.totalLiabilities / bal.equity : 0;
+    // NaN (thiếu số liệu, VD không có EBITDA) → null: JSON.stringify(NaN) =
+    // null nên phía client phải nhận null tường minh thay vì NaN trôi ngầm.
+    const fin = (x: number): number | null => (Number.isFinite(x) ? Number(x.toFixed(2)) : null);
     const labels = formatPeriodFromComposite(q.period);
     return {
       ...labels,
@@ -97,12 +100,12 @@ export function buildFundamentalChart(
       bookValuePerShare: bal.bookValuePerShare,
       operatingCashFlow: cf.operatingCashFlow,
       freeCashFlow: cf.freeCashFlow,
-      roePct: Number(roe.toFixed(2)),
-      roaPct: Number(roa.toFixed(2)),
-      grossMarginPct: Number(gm.toFixed(2)),
-      netMarginPct: Number(nm.toFixed(2)),
-      ebitdaMarginPct: Number(em.toFixed(2)),
-      debtEquity: Number(de.toFixed(2)),
+      roePct: fin(roe),
+      roaPct: fin(roa),
+      grossMarginPct: fin(gm),
+      netMarginPct: fin(nm),
+      ebitdaMarginPct: fin(em),
+      debtEquity: fin(de),
     };
   });
 

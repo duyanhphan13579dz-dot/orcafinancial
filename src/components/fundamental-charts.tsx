@@ -30,17 +30,17 @@ interface QuarterPoint {
   displayPeriod: string;
   displayPeriodVi: string;
   shortTag: string;
-  revenue: number;
-  grossProfit: number;
-  ebitda: number;
-  netIncome: number;
-  eps: number;
-  roePct: number;
-  roaPct: number;
-  grossMarginPct: number;
-  netMarginPct: number;
-  ebitdaMarginPct: number;
-  debtEquity: number;
+  revenue: number | null;
+  grossProfit: number | null;
+  ebitda: number | null;
+  netIncome: number | null;
+  eps: number | null;
+  roePct: number | null;
+  roaPct: number | null;
+  grossMarginPct: number | null;
+  netMarginPct: number | null;
+  ebitdaMarginPct: number | null;
+  debtEquity: number | null;
 }
 interface Industry {
   sector: string;
@@ -72,7 +72,7 @@ export function RevenueProfitChart({ data }: { data: QuarterPoint[] }) {
         <ComposedChart data={rows} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
           <CartesianGrid stroke={GRID} vertical={false} />
           <XAxis dataKey="period" tick={{ fill: CHART_AXIS, fontSize: 11 }} axisLine={false} tickLine={false} />
-          <YAxis tick={{ fill: CHART_AXIS, fontSize: 10 }} axisLine={false} tickLine={false} width={48} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+          <YAxis tick={{ fill: CHART_AXIS, fontSize: 10 }} axisLine={false} tickLine={false} width={48} tickFormatter={(v) => (Number.isFinite(v) ? `${((v as number) / 1000).toFixed(0)}k` : "")} />
           <Tooltip
             cursor={{ fill: "rgba(0,212,255,0.06)" }}
             contentStyle={{ background: "rgba(10,37,64,0.96)", border: "1px solid #1a3558", borderRadius: 6, fontSize: 11 }}
@@ -166,7 +166,7 @@ export function EPSTrendChart({ data }: { data: QuarterPoint[] }) {
           <Tooltip contentStyle={{ background: "rgba(10,37,64,0.96)", border: "1px solid #1a3558", borderRadius: 6, fontSize: 11 }} formatter={((v: number) => [`${Number(v).toFixed(2)} nghìn VND`, "EPS"]) as any} />
           <Bar dataKey="EPS" radius={[3, 3, 0, 0]}>
             {rows.map((r, i) => (
-              <Cell key={i} fill={r.EPS >= 0 ? CYAN : DOWN} />
+              <Cell key={i} fill={r.EPS === null ? "#334155" : r.EPS >= 0 ? CYAN : DOWN} />
             ))}
           </Bar>
         </BarChart>
@@ -192,20 +192,28 @@ export function HealthGauge({ overall, rating }: { overall: number; rating: stri
   );
 }
 
-export function IndustryCompareBars({ comparisons }: { comparisons: Array<{ metric: string; label: string; company: number; industry: number; unit: string }> }) {
-  const maxAbs = Math.max(...comparisons.map((c) => Math.max(Math.abs(c.company), Math.abs(c.industry))), 1);
+export function IndustryCompareBars({ comparisons }: { comparisons: Array<{ metric: string; label: string; company: number | null; industry: number | null; unit: string }> }) {
+  // company/industry có thể null sau JSON round-trip (NaN → null khi nguồn
+  // thiếu EBITDA…) — KHÔNG gọi .toFixed trên null (từng làm sập cả trang).
+  const fmt = (v: number | null) => (Number.isFinite(v) ? (v as number).toFixed(2) : "—");
+  const maxAbs = Math.max(...comparisons.map((c) => Math.max(Math.abs(c.company ?? 0), Math.abs(c.industry ?? 0))), 1);
   return (
     <div className="space-y-3">
       {comparisons.map((c) => {
-        const beat = c.metric === "de" ? c.company < c.industry : c.company > c.industry; // lower D/E is better
-        const wC = (Math.abs(c.company) / maxAbs) * 100;
-        const wI = (Math.abs(c.industry) / maxAbs) * 100;
+        const beat =
+          c.company === null || c.industry === null
+            ? false
+            : c.metric === "de"
+              ? c.company < c.industry
+              : c.company > c.industry; // lower D/E is better
+        const wC = (Math.abs(c.company ?? 0) / maxAbs) * 100;
+        const wI = (Math.abs(c.industry ?? 0) / maxAbs) * 100;
         return (
           <div key={c.metric}>
             <div className="flex justify-between items-center mb-1 text-[11px]">
               <span className="font-mono tracking-wider text-slate-400 uppercase">{c.label}</span>
               <span className={`font-mono ${beat ? "text-emerald-300" : "text-amber-300"}`}>
-                {c.company.toFixed(2)}{c.unit} <span className="text-slate-600">vs</span> {c.industry.toFixed(2)}{c.unit}
+                {fmt(c.company)}{c.unit} <span className="text-slate-600">vs</span> {fmt(c.industry)}{c.unit}
               </span>
             </div>
             <div className="space-y-1">
