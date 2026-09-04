@@ -514,7 +514,7 @@ export function lastYearEnds(count: number, now = new Date()): string[] {
  *  - ratios (cân đối _AQ + CFO): gọi theo từng ngày cuối quý vì endpoint này
  *    lẫn dòng ngày giao dịch nên không dùng truy vấn dải được; kèm quý liền
  *    trước quý cũ nhất để tính hiệu lũy kế cho cột cuối.
- *  - Mỗi request lỗi được retry 1 lần; chạy ≤3 luồng song song.
+ *  - Mỗi request lỗi được retry 1 lần; chạy ≤4 luồng song song.
  *  - Nếu truy vấn dải trả về trống (môi trường lạ) → fallback gọi từng kỳ.
  */
 export async function fetchFinfoRatioQuarters(
@@ -574,11 +574,13 @@ export async function fetchFinfoRatioQuarters(
     return getJson<T>(url);
   };
 
-  // Giới hạn 3 luồng song song để không bị nguồn chặn khi gọi bùng phát
-  // nhiều kỳ (nguyên nhân từng khiến các quý xa rơi mất ở môi trường thật).
+  // Giới hạn 4 luồng song song để không bị nguồn chặn khi gọi bùng phát
+  // nhiều kỳ (nguyên nhân từng khiến các quý xa rơi mất ở môi trường thật);
+  // 4 thay vì 3 để chuỗi ~14 URL xong trong 4 vòng thay vì 5 — toàn bộ khối
+  // đã có ngân sách cứng 6s ở tầng analytics nên không sợ treo route.
   const runPool = async (tasks: Array<() => Promise<void>>): Promise<void> => {
     let next = 0;
-    const workers = Array.from({ length: Math.min(3, tasks.length) }, async () => {
+    const workers = Array.from({ length: Math.min(4, tasks.length) }, async () => {
       while (next < tasks.length) {
         const task = tasks[next];
         next += 1;

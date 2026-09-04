@@ -90,9 +90,32 @@ describe("finfo + snapshot → analytics (e2e, DB rỗng)", () => {
     );
     expect(peRow).toBeDefined();
     expect(peRow?.value).toBeGreaterThan(0);
+    // ĐƠN VỊ GIÁ: quote là đồng, engine định giá là nghìn VND → P/E phải ở
+    // thang hợp lý (giá 120.000đ / EPS ~5,3 nghìn ≈ 22,8 lần), không ×1000.
+    expect(peRow?.value).toBeGreaterThan(10);
+    expect(peRow?.value).toBeLessThan(60);
+    // Vốn hoá = 120.000đ × 7.733,49M cp ≈ 928.019 tỷ VND.
+    expect(analytics.valuation?.marketCapBillionVnd).toBeGreaterThan(900_000);
+    expect(analytics.valuation?.marketCapBillionVnd).toBeLessThan(960_000);
 
     // Hiệu suất + sức khoẻ có số thật (không còn toàn "—").
     expect(analytics.performance).toBeTruthy();
     expect(analytics.health?.overall).toBeGreaterThan(0);
+
+    // Thuế suất hiệu dụng LTM suy từ LNTT − LNST (finfo không tách dòng thuế).
+    const perfMetrics = (analytics.performance?.groups ?? []).flatMap((g) => g.metrics);
+    const taxRate = perfMetrics.find((m) => m.key === "effectiveTaxRate");
+    expect(taxRate?.value).toBeCloseTo(39.55, 0);
+
+    // economicSpread = ROIC(%) − 12 (điểm %) — không còn lệch đơn vị ×100.
+    const roic = perfMetrics.find((m) => m.key === "roic")?.value;
+    const spread = perfMetrics.find((m) => m.key === "economicSpread")?.value;
+    expect(roic).not.toBeNull();
+    expect(spread).toBeCloseTo((roic as number) - 12, 1);
+    expect(Math.abs(spread as number)).toBeLessThan(60);
+
+    // Altman Z' tính được nhờ LN giữ lại suy từ VCSH − vốn góp.
+    expect(analytics.health?.altman?.zScore).not.toBeNull();
+    expect(analytics.health?.altman?.verdictVi).toContain("VCSH − vốn góp");
   }, 20_000);
 });

@@ -8,13 +8,14 @@
  *
  * Tối ưu tốc độ:
  *   1. `Promise.all` — đọc BCTC / giá / hồ sơ doanh nghiệp song song (không tuần tự).
- *   2. `cached()` (Upstash hoặc in-memory + in-flight dedupe) — 3 endpoint
+ *   2. `cachedWithStaleFallback()` (Upstash hoặc in-memory + in-flight dedupe
+ *      + stale-while-revalidate) — 3 endpoint
  *      `/fundamental`, `/fundamental-chart`, `/financial-health-detail` và
  *      `/fundamental-analytics` dùng CHUNG một kết quả đã tính.
  *   3. Engine thuần (không I/O) — chi phí tính lại gần như bằng 0.
  */
 
-import { cached, type Ohlcv } from "@/lib/connectors/core";
+import { cachedWithStaleFallback, type Ohlcv } from "@/lib/connectors/core";
 import { ensureQuarterlyFinancials } from "@/lib/company-service";
 import { fetchVndirectFinfoFinancialStatements } from "@/lib/connectors/vndirect-financials";
 import { injectSharesOutstanding, toFinancialQuarters } from "@/lib/finfo-ratios";
@@ -262,8 +263,12 @@ export function computeFundamentalAnalytics(
   });
   const performance = computeBusinessPerformance(ctx);
   const health = computeAdvancedHealth(ctx);
+  // computeValuation quy ước GIÁ theo NGHÌN VND (Vốn hoá tỷ = giá nghìn × CP triệu),
+  // trong khi quote.close từ market connector là ĐỒNG (VD 120.000đ) — phải
+  // chia 1000, nếu không mọi bội số (P/E, P/B, EV/…) và vốn hoá lệch ×1000.
+  const priceNghin = inputs.price !== null ? inputs.price / 1000 : null;
   const valuation = computeValuation(ctx, {
-    price: inputs.price,
+    price: priceNghin,
     beta: inputs.beta,
     assumptions,
   });
@@ -330,18 +335,30 @@ export function computeFundamentalAnalytics(
  * 4 endpoint khác nhau sẽ dùng chung một lần tính.
  */
 export async function getFundamentalAnalytics(symbol: string): Promise<FundamentalAnalytics> {
-  return cached(`fundamental-analytics:${symbol}`, ANALYTICS_CACHE_TTL_MS, async () => {
-    const inputs = await loadFundamentalInputs(symbol);
-    return computeFundamentalAnalytics(inputs);
-  });
+  // Stale-while-revalidate: còn hạn → trả ngay; hết hạn → trả bản cũ ngay và
+  // refresh nền (route không bao giờ chờ lại chuỗi tải BCTC ~vài giây).
+  const { value } = await cachedWithStaleFallback(
+    `fundamental-analytics:${symbol}`,
+    ANALYTICS_CACHE_TTL_MS,
+    async () => {
+      const inputs = await loadFundamentalInputs(symbol);
+      return computeFundamentalAnalytics(inputs);
+    },
+  );
+  return value;
 }
 
 /** Chỉ nạp ngữ cảnh LTM — dùng cho các endpoint cần số thô. */
 export async function getFundamentalContextCached(symbol: string): Promise<FundamentalContext> {
-  return cached(`fundamental-context:${symbol}`, ANALYTICS_CACHE_TTL_MS, async () => {
-    const inputs = await loadFundamentalInputs(symbol);
-    return buildFundamentalContext(symbol, inputs.quarters);
-  });
+  const { value } = await cachedWithStaleFallback(
+    `fundamental-context:${symbol}`,
+    ANALYTICS_CACHE_TTL_MS,
+    async () => {
+      const inputs = await loadFundamentalInputs(symbol);
+      return buildFundamentalContext(symbol, inputs.quarters);
+    },
+  );
+  return value;
 }
 
 /** Số nến lịch sử dùng cho beta thực nghiệm (nếu cần mở rộng sau này). */

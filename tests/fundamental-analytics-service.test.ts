@@ -108,7 +108,7 @@ function inputs(overrides: Partial<FundamentalInputs> = {}): FundamentalInputs {
     quarters: quarters(),
     source: "vndirect",
     providerBacked: true,
-    price: 62.5,
+    price: 62_500, // ĐỒNG/CP (quote.close) — service tự đổi sang nghìn VND
     beta: 0.8,
     priceSource: "tcbs",
     loadWarnings: [],
@@ -158,7 +158,8 @@ describe("computeFundamentalAnalytics (đường đi thật của API route)", (
   });
 
   it("định giá khớp với giá và số CP đưa vào", () => {
-    const v = computeFundamentalAnalytics(inputs({ price: 62.5 })).valuation!;
+    // Giá vào theo ĐỒNG (62.500đ) → valuation chuẩn hoá về nghìn (62,5).
+    const v = computeFundamentalAnalytics(inputs({ price: 62_500 })).valuation!;
     expect(v.price).toBe(62.5);
     expect(v.sharesOutstandingMillions).toBeCloseTo(SHARES, 0);
     // 62.5 nghìn × 200 triệu = 12.500 tỷ

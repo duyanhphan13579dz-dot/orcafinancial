@@ -167,7 +167,15 @@ export function computeAltmanZ(ctx: FundamentalContext): AltmanResult {
   const closing = ctx.closing;
   const totalAssets = positive(field(closing, "totalAssets"));
   const equity = field(closing, "equity");
-  const retainedEarnings = field(closing, "retainedEarnings");
+  const paidInCapital = field(closing, "paidInCapital");
+  // LN giữ lại: ưu tiên dòng riêng; nguồn finfo statements không tách chỉ tiêu
+  // này → suy từ VCSH − vốn góp chủ sở hữu (= LN chưa phân phối + các quỹ +
+  // chênh lệch tỷ giá…). Là đẳng thức số dư, không phải ước đoán; được ghi
+  // chú trong verdict bên dưới.
+  const retainedEarnings =
+    field(closing, "retainedEarnings") ??
+    (equity !== null && paidInCapital !== null ? equity - paidInCapital : null);
+  const retainedEstimated = field(closing, "retainedEarnings") === null && retainedEarnings !== null;
   const totalLiabilities = field(closing, "totalLiabilities");
   const ebit =
     field(ctx.ltm.income, "operatingIncome") ??
@@ -204,11 +212,14 @@ export function computeAltmanZ(ctx: FundamentalContext): AltmanResult {
   const zone: AltmanResult["zone"] = zScore > 2.6 ? "safe" : zScore >= 1.1 ? "grey" : "distress";
   const zoneVi = zone === "safe" ? "VÙNG AN TOÀN" : zone === "grey" ? "VÙNG XÁM (cảnh báo)" : "VÙNG NGUY HIỂM";
   const verdictVi =
-    zone === "safe"
+    (zone === "safe"
       ? `Z' = ${zScore.toFixed(2)} > 2.6 — cấu trúc tài chính lành mạnh, rủi ro mất khả năng thanh toán rất thấp trong 12–24 tháng tới.`
       : zone === "grey"
         ? `Z' = ${zScore.toFixed(2)} nằm trong vùng xám (1.1–2.6) — chưa nguy cấp nhưng cần theo dõi sát nợ đáo hạn và dòng tiền.`
-        : `Z' = ${zScore.toFixed(2)} < 1.1 — mô hình Altman cảnh báo nguy cơ mất khả năng thanh toán cao.`;
+        : `Z' = ${zScore.toFixed(2)} < 1.1 — mô hình Altman cảnh báo nguy cơ mất khả năng thanh toán cao.`) +
+    (retainedEstimated
+      ? " (LN giữ lại suy từ VCSH − vốn góp chủ sở hữu vì BCTC nguồn không tách chỉ tiêu này.)"
+      : "");
 
   // Điểm 0..100: Z'=0 → 0 điểm; Z'=4 → ~95 điểm (giới hạn 100).
   const score = Math.max(0, Math.min(100, Math.round((zScore / 4.2) * 100)));

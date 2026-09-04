@@ -421,8 +421,14 @@ export interface FundamentalReportV2 extends FundamentalReport {
 
 export function buildFundamentalReportFromAnalytics(
   analytics: FundamentalAnalytics,
-  currentPrice: number,
+  rawCurrentPrice: number,
 ): FundamentalReportV2 {
+  // Route truyền quote.close theo ĐỒNG; mọi giá trị mỗi CP của engine định giá
+  // (DCF/DDM/targetPrice/intrinsicValueRange) theo NGHÌN VND — chuẩn hoá về
+  // nghìn để cầu nối giá mục tiêu và marker "vùng giá trị nội tại" trên UI
+  // so sánh đúng đơn vị (trước đây lệch ×1000).
+  const currentPrice =
+    Number.isFinite(rawCurrentPrice) && rawCurrentPrice > 0 ? rawCurrentPrice / 1000 : rawCurrentPrice;
   const performance: BusinessPerformance | null = analytics.performance;
   const valuation: EngineValuation | null = analytics.valuation;
 

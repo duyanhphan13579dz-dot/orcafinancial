@@ -321,8 +321,13 @@ export function computeBusinessPerformance(ctx: FundamentalContext): BusinessPer
   const ebit = operatingIncome ?? (ebitda !== null && depreciation !== null ? ebitda - depreciation : null);
   const interestExpense = field(ltm.income, "interestExpense");
   const pretaxIncome = field(ltm.income, "pretaxIncome");
-  const incomeTax = field(ltm.income, "incomeTax");
   const netIncome = field(ltm.income, "netIncome");
+  // Thuế TNDN: ưu tiên dòng riêng trên BCTC; khi nguồn (finfo statements)
+  // không tách dòng thuế, suy ra = LNTT − LNST (23800 − 23003) — đúng đẳng
+  // thức kế toán, không phải số ước đoán.
+  const incomeTax =
+    field(ltm.income, "incomeTax") ??
+    (pretaxIncome !== null && netIncome !== null ? pretaxIncome - netIncome : null);
   const operatingCashFlow = field(ltm.cashflow, "operatingCashFlow");
   const rawLtmCapex = field(ltm.cashflow, "capex");
   const capexValue = rawLtmCapex === null ? null : Math.abs(rawLtmCapex);
@@ -448,7 +453,9 @@ export function computeBusinessPerformance(ctx: FundamentalContext): BusinessPer
   const assetTurnover = ratio(revenue, positive(balances.totalAssets));
   const equityMultiplier = ratio(balances.totalAssets, positive(balances.equity));
   const roeLeverageGap = roe !== null && roa !== null ? roe - roa : null;
-  const economicSpread = roic !== null ? roic - 12 : null; // so với chi phí vốn ước tính 12%/năm
+  // Đơn vị: ĐIỂM % — roic là phân số (0.07 = 7%) nên phải ×100 trước khi trừ
+  // 12 điểm % chi phí vốn ước tính (trước đây trừ thẳng 12 vào phân số → −1193).
+  const economicSpread = roic !== null ? roic * 100 - 12 : null;
 
   const returnsMetrics = [
     metric("roe", "ROE (LTM, VCSH bình quân)", roe !== null ? roe * 100 : null, "%",
@@ -466,9 +473,9 @@ export function computeBusinessPerformance(ctx: FundamentalContext): BusinessPer
     metric("roeRoaGap", "Chênh ROE − ROA (đòn bẩy sinh lời)", roeLeverageGap !== null ? roeLeverageGap * 100 : null, "điểm %",
       "ROE − ROA; khoảng cách càng lớn thì lợi nhuận càng phụ thuộc vào nợ vay",
       { score: ramp(roeLeverageGap !== null ? roeLeverageGap * 100 : null, 40, 2, false) }),
-    metric("economicSpread", "Chênh lệch ROIC − chi phí vốn (12%)", economicSpread !== null ? economicSpread * 100 : null, "điểm %",
+    metric("economicSpread", "Chênh lệch ROIC − chi phí vốn (12%)", economicSpread, "điểm %",
       "ROIC − 12%; dương = doanh nghiệp tạo ra giá trị kinh tế (EVA > 0)",
-      { score: ramp(economicSpread !== null ? economicSpread * 100 : null, -6, 8), estimated }),
+      { score: ramp(economicSpread, -6, 8), estimated }),
     metric("assetTurnover", "Vòng quay tổng tài sản", assetTurnover, "vòng/năm",
       "Doanh thu LTM ÷ Tổng tài sản bình quân",
       { score: ramp(assetTurnover, 0.3, 1.5), estimated }),
@@ -718,8 +725,12 @@ export function ltmRevenueGrowth(ctx: FundamentalContext): Num {
 }
 
 export function effectiveTaxRateOf(ctx: FundamentalContext): number {
-  const tax = field(ctx.ltm.income, "incomeTax");
   const pretax = field(ctx.ltm.income, "pretaxIncome");
+  const net = field(ctx.ltm.income, "netIncome");
+  // Như computeBusinessPerformance: thiếu dòng thuế riêng thì suy từ LNTT − LNST.
+  const tax =
+    field(ctx.ltm.income, "incomeTax") ??
+    (pretax !== null && net !== null ? pretax - net : null);
   const rate = ratio(tax, pretax);
   if (rate === null || rate < 0 || rate > 0.5) return 0.2;
   return rate;

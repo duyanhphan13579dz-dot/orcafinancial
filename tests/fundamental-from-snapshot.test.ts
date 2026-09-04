@@ -27,7 +27,7 @@ describe("tab Cơ bản tính từ snapshot BCTC khi nguồn sống bị chặn"
       source: "vndirect-finfo",
       providerBacked: true,
       basis: "standalone",
-      price: 120, // nghìn VND/CP (giá thị trường thật do route nạp)
+      price: 120_000, // ĐỒNG/CP — đúng đơn vị quote.close từ market connector
       beta: null,
       priceSource: "test",
       loadWarnings: [...finfo.warnings, ...mapped.warnings],
@@ -51,7 +51,7 @@ describe("tab Cơ bản tính từ snapshot BCTC khi nguồn sống bị chặn"
 
     // Đúng đường code của route /fundamental khi analytics available —
     // không được throw (lỗi ở đây = trang Cơ bản "couldn't load").
-    const report = buildFundamentalReportFromAnalytics(analytics, 120);
+    const report = buildFundamentalReportFromAnalytics(analytics, 120_000);
     expect(report.engineVersion).toBe("ltm-verified-v2");
     expect(report.eps).toBeGreaterThan(0);
     expect(report.financialHealth.overallScore).toBeGreaterThan(0);
