@@ -1,6 +1,13 @@
 /**
- * Stock microstructure types.
- * TCBS provider removed — endpoint returns status "unavailable" until a verified provider is wired.
+ * Stock microstructure contracts (provider-agnostic).
+ *
+ * These shapes are deliberately independent of any single vendor. A verified
+ * microstructure provider — e.g. SSI FastConnect WebSocket `quote` (bid/ask)
+ * and `room` (foreign room) topics — maps into them.
+ *
+ * Until a provider is wired, the microstructure endpoint returns
+ * `status: "unavailable"` with empty levels. The layer must never estimate,
+ * interpolate or synthesise order-book or foreign-flow numbers.
  */
 
 export type MicrostructureStatus = "live" | "delayed" | "stale" | "unavailable";
@@ -8,6 +15,15 @@ export type MicrostructureStatus = "live" | "delayed" | "stale" | "unavailable";
 export interface OrderBookLevel {
   price: number;
   volume: number;
+  /**
+   * Number of resting orders at this price level.
+   *
+   * `null` when the provider does not publish order counts. Notably, SSI
+   * FastConnect `quote` topics return `[price, quantity]` pairs only, so this
+   * stays `null` for that source. Never derive or estimate this value — render
+   * an em dash instead.
+   */
+  orderCount?: number | null;
 }
 
 export interface OrderBookSnapshot {

@@ -14,7 +14,6 @@ import {
 import {
   cryptoPricesWithFallback,
   fetchAllRssNews,
-  tcbsQuote,
   vndirectHistory,
   vndirectQuote,
   vndirectSearch,
@@ -22,7 +21,6 @@ import {
   type CryptoQuote,
 } from "@/lib/connectors/providers";
 import { scoreSentimentHybrid } from "@/lib/llm";
-import { isTcbsMockEnabled, tcbsMockQuote } from "@/lib/connectors/tcbs-mock";
 import { logger } from "@/lib/logger";
 import { analyzeSentiment } from "@/lib/sentiment";
 import { SECTOR_DEFINITIONS, type MarketPulse, type MarketSnapshot, type MarketStatus, type OvernightMarketItem, type OvernightMarketSnapshot, type SectorSnapshot } from "@/types/market";
@@ -178,19 +176,6 @@ export async function getQuote(symbol: string, options: { persist?: boolean; fas
   const key = `quote:${symbol}`;
   const quote = await cached(key, QUOTE_TTL_MS, async () => {
     const providerOptions = options.fast ? { timeoutMs: 1_500, retries: 0 } : undefined;
-    if (isTcbsMockEnabled()) {
-      return tcbsMockQuote(symbol);
-    }
-    if (process.env.TCBS_MARKET_DATA_URL?.trim()) {
-      try {
-        return await tcbsQuote(symbol, providerOptions);
-      } catch (tcbsErr) {
-        logger.warn("quote_tcbs_failed", {
-          symbol,
-          error: tcbsErr instanceof Error ? tcbsErr.message : String(tcbsErr),
-        });
-      }
-    }
 
     const snaps = await loadFreshSnapshots([symbol]);
     const snap = snaps.get(symbol);

@@ -255,8 +255,3 @@ export async function fetchAllRssNews(): Promise<{ items: NewsItem[]; errors: st
   }
   return { items, errors };
 }
-
-/** @deprecated TCBS market data removed — routes to VnDirect. */
-export async function tcbsQuote(symbol: string, options: ProviderFetchOptions = {}): Promise<Quote> {
-  return vndirectQuote(symbol, options);
-}
