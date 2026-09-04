@@ -169,7 +169,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ symbol: str
         validation,
         disclosure: hasVerified
           ? "Bảng lấy từ nguồn provider đã xác minh (ưu tiên TCBS/doanh nghiệp, sau đó Vietstock)."
-          : `Chưa có BCTC verified sau khi thử TCBS → Vietstock. ${preferred.warnings?.slice(0, 3).join(" | ") || "Cấu hình TCBS_MCP_ACCESS_TOKEN hoặc VIETSTOCK_DATAFEED_URL."}`,
+          : `Chưa có BCTC verified sau khi thử TCBS → Vietstock. ${preferred.warnings?.slice(0, 3).join(" | ") || "Cấu hình TCBS_API_URL + TCBS_API_KEY + TCBS_ENABLED=true, hoặc VIETSTOCK_DATAFEED_URL."}`,
       },
       { cacheSeconds: 300 },
     );
