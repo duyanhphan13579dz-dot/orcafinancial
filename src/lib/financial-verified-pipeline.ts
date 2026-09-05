@@ -65,7 +65,7 @@ export async function runVerifiedPipeline(
       ok: true,
       checkedAt: new Date().toISOString(),
       symbols,
-      sources: options.sources ?? ["tcbs", "vietstock"],
+      sources: options.sources ?? ["vci", "vietstock"],
       documentCount: 0,
       normalizedFactCount: 0,
       acceptedFactCount: 0,

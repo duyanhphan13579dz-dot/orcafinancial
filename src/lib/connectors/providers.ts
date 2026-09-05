@@ -82,6 +82,7 @@ export async function vndirectQuote(symbol: string, options: ProviderFetchOption
     prevClose: prev?.close ?? null,
     changePct: prev ? ((last.close - prev.close) / prev.close) * 100 : null,
     source: "vndirect-dchart",
+    confidence: 0.9,
   };
 }
 
@@ -100,6 +101,8 @@ export async function vndirectSearch(query: string, limit = 20): Promise<SymbolI
         symbol: String(row.code ?? row.symbol ?? "").toUpperCase(),
         name: String(row.companyName ?? row.name ?? row.code ?? ""),
         exchange: String(row.floor ?? row.exchange ?? ""),
+        type: "stock",
+        source: "vndirect-search",
       }))
       .filter((s) => s.symbol);
   } catch {

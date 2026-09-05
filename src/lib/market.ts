@@ -538,7 +538,13 @@ export async function getMarketOverview(): Promise<MarketSnapshot> {
       topVolume,
       sectorQuotes,
       quotes,
-      crypto: cryptoResult,
+      crypto: cryptoResult.map((q) => ({
+        id: q.symbol.toLowerCase(),
+        symbol: q.symbol,
+        priceUsd: q.priceUsd,
+        change24hPct: q.changePct24h ?? 0,
+        source: q.source,
+      })),
       overnight,
       news: newsItems,
       quality: { generatedAt, ageSeconds: 0, partial: missingSymbols.length > 0, missingSymbols, stale: [...indexQuotes, ...quotes, ...sectorQuotes].some((q) => q.source.includes("-stale-snapshot")), sources, confidence: [...quotes, ...sectorQuotes].length > 0 ? Math.min(...[...quotes, ...sectorQuotes].map((q) => q.confidence)) : 0 },
@@ -684,30 +690,34 @@ export async function syncNews(): Promise<{ inserted: number; errors: string[] }
     const chunk = items.slice(i, i + chunkSize);
     await Promise.all(
       chunk.map(async (item) => {
+        const description = item.summary ?? "";
+        const sourceName = item.source;
+        const guid = item.link;
+        const publishedAt = item.publishedAt ? new Date(item.publishedAt) : new Date();
         const matched = new Set<string>();
-        for (const m of `${item.title} ${item.description}`.matchAll(TICKER_RE)) {
+        for (const m of `${item.title} ${description}`.matchAll(TICKER_RE)) {
           if (knownSymbols.has(m[1])) matched.add(m[1]);
         }
-        const sentimentScore = analyzeSentiment(`${item.title} ${item.description}`);
+        const sentimentScore = analyzeSentiment(`${item.title} ${description}`);
         try {
           const res = await db
             .insert(news)
             .values({
-              guid: item.guid.slice(0, 900),
+              guid: guid.slice(0, 900),
               title: item.title,
               link: item.link,
-              description: item.description,
-              imageUrl: item.imageUrl,
-              sourceName: item.sourceName,
+              description,
+              imageUrl: null,
+              sourceName,
               symbols: [...matched].join(" "),
               sentiment: sentimentScore,
-              publishedAt: item.publishedAt,
+              publishedAt,
             })
             .onConflictDoNothing({ target: news.guid })
             .returning({ id: news.id });
           if (res.length > 0) inserted += 1;
         } catch (err) {
-          logger.error("news_insert_failed", { guid: item.guid, error: String(err) });
+          logger.error("news_insert_failed", { guid, error: String(err) });
         }
       }),
     );
