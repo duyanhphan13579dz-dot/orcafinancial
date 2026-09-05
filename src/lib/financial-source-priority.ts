@@ -15,7 +15,7 @@ export type SourcePriorityLevel = keyof typeof SOURCE_PRIORITY;
 
 const SOURCE_ALIASES: Array<{ match: RegExp; level: SourcePriorityLevel }> = [
   { match: /filing|ssc|hsx|hnx|official|cafef-filing|company-ir/i, level: "OFFICIAL_FILING" },
-  { match: /vndirect|fmp|daloopa|fiscal-?ai|professional/i, level: "PROFESSIONAL_DATA" },
+  { match: /vndirect|vci|fmp|daloopa|fiscal-?ai|professional/i, level: "PROFESSIONAL_DATA" },
   { match: /vietstock|cafef|verified/i, level: "VERIFIED_PROVIDER" },
   { match: /sector-synthetic|synthetic|model|estimate|benchmark/i, level: "SYNTHETIC" },
 ];

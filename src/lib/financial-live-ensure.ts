@@ -14,7 +14,7 @@ export async function ensureLivePreferredFinancials(
   limit = 8,
 ): Promise<{
   records: import("@/lib/stock-intelligence/financial-source").RawFinancialRecord[];
-  source: "filing" | "vndirect" | "vietstock" | "cafef";
+  source: "filing" | "vndirect" | "vci" | "vietstock" | "cafef";
   providerBacked: boolean;
   ingested: boolean;
   warnings: string[];
@@ -47,7 +47,7 @@ export async function ensureLivePreferredFinancials(
       ...(refreshed.providerBacked
         ? []
         : [
-            "Live ingest completed but no accepted facts — configure OFFICIAL_FILING_DATAFEED_URL, VNDIRECT_DATAFEED_URL, VIETSTOCK_DATAFEED_URL, or CAFEF_DATA_URL.",
+            "Live ingest completed but no accepted facts — configure OFFICIAL_FILING_DATAFEED_URL, VNDIRECT_DATAFEED_URL, VCI_DATAFEED_URL, VIETSTOCK_DATAFEED_URL, or CAFEF_DATA_URL.",
           ]),
     ],
   };

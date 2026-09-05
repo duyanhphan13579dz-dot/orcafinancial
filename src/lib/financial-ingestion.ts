@@ -7,9 +7,10 @@ import { getLatestCompletedQuarter } from "@/lib/financial-statements";
 import { fetchVndirectFinancialStatements } from "@/lib/connectors/vndirect-financials";
 import { fetchVietstockFinancialStatements } from "@/lib/connectors/vietstock-financials";
 import { fetchCafefFinancialStatements } from "@/lib/connectors/cafef-financials";
+import { fetchVciFinancialStatements } from "@/lib/connectors/vci-financials";
 import { sourcePriorityOf as sharedSourcePriorityOf } from "@/lib/financial-source-priority";
 
-export type IngestionSource = "vndirect" | "vietstock" | "cafef" | "filing";
+export type IngestionSource = "vndirect" | "vietstock" | "cafef" | "vci" | "filing";
 export type StatementType = "income" | "balance" | "cashflow";
 export type DocumentType = "financial_statement" | "analysis_report";
 
@@ -63,6 +64,7 @@ function endpointFor(source: IngestionSource): string | null {
   if (source === "vndirect") return process.env.VNDIRECT_DATAFEED_URL?.trim() || null;
   if (source === "vietstock") return process.env.VIETSTOCK_DATAFEED_URL?.trim() || null;
   if (source === "cafef") return process.env.CAFEF_DATA_URL?.trim() || null;
+  if (source === "vci") return process.env.VCI_DATAFEED_URL?.trim() || null;
   if (source === "filing") return process.env.OFFICIAL_FILING_DATAFEED_URL?.trim() || null;
   return null;
 }
@@ -71,6 +73,7 @@ function tokenFor(source: IngestionSource): string | null {
   if (source === "vndirect") return process.env.VNDIRECT_DATAFEED_TOKEN?.trim() || null;
   if (source === "vietstock") return process.env.VIETSTOCK_DATAFEED_TOKEN?.trim() || null;
   if (source === "cafef") return process.env.CAFEF_DATA_TOKEN?.trim() || null;
+  if (source === "vci") return process.env.VCI_DATAFEED_TOKEN?.trim() || null;
   if (source === "filing") return process.env.OFFICIAL_FILING_DATAFEED_TOKEN?.trim() || null;
   return null;
 }
@@ -254,6 +257,22 @@ class CafefFinancialAdapter implements SourceAdapter {
   }
 }
 
+class VciFinancialAdapter implements SourceAdapter {
+  source = "vci" as const;
+
+  async fetch(symbol: string, limit: number): Promise<{ documents: SourceDocument[]; warnings: string[] }> {
+    try {
+      const result = await fetchVciFinancialStatements(symbol, limit);
+      return {
+        documents: quartersToDocuments("vci", result.symbol, result.sourceUrl, result.quarters, limit),
+        warnings: result.warnings ?? [],
+      };
+    } catch (e) {
+      return { documents: [], warnings: [`vci: ${e instanceof Error ? e.message : String(e)}`] };
+    }
+  }
+}
+
 class ConfiguredJsonAdapter implements SourceAdapter {
   constructor(public readonly source: IngestionSource) {}
 
@@ -399,6 +418,7 @@ export async function ingestFinancialSources(symbols: string[], limit = 8): Prom
   const normalizedSymbols = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter((s) => /^[A-Z0-9]{1,15}$/.test(s)))].slice(0, 100);
   const adapters: SourceAdapter[] = [
     new VndirectFinancialAdapter(),
+    new VciFinancialAdapter(),
     new VietstockFinancialAdapter(),
     new CafefFinancialAdapter(),
     new ConfiguredJsonAdapter("filing"),
@@ -535,7 +555,7 @@ export async function loadPreferredFinancialRecords(
   symbol: string,
   statementType: StatementType,
   limit = 8,
-): Promise<{ records: import("@/lib/stock-intelligence/financial-source").RawFinancialRecord[]; source: "filing" | "vndirect" | "vietstock" | "cafef"; providerBacked: boolean }> {
+): Promise<{ records: import("@/lib/stock-intelligence/financial-source").RawFinancialRecord[]; source: "filing" | "vndirect" | "vci" | "vietstock" | "cafef"; providerBacked: boolean }> {
   await ensureFinancialIngestionTables();
   const rows = await db
     .select()
@@ -557,9 +577,10 @@ export async function loadPreferredFinancialRecords(
   }));
   if (records.length) {
     const src = (records[0].source || "").toLowerCase();
-    const source: "filing" | "vndirect" | "vietstock" | "cafef" =
+    const source: "filing" | "vndirect" | "vci" | "vietstock" | "cafef" =
       src.includes("filing") || src.includes("official") ? "filing"
       : src.includes("vndirect") ? "vndirect"
+      : src.includes("vci") ? "vci"
       : src.includes("cafef") ? "cafef"
       : "vietstock";
     return { records, source, providerBacked: true };

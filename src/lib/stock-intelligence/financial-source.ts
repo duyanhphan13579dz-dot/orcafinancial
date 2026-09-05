@@ -2,7 +2,7 @@ import type { PeriodKind, StatementType } from "@/lib/stock-intelligence/canonic
 import type { FinancialQuarter } from "@/lib/financial-statements";
 import { actualProvenance, estimateProvenance, targetProvenance, parseFinancialPeriod, type CanonicalStatement, type DataProvenance } from "@/lib/stock-intelligence/canonical";
 
-export type FinancialSourceKind = "fmp" | "vndirect" | "vietstock" | "cafef" | "filing" | "synthetic" | "tcbs";
+export type FinancialSourceKind = "fmp" | "vndirect" | "vci" | "vietstock" | "cafef" | "filing" | "synthetic" | "tcbs";
 
 export interface RawFinancialRecord {
   period: string;
