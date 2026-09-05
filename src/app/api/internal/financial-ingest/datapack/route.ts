@@ -5,7 +5,7 @@ import type { SourceDocument } from "@/lib/financial-ingestion";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ALLOWED_SOURCES = new Set(["filing", "vndirect", "vietstock", "cafef", "official_filing"]);
+const ALLOWED_SOURCES = new Set(["filing", "vndirect", "vci", "vietstock", "cafef", "official_filing"]);
 
 function authorized(request: NextRequest): boolean {
   const secret = process.env.FINANCIAL_AUDIT_SECRET ?? process.env.CRON_SECRET;
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
       {
         ok: false,
         error:
-          "Only complete financial-statement documents from filing | vndirect | vietstock | cafef with source content and facts are accepted.",
+          "Only complete financial-statement documents from filing | vndirect | vci | vietstock | cafef with source content and facts are accepted.",
       },
       { status: 400 },
     );
