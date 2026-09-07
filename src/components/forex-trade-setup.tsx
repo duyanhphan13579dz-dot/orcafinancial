@@ -83,7 +83,7 @@ export function ForexTradeSetupPanel({
   const [capital, setCapital] = useState(setup.defaultPosition.capital);
   const [riskPct, setRiskPct] = useState(setup.defaultPosition.riskPct);
   const [leverage, setLeverage] = useState(10);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
 
   const live = useMemo(() => {
     return recomputePositionAndLeverage({
@@ -236,13 +236,13 @@ export function ForexTradeSetupPanel({
           <div className="text-slate-500">{live.position.note}</div>
           <div className="mt-2 grid grid-cols-2 gap-2">
             <div>
-              Lỗ tối đa: {" "}
+              Lỗ tối đa:{" "}
               <span className="font-mono text-rose-300">
                 ${live.position.maxLossMoney.toLocaleString()}
               </span>
             </div>
             <div>
-              Số đơn vị: {" "}
+              Số đơn vị:{" "}
               <span className="font-mono text-white">
                 {live.position.positionUnits != null
                   ? live.position.positionUnits.toLocaleString()
@@ -250,7 +250,7 @@ export function ForexTradeSetupPanel({
               </span>
             </div>
             <div className="col-span-2">
-              Giá trị danh nghĩa: {" "}
+              Giá trị danh nghĩa:{" "}
               <span className="font-mono text-[#00d4ff]">
                 {live.position.notional != null
                   ? `$${live.position.notional.toLocaleString()}`
