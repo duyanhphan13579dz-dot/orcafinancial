@@ -40,11 +40,16 @@ export function MobileHeader() {
     };
   }, [open]);
 
+  // Close drawer when route changes (back/forward or external nav)
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
   return (
     <>
       <div className="lg:hidden sticky top-0 z-50 border-b border-[#1a3558] bg-[#0A2540]/98 backdrop-blur safe-area-pt">
         <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5">
-          <Link href="/" className="flex items-center gap-2 shrink-0 min-w-0">
+          <Link href="/" prefetch className="flex items-center gap-2 shrink-0 min-w-0">
             <div className="h-8 w-8 rounded-md bg-gradient-to-br from-[#00d4ff] to-[#0073a8] flex items-center justify-center text-sm shrink-0">
               🐋
             </div>
@@ -107,6 +112,7 @@ export function MobileHeader() {
                   <Link
                     key={n.href}
                     href={n.href}
+                    prefetch
                     onClick={() => setOpen(false)}
                     className={`flex items-center gap-3 px-4 py-3.5 rounded-lg mb-1 min-h-[48px] active:scale-[0.98] transition-all ${
                       active
@@ -150,6 +156,7 @@ export function MobileBottomNav() {
             <Link
               key={n.href}
               href={n.href}
+              prefetch
               className={`flex flex-col items-center justify-center flex-1 min-w-0 py-2 px-0.5 min-h-[48px] active:scale-95 transition-transform ${
                 active ? "text-[#00d4ff]" : "text-slate-400"
               }`}
