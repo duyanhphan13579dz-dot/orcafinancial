@@ -4,6 +4,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { SearchBar } from "@/components/search-bar";
 import { MobileHeader, MobileBottomNav } from "@/components/MobileNav";
+import { DesktopNav } from "@/components/DesktopNav";
+import { NavigationProgress } from "@/components/NavigationProgress";
 import { UserMenu } from "@/components/UserMenu";
 import { AppearanceLoader } from "@/components/AppearanceLoader";
 import { AuthProvider } from "@/lib/auth/context";
@@ -45,22 +47,6 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-const NAV = [
-  { href: "/", label: "Tổng quan" },
-  { href: "/heatmap", label: "Bản đồ nhiệt" },
-  { href: "/sector-board", label: "Ngành" },
-  { href: "/commodities", label: "Hàng hóa" },
-  { href: "/crypto", label: "Crypto" },
-  { href: "/forex", label: "Forex" },
-  { href: "/reports", label: "Báo cáo" },
-  { href: "/screener", label: "Bộ lọc" },
-  { href: "/news", label: "Tin tức" },
-  { href: "/watchlist", label: "Theo dõi" },
-  { href: "/agent", label: "Trợ lý AI" },
-  { href: "/system", label: "Hệ thống" },
-  { href: "/settings", label: "Cài đặt" },
-];
-
 export default function RootLayout({
   children,
 }: {
@@ -91,6 +77,7 @@ export default function RootLayout({
 
         <AuthProvider>
           <AppearanceLoader />
+          <NavigationProgress />
           <MobileHeader />
 
           <header className="hidden lg:block sticky top-0 z-40 border-b border-[#1a3558] bg-[#0A2540]/98 backdrop-blur-md">
@@ -98,6 +85,7 @@ export default function RootLayout({
               <div className="flex items-center gap-4 py-2.5 min-w-0">
                 <Link
                   href="/"
+                  prefetch
                   className="flex items-center gap-3 shrink-0 group"
                 >
                   <div className="relative h-8 w-8 rounded-md bg-gradient-to-br from-[#00d4ff] to-[#0073a8] flex items-center justify-center font-black text-[#0A2540] text-sm shadow-[0_0_12px_rgba(0,212,255,0.4)] group-hover:shadow-[0_0_20px_rgba(0,212,255,0.7)] transition-shadow">
@@ -124,21 +112,11 @@ export default function RootLayout({
                 </div>
               </div>
 
-              <nav className="flex items-center gap-1 xl:gap-2 text-sm text-slate-400 font-display border-t border-[#1a3558]/60 -mx-4 px-4 overflow-x-auto scrollbar-hide">
-                {NAV.map((n) => (
-                  <Link
-                    key={n.href}
-                    href={n.href}
-                    className="relative shrink-0 whitespace-nowrap px-2.5 py-2 hover:text-[#00d4ff] transition-colors after:content-[''] after:absolute after:left-2.5 after:right-2.5 after:bottom-0 after:h-0.5 after:bg-[#00d4ff] after:scale-x-0 hover:after:scale-x-100 after:transition-transform after:origin-left"
-                  >
-                    {n.label}
-                  </Link>
-                ))}
-              </nav>
+              <DesktopNav />
             </div>
           </header>
 
-          <main className="mx-auto max-w-7xl w-full min-w-0 px-3 sm:px-4 py-4 md:py-6 overflow-x-hidden">
+          <main className="mx-auto max-w-7xl w-full min-w-0 px-3 sm:px-4 py-4 md:py-6 overflow-x-hidden contain-layout">
             {children}
           </main>
 
